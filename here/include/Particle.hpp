@@ -12,7 +12,7 @@ namespace SandSim {
     public:
         int pixelX, pixelY;
         int matrixX, matrixY;
-        sf::Vector3f vel{0.0f, -124.0f, 0.0f}; // Changed to Vector3f to match Java
+        sf::Vector3f vel{0.0f, 0.0f, 0.0f}; // Changed to Vector3f to match Java
         
         float frictionFactor = 1.0f;
         bool isFreeFalling = true;
@@ -91,8 +91,8 @@ namespace SandSim {
         }
         
         float getAverageVelOrGravity(float vel, float otherVel) {
-            if (otherVel > -125.0f) {
-                return -124.0f;
+            if (otherVel > 125.0f) {
+                return 124.0f;
             }
             float avg = (vel + otherVel) / 2.0f;
             if (avg > 0) {
@@ -282,7 +282,7 @@ namespace SandSim {
     public:
         MovableSolid(int x, int y, MaterialID materialId) : Solid(x, y, materialId) {
             stoppedMovingThreshold = 5;
-            vel = sf::Vector3f(0.0f, -124.0f, 0.0f);
+            vel = sf::Vector3f(0.0f, 124.0f, 0.0f);
         }
         
         void step(ParticleWorld* world) override;
