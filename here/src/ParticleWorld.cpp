@@ -169,17 +169,21 @@ void MovableSolid::step(ParticleWorld* world) {
     
     if (!world->shouldElementInChunkStep(this)) return;
     
+    // Apply gravity - this will gradually accelerate particles from rest
     vel = vel + world->getGravity();
     if (isFreeFalling) vel.x *= 0.9f;
     
     int yModifier = vel.y < 0 ? -1 : 1;
     int xModifier = vel.x < 0 ? -1 : 1;
     
-    float velYDeltaTimeFloat = std::abs(vel.y) * (1.0f/60.0f);
-    float velXDeltaTimeFloat = std::abs(vel.x) * (1.0f/60.0f);
+    // Apply delta time scaling (60 FPS assumed)
+    float deltaTime = 1.0f / 60.0f;
+    float velYDeltaTimeFloat = std::abs(vel.y) * deltaTime;
+    float velXDeltaTimeFloat = std::abs(vel.x) * deltaTime;
     
     int velXDeltaTime, velYDeltaTime;
     
+    // Handle sub-pixel movement with thresholds
     if (velXDeltaTimeFloat < 1) {
         xThreshold += velXDeltaTimeFloat;
         velXDeltaTime = static_cast<int>(xThreshold);
@@ -200,6 +204,17 @@ void MovableSolid::step(ParticleWorld* world) {
     } else {
         yThreshold = 0;
         velYDeltaTime = static_cast<int>(velYDeltaTimeFloat);
+    }
+    
+    // If no movement is calculated (common for newly spawned particles), return early
+    if (velXDeltaTime == 0 && velYDeltaTime == 0) {
+        // Still apply effects even if not moving
+        applyHeatToNeighborsIfIgnited(world);
+        takeEffectsDamage(world);
+        spawnSparkIfIgnited(world);
+        checkLifeSpan(world);
+        modifyColor();
+        return;
     }
     
     bool xDiffIsLarger = std::abs(velXDeltaTime) > std::abs(velYDeltaTime);
@@ -361,14 +376,16 @@ void Liquid::step(ParticleWorld* world) {
     
     if (!world->shouldElementInChunkStep(this)) return;
     
+    // Apply gravity - this will gradually accelerate liquids from rest
     vel = vel + world->getGravity();
     if (isFreeFalling) vel.x *= 0.8f;
     
     int yModifier = vel.y < 0 ? -1 : 1;
     int xModifier = vel.x < 0 ? -1 : 1;
     
-    float velYDeltaTimeFloat = std::abs(vel.y) * (1.0f/60.0f);
-    float velXDeltaTimeFloat = std::abs(vel.x) * (1.0f/60.0f);
+    float deltaTime = 1.0f / 60.0f;
+    float velYDeltaTimeFloat = std::abs(vel.y) * deltaTime;
+    float velXDeltaTimeFloat = std::abs(vel.x) * deltaTime;
     
     int velXDeltaTime, velYDeltaTime;
     
@@ -392,6 +409,16 @@ void Liquid::step(ParticleWorld* world) {
     } else {
         yThreshold = 0;
         velYDeltaTime = static_cast<int>(velYDeltaTimeFloat);
+    }
+    
+    // Early return if no movement calculated
+    if (velXDeltaTime == 0 && velYDeltaTime == 0) {
+        applyHeatToNeighborsIfIgnited(world);
+        modifyColor();
+        spawnSparkIfIgnited(world);
+        checkLifeSpan(world);
+        takeEffectsDamage(world);
+        return;
     }
     
     bool xDiffIsLarger = std::abs(velXDeltaTime) > std::abs(velYDeltaTime);
@@ -643,7 +670,8 @@ bool Liquid::iterateToAdditional(ParticleWorld* world, int startingX, int starti
 void Gas::step(ParticleWorld* world) {
     stepped = true;
     
-    vel = vel - world->getGravity(); // Gases rise (subtract gravity)
+    // Gases rise (subtract gravity instead of add)
+    vel = vel - world->getGravity(); 
     vel.y = std::min(vel.y, 124.0f);
     if (vel.y == 124 && Random::randFloat(0.0f, 1.0f) > 0.7f) {
         vel.y = 64;
@@ -653,8 +681,9 @@ void Gas::step(ParticleWorld* world) {
     int yModifier = vel.y < 0 ? -1 : 1;
     int xModifier = vel.x < 0 ? -1 : 1;
     
-    float velYDeltaTimeFloat = std::abs(vel.y) * (1.0f/60.0f);
-    float velXDeltaTimeFloat = std::abs(vel.x) * (1.0f/60.0f);
+    float deltaTime = 1.0f / 60.0f;
+    float velYDeltaTimeFloat = std::abs(vel.y) * deltaTime;
+    float velXDeltaTimeFloat = std::abs(vel.x) * deltaTime;
     
     int velXDeltaTime, velYDeltaTime;
     
@@ -678,6 +707,20 @@ void Gas::step(ParticleWorld* world) {
     } else {
         yThreshold = 0;
         velYDeltaTime = static_cast<int>(velYDeltaTimeFloat);
+    }
+    
+    // Early return if no movement calculated
+    if (velXDeltaTime == 0 && velYDeltaTime == 0) {
+        applyHeatToNeighborsIfIgnited(world);
+        modifyColor();
+        spawnSparkIfIgnited(world);
+        checkLifeSpan(world);
+        takeEffectsDamage(world);
+        
+        if (world->useChunks && isIgnited) {
+            world->reportToChunkActive(this);
+        }
+        return;
     }
     
     bool xDiffIsLarger = std::abs(velXDeltaTime) > std::abs(velYDeltaTime);

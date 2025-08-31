@@ -4,6 +4,7 @@
 #include "Random.hpp"
 #include <memory>
 #include <algorithm>
+
 namespace SandSim {
     class ParticleWorld; // Forward declaration
     
@@ -12,7 +13,7 @@ namespace SandSim {
     public:
         int pixelX, pixelY;
         int matrixX, matrixY;
-        sf::Vector3f vel{0.0f, 0.0f, 0.0f}; // Changed to Vector3f to match Java
+        sf::Vector3f vel{0.0f, 0.0f, 0.0f}; // Start with zero velocity
         
         float frictionFactor = 1.0f;
         bool isFreeFalling = true;
@@ -91,8 +92,8 @@ namespace SandSim {
         }
         
         float getAverageVelOrGravity(float vel, float otherVel) {
-            if (otherVel > 125.0f) {
-                return 124.0f;
+            if (otherVel > -125.0f) {
+                return -124.0f;
             }
             float avg = (vel + otherVel) / 2.0f;
             if (avg > 0) {
@@ -258,9 +259,7 @@ namespace SandSim {
     class EmptyParticle : public Particle {
     public:
         EmptyParticle(int x, int y) : Particle(x, y, MaterialID::Empty) {}
-        bool corrode(ParticleWorld* world) override {
-        return false;
-    }
+        bool corrode(ParticleWorld* world) override { return false; }
         void step(ParticleWorld* world) override {}
         
     protected:
@@ -274,7 +273,10 @@ namespace SandSim {
     // Base Solid class
     class Solid : public Particle {
     public:
-        Solid(int x, int y, MaterialID materialId) : Particle(x, y, materialId) {}
+        Solid(int x, int y, MaterialID materialId) : Particle(x, y, materialId) {
+            // Start with zero velocity - gravity will be applied during step()
+            vel = sf::Vector3f(0.0f, 0.0f, 0.0f);
+        }
     };
     
     // MovableSolid class (matches Java implementation)
@@ -282,7 +284,7 @@ namespace SandSim {
     public:
         MovableSolid(int x, int y, MaterialID materialId) : Solid(x, y, materialId) {
             stoppedMovingThreshold = 5;
-            vel = sf::Vector3f(0.0f, 124.0f, 0.0f);
+            // Keep zero velocity from parent constructor - gravity will accelerate particles naturally
         }
         
         void step(ParticleWorld* world) override;
@@ -298,7 +300,7 @@ namespace SandSim {
     public:
         ImmovableSolid(int x, int y, MaterialID materialId) : Solid(x, y, materialId) {
             isFreeFalling = false;
-            vel = sf::Vector3f(0.0f, 0.0f, 0.0f);
+            // Immovable solids stay at zero velocity
         }
         
         void step(ParticleWorld* world) override;
@@ -319,7 +321,8 @@ namespace SandSim {
         
         Liquid(int x, int y, MaterialID materialId) : Particle(x, y, materialId) {
             stoppedMovingThreshold = 10;
-            vel = sf::Vector3f(0.0f, 124.0f, 0.0f);
+            // Start with zero velocity - gravity will accelerate liquids naturally
+            vel = sf::Vector3f(0.0f, 0.0f, 0.0f);
         }
         
         void step(ParticleWorld* world) override;
@@ -350,7 +353,10 @@ namespace SandSim {
         int density = 3;
         int dispersionRate = 2;
         
-        Gas(int x, int y, MaterialID materialId) : Particle(x, y, materialId) {vel = sf::Vector3f(0.0f, -124.0f, 0.0f);}
+        Gas(int x, int y, MaterialID materialId) : Particle(x, y, materialId) {
+            // Start with zero velocity - gases will naturally rise due to inverted gravity
+            vel = sf::Vector3f(0.0f, 0.0f, 0.0f);
+        }
         
         void step(ParticleWorld* world) override;
         
@@ -360,7 +366,6 @@ namespace SandSim {
         bool stain(float r, float g, float b, float a) override { return false; }
         void darkenColor() override {}
         void darkenColor(float factor) override {}
-        //void spawnSparkIfIgnited(ParticleWorld* world) override {}
         bool infect(ParticleWorld* world) override { return false; }
         
     protected:
@@ -380,6 +385,8 @@ namespace SandSim {
     class SandParticle : public MovableSolid {
     public:
         SandParticle(int x, int y) : MovableSolid(x, y, MaterialID::Sand) {
+            // Add small random initial horizontal velocity like in Java
+            vel.x = Random::randFloat(0.0f, 1.0f) > 0.5f ? -1.0f : 1.0f;
             frictionFactor = 0.9f;
             inertialResistance = 0.1f;
             mass = 150;
@@ -655,9 +662,11 @@ namespace SandSim {
     };
     
     class FireParticle : public Gas {
-    public:float lifeTime = 0.0f;
+    public:
+        float lifeTime = 0.0f;
+        
         FireParticle(int x, int y) : Gas(x, y, MaterialID::Fire) {
-            vel = sf::Vector3f(0.0f, 0.0f, 0.0f); // Fire doesn't move much
+            // Fire particles don't move much initially
             inertialResistance = 0.0f;
             mass = 1;
             frictionFactor = 1.0f;
@@ -677,4 +686,5 @@ namespace SandSim {
         
         void step(ParticleWorld* world) override;
     };
-}
+    
+} // namespace SandSim
