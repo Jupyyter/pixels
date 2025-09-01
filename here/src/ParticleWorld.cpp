@@ -4,1016 +4,614 @@
 
 namespace SandSim {
 
-// Implementation of utility methods from Particle class
-void Particle::swapPositions(ParticleWorld* world, Particle* toSwap, int toSwapX, int toSwapY) {
-    if (matrixX == toSwapX && matrixY == toSwapY) return;
-    world->swapParticles(matrixX, matrixY, toSwapX, toSwapY);
-}
-
-void Particle::moveToLastValid(ParticleWorld* world, sf::Vector3f moveToLocation) {
-    if (static_cast<int>(moveToLocation.x) == matrixX && static_cast<int>(moveToLocation.y) == matrixY) return;
-    Particle* toSwap = world->get(moveToLocation.x, moveToLocation.y);
-    if (toSwap) {
-        swapPositions(world, toSwap, static_cast<int>(moveToLocation.x), static_cast<int>(moveToLocation.y));
-    }
-}
-
-void Particle::moveToLastValidDieAndReplace(ParticleWorld* world, sf::Vector3f moveToLocation, MaterialID elementType) {
-    world->setElementAtIndex(static_cast<int>(moveToLocation.x), static_cast<int>(moveToLocation.y), elementType);
-    die(world);
-}
-
-void Particle::moveToLastValidAndSwap(ParticleWorld* world, Particle* toSwap, int toSwapX, int toSwapY, sf::Vector3f moveToLocation) {
-    int moveToLocationX = static_cast<int>(moveToLocation.x);
-    int moveToLocationY = static_cast<int>(moveToLocation.y);
-    Particle* thirdNeighbor = world->get(moveToLocationX, moveToLocationY);
+void ParticleWorld::updateLiquidMovement(int x, int y, float dt, float horizontalChance, float velocityMultiplier) {
+    auto& p = getParticleAt(x, y);
     
-    if (this == thirdNeighbor || thirdNeighbor == toSwap) {
-        swapPositions(world, toSwap, toSwapX, toSwapY);
+    // Apply gravity acceleration
+    p.velocity.y = std::clamp(p.velocity.y + (GRAVITY * dt), -10.0f, 10.0f);
+    
+    // Use floating point movement with accumulation
+    p.velocity.x *= 0.98f; // Add slight friction
+    
+    // Try to move with accumulated velocity
+    int targetX = x + static_cast<int>(std::round(p.velocity.x));
+    int targetY = y + static_cast<int>(std::round(p.velocity.y));
+    
+    if (inBounds(targetX, targetY) && isEmpty(targetX, targetY)) {
+        swapParticles(x, y, targetX, targetY);
         return;
     }
     
-    if (this == toSwap) {
-        swapPositions(world, thirdNeighbor, moveToLocationX, moveToLocationY);
+    // Fall down with proper acceleration
+    if (inBounds(x, y + 1) && isEmpty(x, y + 1)) {
+        swapParticles(x, y, x, y + 1);
         return;
     }
     
-    // Three-way swap
-    world->setElementAtIndex(matrixX, matrixY, thirdNeighbor->id);
-    world->setElementAtIndex(toSwapX, toSwapY, id);
-    world->setElementAtIndex(moveToLocationX, moveToLocationY, toSwap->id);
-}
-
-bool Particle::didNotMove(sf::Vector3f formerLocation) {
-    return formerLocation.x == matrixX && formerLocation.y == matrixY;
-}
-
-bool Particle::hasNotMovedBeyondThreshold() {
-    return stoppedMovingCount >= stoppedMovingThreshold;
-}
-
-void Particle::checkIfDead(ParticleWorld* world) {
-    if (health <= 0) {
-        die(world);
-    }
-}
-
-void Particle::die(ParticleWorld* world) {
-    isDead = true;
-    world->setElementAtIndex(matrixX, matrixY, MaterialID::Empty);
-}
-
-void Particle::dieAndReplace(ParticleWorld* world, MaterialID newType) {
-    isDead = true;
-    world->setElementAtIndex(matrixX, matrixY, newType);
-}
-
-bool Particle::applyHeatToNeighborsIfIgnited(ParticleWorld* world) {
-    if (!world->isEffectsFrame() || !shouldApplyHeat()) return false;
+    // Diagonal fall with velocity influence
+    bool canFallLeft = inBounds(x - 1, y + 1) && isEmpty(x - 1, y + 1);
+    bool canFallRight = inBounds(x + 1, y + 1) && isEmpty(x + 1, y + 1);
     
-    for (int x = matrixX - 1; x <= matrixX + 1; x++) {
-        for (int y = matrixY - 1; y <= matrixY + 1; y++) {
-            if (!(x == 0 && y == 0)) {
-                Particle* neighbor = world->get(x, y);
-                if (neighbor != nullptr) {
-                    neighbor->receiveHeat(world, heatFactor);
-                }
-            }
-        }
-    }
-    return true;
-}
-
-void Particle::takeEffectsDamage(ParticleWorld* world) {
-    if (!world->isEffectsFrame()) return;
-    
-    if (isIgnited) {
-        health -= fireDamage;
-        // Check if surrounded (simplified version)
-        bool surrounded = true;
-        for (int dx = -1; dx <= 1 && surrounded; dx++) {
-            for (int dy = -1; dy <= 1 && surrounded; dy++) {
-                if (dx == 0 && dy == 0) continue;
-                Particle* neighbor = world->get(matrixX + dx, matrixY + dy);
-                if (neighbor && neighbor->id == MaterialID::Empty) {
-                    surrounded = false;
-                }
-            }
-        }
-        if (surrounded) {
-            flammabilityResistance = resetFlammabilityResistance;
-        }
-        checkIfIgnited();
-    }
-    checkIfDead(world);
-}
-
-void Particle::spawnSparkIfIgnited(ParticleWorld* world) {
-    if (!world->isEffectsFrame() || !isIgnited) return;
-    
-    Particle* upNeighbor = world->get(matrixX, matrixY + 1);
-    if (upNeighbor != nullptr && upNeighbor->id == MaterialID::Empty) {
-        MaterialID elementToSpawn = Random::randFloat(0.0f, 1.0f) > 0.1f ? MaterialID::Fire : MaterialID::Smoke;
-        world->spawnElementByMatrix(matrixX, matrixY + 1, elementToSpawn);
-    }
-}
-
-void Particle::setAdjacentNeighborsFreeFalling(ParticleWorld* world, int depth, sf::Vector3f lastValidLocation) {
-    if (depth > 0) return;
-    
-    Particle* adjacentNeighbor1 = world->get(static_cast<int>(lastValidLocation.x) + 1, static_cast<int>(lastValidLocation.y));
-    if (adjacentNeighbor1 && dynamic_cast<Solid*>(adjacentNeighbor1)) {
-        bool wasSet = setElementFreeFalling(adjacentNeighbor1);
-        if (wasSet) {
-            world->reportToChunkActive(adjacentNeighbor1);
-        }
-    }
-    
-    Particle* adjacentNeighbor2 = world->get(static_cast<int>(lastValidLocation.x) - 1, static_cast<int>(lastValidLocation.y));
-    if (adjacentNeighbor2 && dynamic_cast<Solid*>(adjacentNeighbor2)) {
-        bool wasSet = setElementFreeFalling(adjacentNeighbor2);
-        if (wasSet) {
-            world->reportToChunkActive(adjacentNeighbor2);
-        }
-    }
-}
-
-bool Particle::setElementFreeFalling(Particle* element) {
-    element->isFreeFalling = Random::randFloat(0.0f, 1.0f) > element->inertialResistance || element->isFreeFalling;
-    return element->isFreeFalling;
-}
-
-std::unique_ptr<Particle> Particle::createByType(MaterialID type, int x, int y) {
-    switch (type) {
-        case MaterialID::Empty: return std::make_unique<EmptyParticle>(x, y);
-        case MaterialID::Sand: return std::make_unique<SandParticle>(x, y);
-        case MaterialID::Water: return std::make_unique<WaterParticle>(x, y);
-        case MaterialID::Salt: return std::make_unique<SaltParticle>(x, y);
-        case MaterialID::Wood: return std::make_unique<WoodParticle>(x, y);
-        case MaterialID::Fire: return std::make_unique<FireParticle>(x, y);
-        case MaterialID::Smoke: return std::make_unique<SmokeParticle>(x, y);
-        case MaterialID::Ember: return std::make_unique<EmberParticle>(x, y);
-        case MaterialID::Steam: return std::make_unique<SteamParticle>(x, y);
-        case MaterialID::Gunpowder: return std::make_unique<GunpowderParticle>(x, y);
-        case MaterialID::Oil: return std::make_unique<OilParticle>(x, y);
-        case MaterialID::Lava: return std::make_unique<LavaParticle>(x, y);
-        case MaterialID::Stone: return std::make_unique<StoneParticle>(x, y);
-        case MaterialID::Acid: return std::make_unique<AcidParticle>(x, y);
-        default: return std::make_unique<EmptyParticle>(x, y);
-    }
-}
-
-// MovableSolid implementation (matches Java MovableSolid.step)
-void MovableSolid::step(ParticleWorld* world) {
-    stepped = true;
-    
-    if (!world->shouldElementInChunkStep(this)) return;
-    
-    // Apply gravity - this will gradually accelerate particles from rest
-    vel = vel + world->getGravity();
-    if (isFreeFalling) vel.x *= 0.9f;
-    
-    int yModifier = vel.y < 0 ? -1 : 1;
-    int xModifier = vel.x < 0 ? -1 : 1;
-    
-    // Apply delta time scaling (60 FPS assumed)
-    float deltaTime = 1.0f / 60.0f;
-    float velYDeltaTimeFloat = std::abs(vel.y) * deltaTime;
-    float velXDeltaTimeFloat = std::abs(vel.x) * deltaTime;
-    
-    int velXDeltaTime, velYDeltaTime;
-    
-    // Handle sub-pixel movement with thresholds
-    if (velXDeltaTimeFloat < 1) {
-        xThreshold += velXDeltaTimeFloat;
-        velXDeltaTime = static_cast<int>(xThreshold);
-        if (std::abs(velXDeltaTime) > 0) {
-            xThreshold = 0;
-        }
-    } else {
-        xThreshold = 0;
-        velXDeltaTime = static_cast<int>(velXDeltaTimeFloat);
-    }
-    
-    if (velYDeltaTimeFloat < 1) {
-        yThreshold += velYDeltaTimeFloat;
-        velYDeltaTime = static_cast<int>(yThreshold);
-        if (std::abs(velYDeltaTime) > 0) {
-            yThreshold = 0;
-        }
-    } else {
-        yThreshold = 0;
-        velYDeltaTime = static_cast<int>(velYDeltaTimeFloat);
-    }
-    
-    // If no movement is calculated (common for newly spawned particles), return early
-    if (velXDeltaTime == 0 && velYDeltaTime == 0) {
-        // Still apply effects even if not moving
-        applyHeatToNeighborsIfIgnited(world);
-        takeEffectsDamage(world);
-        spawnSparkIfIgnited(world);
-        checkLifeSpan(world);
-        modifyColor();
-        return;
-    }
-    
-    bool xDiffIsLarger = std::abs(velXDeltaTime) > std::abs(velYDeltaTime);
-    
-    int upperBound = std::max(std::abs(velXDeltaTime), std::abs(velYDeltaTime));
-    int min = std::min(std::abs(velXDeltaTime), std::abs(velYDeltaTime));
-    float slope = (min == 0 || upperBound == 0) ? 0 : (static_cast<float>(min + 1) / (upperBound + 1));
-    
-    sf::Vector3f formerLocation(matrixX, matrixY, 0);
-    sf::Vector3f lastValidLocation(matrixX, matrixY, 0);
-    
-    for (int i = 1; i <= upperBound; i++) {
-        int smallerCount = static_cast<int>(std::floor(i * slope));
-        
-        int yIncrease, xIncrease;
-        if (xDiffIsLarger) {
-            xIncrease = i;
-            yIncrease = smallerCount;
-        } else {
-            yIncrease = i;
-            xIncrease = smallerCount;
-        }
-        
-        int modifiedMatrixY = matrixY + (yIncrease * yModifier);
-        int modifiedMatrixX = matrixX + (xIncrease * xModifier);
-        
-        if (world->isWithinBounds(modifiedMatrixX, modifiedMatrixY)) {
-            Particle* neighbor = world->get(modifiedMatrixX, modifiedMatrixY);
-            if (neighbor == this) continue;
-            
-            bool stopped = actOnNeighboringParticle(neighbor, modifiedMatrixX, modifiedMatrixY, world, 
-                                                  i == upperBound, i == 1, lastValidLocation, 0);
-            if (stopped) break;
-            
-            lastValidLocation.x = modifiedMatrixX;
-            lastValidLocation.y = modifiedMatrixY;
-        } else {
-            world->setElementAtIndex(matrixX, matrixY, MaterialID::Empty);
-            return;
-        }
-    }
-    
-    applyHeatToNeighborsIfIgnited(world);
-    takeEffectsDamage(world);
-    spawnSparkIfIgnited(world);
-    checkLifeSpan(world);
-    modifyColor();
-    
-    stoppedMovingCount = didNotMove(formerLocation) && !isIgnited ? stoppedMovingCount + 1 : 0;
-    if (stoppedMovingCount > stoppedMovingThreshold) {
-        stoppedMovingCount = stoppedMovingThreshold;
-    }
-    
-    if (world->useChunks) {
-        if (isFreeFalling || isIgnited || !hasNotMovedBeyondThreshold()) {
-            world->reportToChunkActive(this);
-            world->reportToChunkActive(static_cast<int>(formerLocation.x), static_cast<int>(formerLocation.y));
-        }
-    }
-}
-
-bool MovableSolid::actOnNeighboringParticle(Particle* neighbor, int modifiedX, int modifiedY, 
-                                          ParticleWorld* world, bool isFinal, bool isFirst, 
-                                          sf::Vector3f lastValidLocation, int depth) {
-    if (!neighbor || neighbor->id == MaterialID::Empty) {
-        setAdjacentNeighborsFreeFalling(world, depth, lastValidLocation);
-        if (isFinal) {
-            isFreeFalling = true;
-            swapPositions(world, neighbor, modifiedX, modifiedY);
-        } else {
-            return false;
-        }
-    } else if (dynamic_cast<Liquid*>(neighbor)) {
-        if (depth > 0) {
-            isFreeFalling = true;
-            setAdjacentNeighborsFreeFalling(world, depth, lastValidLocation);
-            swapPositions(world, neighbor, modifiedX, modifiedY);
-        } else {
-            isFreeFalling = true;
-            moveToLastValidAndSwap(world, neighbor, modifiedX, modifiedY, lastValidLocation);
-            return true;
-        }
-    } else if (dynamic_cast<Solid*>(neighbor)) {
-        if (depth > 0) return true;
-        if (isFinal) {
-            moveToLastValid(world, lastValidLocation);
-            return true;
-        }
-        if (isFreeFalling) {
-            float absY = std::max(std::abs(vel.y) / 31.0f, 105.0f);
-            vel.x = vel.x < 0 ? -absY : absY;
-        }
-        sf::Vector3f normalizedVel = vel;
-        float length = std::sqrt(normalizedVel.x * normalizedVel.x + normalizedVel.y * normalizedVel.y + normalizedVel.z * normalizedVel.z);
-        if (length > 0) {
-            normalizedVel.x /= length;
-            normalizedVel.y /= length;
-            normalizedVel.z /= length;
-        }
-        
-        int additionalX = getAdditional(normalizedVel.x);
-        int additionalY = getAdditional(normalizedVel.y);
-        
-        Particle* diagonalNeighbor = world->get(matrixX + additionalX, matrixY + additionalY);
-        if (isFirst) {
-            vel.y = getAverageVelOrGravity(vel.y, neighbor->vel.y);
-        } else {
-            vel.y = -GRAVITY;
-        }
-        
-        neighbor->vel.y = vel.y;
-        vel.x *= frictionFactor * neighbor->frictionFactor;
-        
-        if (diagonalNeighbor != nullptr) {
-            bool stoppedDiagonally = actOnNeighboringParticle(diagonalNeighbor, matrixX + additionalX, matrixY + additionalY, 
-                                                            world, true, false, lastValidLocation, depth + 1);
-            if (!stoppedDiagonally) {
-                isFreeFalling = true;
-                return true;
-            }
-        }
-        
-        Particle* adjacentNeighbor = world->get(matrixX + additionalX, matrixY);
-        if (adjacentNeighbor != nullptr && adjacentNeighbor != diagonalNeighbor) {
-            bool stoppedAdjacently = actOnNeighboringParticle(adjacentNeighbor, matrixX + additionalX, matrixY, 
-                                                            world, true, false, lastValidLocation, depth + 1);
-            if (stoppedAdjacently) vel.x *= -1;
-            if (!stoppedAdjacently) {
-                isFreeFalling = false;
-                return true;
-            }
-        }
-        
-        isFreeFalling = false;
-        moveToLastValid(world, lastValidLocation);
-        return true;
-    } else if (dynamic_cast<Gas*>(neighbor)) {
-        if (isFinal) {
-            moveToLastValidAndSwap(world, neighbor, modifiedX, modifiedY, lastValidLocation);
-            return true;
-        }
-        return false;
-    }
-    return false;
-}
-
-// ImmovableSolid implementation
-void ImmovableSolid::step(ParticleWorld* world) {
-    applyHeatToNeighborsIfIgnited(world);
-    takeEffectsDamage(world);
-    spawnSparkIfIgnited(world);
-    modifyColor();
-    // customElementFunctions would go here
-}
-
-// Liquid implementation (matches Java Liquid.step)
-void Liquid::step(ParticleWorld* world) {
-    stepped = true;
-    
-    if (!world->shouldElementInChunkStep(this)) return;
-    
-    // Apply gravity - this will gradually accelerate liquids from rest
-    vel = vel + world->getGravity();
-    if (isFreeFalling) vel.x *= 0.8f;
-    
-    int yModifier = vel.y < 0 ? -1 : 1;
-    int xModifier = vel.x < 0 ? -1 : 1;
-    
-    float deltaTime = 1.0f / 60.0f;
-    float velYDeltaTimeFloat = std::abs(vel.y) * deltaTime;
-    float velXDeltaTimeFloat = std::abs(vel.x) * deltaTime;
-    
-    int velXDeltaTime, velYDeltaTime;
-    
-    if (velXDeltaTimeFloat < 1) {
-        xThreshold += velXDeltaTimeFloat;
-        velXDeltaTime = static_cast<int>(xThreshold);
-        if (std::abs(velXDeltaTime) > 0) {
-            xThreshold = 0;
-        }
-    } else {
-        xThreshold = 0;
-        velXDeltaTime = static_cast<int>(velXDeltaTimeFloat);
-    }
-    
-    if (velYDeltaTimeFloat < 1) {
-        yThreshold += velYDeltaTimeFloat;
-        velYDeltaTime = static_cast<int>(yThreshold);
-        if (std::abs(velYDeltaTime) > 0) {
-            yThreshold = 0;
-        }
-    } else {
-        yThreshold = 0;
-        velYDeltaTime = static_cast<int>(velYDeltaTimeFloat);
-    }
-    
-    // Early return if no movement calculated
-    if (velXDeltaTime == 0 && velYDeltaTime == 0) {
-        applyHeatToNeighborsIfIgnited(world);
-        modifyColor();
-        spawnSparkIfIgnited(world);
-        checkLifeSpan(world);
-        takeEffectsDamage(world);
-        return;
-    }
-    
-    bool xDiffIsLarger = std::abs(velXDeltaTime) > std::abs(velYDeltaTime);
-    
-    int upperBound = std::max(std::abs(velXDeltaTime), std::abs(velYDeltaTime));
-    int min = std::min(std::abs(velXDeltaTime), std::abs(velYDeltaTime));
-    float slope = (min == 0 || upperBound == 0) ? 0 : (static_cast<float>(min + 1) / (upperBound + 1));
-    
-    sf::Vector3f formerLocation(matrixX, matrixY, 0);
-    sf::Vector3f lastValidLocation(matrixX, matrixY, 0);
-    
-    for (int i = 1; i <= upperBound; i++) {
-        int smallerCount = static_cast<int>(std::floor(i * slope));
-        
-        int yIncrease, xIncrease;
-        if (xDiffIsLarger) {
-            xIncrease = i;
-            yIncrease = smallerCount;
-        } else {
-            yIncrease = i;
-            xIncrease = smallerCount;
-        }
-        
-        int modifiedMatrixY = matrixY + (yIncrease * yModifier);
-        int modifiedMatrixX = matrixX + (xIncrease * xModifier);
-        
-        if (world->isWithinBounds(modifiedMatrixX, modifiedMatrixY)) {
-            Particle* neighbor = world->get(modifiedMatrixX, modifiedMatrixY);
-            if (neighbor == this) continue;
-            
-            bool stopped = actOnNeighboringParticle(neighbor, modifiedMatrixX, modifiedMatrixY, world,
-                                                  i == upperBound, i == 1, lastValidLocation, 0);
-            if (stopped) break;
-            
-            lastValidLocation.x = modifiedMatrixX;
-            lastValidLocation.y = modifiedMatrixY;
-        } else {
-            world->setElementAtIndex(matrixX, matrixY, MaterialID::Empty);
-            return;
-        }
-    }
-    
-    applyHeatToNeighborsIfIgnited(world);
-    modifyColor();
-    spawnSparkIfIgnited(world);
-    checkLifeSpan(world);
-    takeEffectsDamage(world);
-    
-    stoppedMovingCount = didNotMove(formerLocation) ? stoppedMovingCount + 1 : 0;
-    if (stoppedMovingCount > stoppedMovingThreshold) {
-        stoppedMovingCount = stoppedMovingThreshold;
-    }
-    
-    if (world->useChunks) {
-        if (isIgnited || !hasNotMovedBeyondThreshold()) {
-            world->reportToChunkActive(this);
-            world->reportToChunkActive(static_cast<int>(formerLocation.x), static_cast<int>(formerLocation.y));
-        }
-    }
-}
-
-bool Liquid::actOnNeighboringParticle(Particle* neighbor, int modifiedX, int modifiedY, 
-                                     ParticleWorld* world, bool isFinal, bool isFirst, 
-                                     sf::Vector3f lastValidLocation, int depth) {
-    bool acted = actOnOther(neighbor, world);
-    if (acted) return true;
-    
-    if (!neighbor || neighbor->id == MaterialID::Empty) {
-        setAdjacentNeighborsFreeFalling(world, depth, lastValidLocation);
-        if (isFinal) {
-            isFreeFalling = true;
-            swapPositions(world, neighbor, modifiedX, modifiedY);
-        } else {
-            return false;
-        }
-    } else if (Liquid* liquidNeighbor = dynamic_cast<Liquid*>(neighbor)) {
-        if (compareDensities(liquidNeighbor)) {
-            if (isFinal) {
-                swapLiquidForDensities(world, liquidNeighbor, modifiedX, modifiedY, lastValidLocation);
-                return true;
+    if (canFallLeft && canFallRight) {
+        // Choose based on horizontal velocity or random
+        if (std::abs(p.velocity.x) > 0.1f) {
+            if (p.velocity.x < 0) {
+                swapParticles(x, y, x - 1, y + 1);
             } else {
-                lastValidLocation.x = modifiedX;
-                lastValidLocation.y = modifiedY;
-                return false;
+                swapParticles(x, y, x + 1, y + 1);
             }
-        }
-        if (depth > 0) return true;
-        if (isFinal) {
-            moveToLastValid(world, lastValidLocation);
-            return true;
-        }
-        if (isFreeFalling) {
-            float absY = std::max(std::abs(vel.y) / 31.0f, 105.0f);
-            vel.x = vel.x < 0 ? -absY : absY;
-        }
-        
-        sf::Vector3f normalizedVel = vel;
-        float length = std::sqrt(normalizedVel.x * normalizedVel.x + normalizedVel.y * normalizedVel.y);
-        if (length > 0) {
-            normalizedVel.x /= length;
-            normalizedVel.y /= length;
-        }
-        
-        int additionalX = getAdditional(normalizedVel.x);
-        int additionalY = getAdditional(normalizedVel.y);
-        
-        int distance = additionalX * (Random::randFloat(0.0f, 1.0f) > 0.5f ? dispersionRate + 2 : dispersionRate - 1);
-        
-        Particle* diagonalNeighbor = world->get(matrixX + additionalX, matrixY + additionalY);
-        if (isFirst) {
-            vel.y = getAverageVelOrGravity(vel.y, neighbor->vel.y);
         } else {
-            vel.y = -GRAVITY;
-        }
-        
-        neighbor->vel.y = vel.y;
-        vel.x *= frictionFactor;
-        
-        if (diagonalNeighbor != nullptr) {
-            bool stoppedDiagonally = iterateToAdditional(world, matrixX + additionalX, matrixY + additionalY, distance, lastValidLocation);
-            if (!stoppedDiagonally) {
-                isFreeFalling = true;
-                return true;
-            }
-        }
-        
-        Particle* adjacentNeighbor = world->get(matrixX + additionalX, matrixY);
-        if (adjacentNeighbor != nullptr && adjacentNeighbor != diagonalNeighbor) {
-            bool stoppedAdjacently = iterateToAdditional(world, matrixX + additionalX, matrixY, distance, lastValidLocation);
-            if (stoppedAdjacently) vel.x *= -1;
-            if (!stoppedAdjacently) {
-                isFreeFalling = false;
-                return true;
-            }
-        }
-        
-        isFreeFalling = false;
-        moveToLastValid(world, lastValidLocation);
-        return true;
-    } else if (dynamic_cast<Solid*>(neighbor)) {
-        if (depth > 0) return true;
-        if (isFinal) {
-            moveToLastValid(world, lastValidLocation);
-            return true;
-        }
-        if (isFreeFalling) {
-            float absY = std::max(std::abs(vel.y) / 31.0f, 105.0f);
-            vel.x = vel.x < 0 ? -absY : absY;
-        }
-        
-        sf::Vector3f normalizedVel = vel;
-        float length = std::sqrt(normalizedVel.x * normalizedVel.x + normalizedVel.y * normalizedVel.y);
-        if (length > 0) {
-            normalizedVel.x /= length;
-            normalizedVel.y /= length;
-        }
-        
-        int additionalX = getAdditional(normalizedVel.x);
-        int additionalY = getAdditional(normalizedVel.y);
-        
-        int distance = additionalX * (Random::randFloat(0.0f, 1.0f) > 0.5f ? dispersionRate + 2 : dispersionRate - 1);
-        
-        Particle* diagonalNeighbor = world->get(matrixX + additionalX, matrixY + additionalY);
-        if (isFirst) {
-            vel.y = getAverageVelOrGravity(vel.y, neighbor->vel.y);
-        } else {
-            vel.y = -GRAVITY;
-        }
-        
-        neighbor->vel.y = vel.y;
-        vel.x *= frictionFactor;
-        
-        if (diagonalNeighbor != nullptr) {
-            bool stoppedDiagonally = iterateToAdditional(world, matrixX + additionalX, matrixY + additionalY, distance, lastValidLocation);
-            if (!stoppedDiagonally) {
-                isFreeFalling = true;
-                return true;
-            }
-        }
-        
-        Particle* adjacentNeighbor = world->get(matrixX + additionalX, matrixY);
-        if (adjacentNeighbor != nullptr) {
-            bool stoppedAdjacently = iterateToAdditional(world, matrixX + additionalX, matrixY, distance, lastValidLocation);
-            if (stoppedAdjacently) vel.x *= -1;
-            if (!stoppedAdjacently) {
-                isFreeFalling = false;
-                return true;
-            }
-        }
-        
-        isFreeFalling = false;
-        moveToLastValid(world, lastValidLocation);
-        return true;
-    } else if (dynamic_cast<Gas*>(neighbor)) {
-        if (isFinal) {
-            moveToLastValidAndSwap(world, neighbor, modifiedX, modifiedY, lastValidLocation);
-            return true;
-        }
-        return false;
-    }
-    return false;
-}
-
-void Liquid::swapLiquidForDensities(ParticleWorld* world, Liquid* neighbor, int neighborX, int neighborY, sf::Vector3f lastValidLocation) {
-    vel.y = -62;
-    if (Random::randFloat(0.0f, 1.0f) > 0.8f) {
-        vel.x *= -1;
-    }
-    moveToLastValidAndSwap(world, neighbor, neighborX, neighborY, lastValidLocation);
-}
-
-bool Liquid::iterateToAdditional(ParticleWorld* world, int startingX, int startingY, int distance, sf::Vector3f lastValid) {
-    int distanceModifier = distance > 0 ? 1 : -1;
-    sf::Vector3f lastValidLocation = lastValid;
-    
-    for (int i = 0; i <= std::abs(distance); i++) {
-        int modifiedX = startingX + i * distanceModifier;
-        Particle* neighbor = world->get(modifiedX, startingY);
-        if (neighbor == nullptr) return true;
-        
-        bool acted = actOnOther(neighbor, world);
-        if (acted) return false;
-        
-        bool isFirst = i == 0;
-        bool isFinal = i == std::abs(distance);
-        
-        if (!neighbor || neighbor->id == MaterialID::Empty) {
-            if (isFinal) {
-                swapPositions(world, neighbor, modifiedX, startingY);
-                return false;
-            }
-            lastValidLocation.x = modifiedX;
-            lastValidLocation.y = startingY;
-        } else if (Liquid* liquidNeighbor = dynamic_cast<Liquid*>(neighbor)) {
-            if (isFinal && compareDensities(liquidNeighbor)) {
-                swapLiquidForDensities(world, liquidNeighbor, modifiedX, startingY, lastValidLocation);
-                return false;
-            }
-        } else if (dynamic_cast<Solid*>(neighbor)) {
-            if (isFirst) return true;
-            moveToLastValid(world, lastValidLocation);
-            return false;
-        }
-    }
-    return true;
-}
-
-// Gas implementation (matches Java Gas.step)
-void Gas::step(ParticleWorld* world) {
-    stepped = true;
-    
-    // Gases rise (subtract gravity instead of add)
-    vel = vel - world->getGravity(); 
-    vel.y = std::min(vel.y, GRAVITY);
-    if (vel.y == GRAVITY && Random::randFloat(0.0f, 1.0f) > 0.7f) {
-        vel.y = 64;
-    }
-    vel.x *= 0.9f;
-    
-    int yModifier = vel.y < 0 ? -1 : 1;
-    int xModifier = vel.x < 0 ? -1 : 1;
-    
-    float deltaTime = 1.0f / 60.0f;
-    float velYDeltaTimeFloat = std::abs(vel.y) * deltaTime;
-    float velXDeltaTimeFloat = std::abs(vel.x) * deltaTime;
-    
-    int velXDeltaTime, velYDeltaTime;
-    
-    if (velXDeltaTimeFloat < 1) {
-        xThreshold += velXDeltaTimeFloat;
-        velXDeltaTime = static_cast<int>(xThreshold);
-        if (std::abs(velXDeltaTime) > 0) {
-            xThreshold = 0;
-        }
-    } else {
-        xThreshold = 0;
-        velXDeltaTime = static_cast<int>(velXDeltaTimeFloat);
-    }
-    
-    if (velYDeltaTimeFloat < 1) {
-        yThreshold += velYDeltaTimeFloat;
-        velYDeltaTime = static_cast<int>(yThreshold);
-        if (std::abs(velYDeltaTime) > 0) {
-            yThreshold = 0;
-        }
-    } else {
-        yThreshold = 0;
-        velYDeltaTime = static_cast<int>(velYDeltaTimeFloat);
-    }
-    
-    // Early return if no movement calculated
-    if (velXDeltaTime == 0 && velYDeltaTime == 0) {
-        applyHeatToNeighborsIfIgnited(world);
-        modifyColor();
-        spawnSparkIfIgnited(world);
-        checkLifeSpan(world);
-        takeEffectsDamage(world);
-        
-        if (world->useChunks && isIgnited) {
-            world->reportToChunkActive(this);
+            swapParticles(x, y, Random::randBool() ? x - 1 : x + 1, y + 1);
         }
         return;
     }
     
-    bool xDiffIsLarger = std::abs(velXDeltaTime) > std::abs(velYDeltaTime);
+    if (canFallLeft) {
+        p.velocity.x = std::clamp(p.velocity.x - velocityMultiplier, -5.0f, 5.0f);
+        swapParticles(x, y, x - 1, y + 1);
+        return;
+    }
     
-    int upperBound = std::max(std::abs(velXDeltaTime), std::abs(velYDeltaTime));
-    int min = std::min(std::abs(velXDeltaTime), std::abs(velYDeltaTime));
-    float slope = (min == 0 || upperBound == 0) ? 0 : (static_cast<float>(min + 1) / (upperBound + 1));
+    if (canFallRight) {
+        p.velocity.x = std::clamp(p.velocity.x + velocityMultiplier, -5.0f, 5.0f);
+        swapParticles(x, y, x + 1, y + 1);
+        return;
+    }
     
-    sf::Vector3f lastValidLocation(matrixX, matrixY, 0);
+    // Horizontal flow with pressure simulation
+    bool canFlowLeft = inBounds(x - 1, y) && isEmpty(x - 1, y);
+    bool canFlowRight = inBounds(x + 1, y) && isEmpty(x + 1, y);
     
-    for (int i = 1; i <= upperBound; i++) {
-        int smallerCount = static_cast<int>(std::floor(i * slope));
+    if (canFlowLeft || canFlowRight) {
+        // Add pressure-based horizontal movement
+        p.velocity.x += Random::randFloat(-0.5f, 0.5f);
         
-        int yIncrease, xIncrease;
-        if (xDiffIsLarger) {
-            xIncrease = i;
-            yIncrease = smallerCount;
-        } else {
-            yIncrease = i;
-            xIncrease = smallerCount;
+        if (canFlowLeft && (p.velocity.x < 0 || !canFlowRight)) {
+            if (Random::chance(static_cast<int>(horizontalChance))) {
+                swapParticles(x, y, x - 1, y);
+                return;
+            }
         }
         
-        int modifiedMatrixY = matrixY + (yIncrease * yModifier);
-        int modifiedMatrixX = matrixX + (xIncrease * xModifier);
-        
-        if (world->isWithinBounds(modifiedMatrixX, modifiedMatrixY)) {
-            Particle* neighbor = world->get(modifiedMatrixX, modifiedMatrixY);
-            if (neighbor == this) continue;
+        if (canFlowRight && (p.velocity.x > 0 || !canFlowLeft)) {
+            if (Random::chance(static_cast<int>(horizontalChance))) {
+                swapParticles(x, y, x + 1, y);
+                return;
+            }
+        }
+    }
+    
+    // Reset velocity when blocked
+    p.velocity.y *= 0.7f;
+    p.velocity.x *= 0.8f;
+}
+
+void ParticleWorld::updateSolidMovement(int x, int y, float dt, bool canDisplaceLiquids) {
+    auto& p = getParticleAt(x, y);
+    
+    // Apply gravity acceleration (key fix!)
+    p.velocity.y = std::clamp(p.velocity.y + (GRAVITY * dt), -15.0f, 15.0f);
+    
+    // Add slight horizontal randomness when falling
+    if (p.velocity.y > 2.0f) {
+        p.velocity.x += Random::randFloat(-0.1f, 0.1f);
+        p.velocity.x = std::clamp(p.velocity.x, -2.0f, 2.0f);
+    }
+    
+    // Calculate movement based on accumulated velocity - REMOVED the artificial limit of 3
+    int moveY = static_cast<int>(std::round(p.velocity.y));
+    int moveX = static_cast<int>(std::round(p.velocity.x));
+    
+    // Try to move with the full calculated velocity (not limited to 3 pixels)
+    int targetY = y + moveY;
+    int targetX = x + moveX;
+    
+    // First try direct movement to target position
+    if (inBounds(targetX, targetY)) {
+        auto& target = getParticleAt(targetX, targetY);
+        if (target.id == MaterialID::Empty || 
+            (canDisplaceLiquids && (target.id == MaterialID::Water || target.id == MaterialID::Oil) && !target.hasBeenUpdatedThisFrame)) {
             
-            bool stopped = actOnNeighboringParticle(neighbor, modifiedMatrixX, modifiedMatrixY, world,
-                                                  i == upperBound, i == 1, lastValidLocation, 0);
-            if (stopped) break;
+            if (target.id == MaterialID::Water || target.id == MaterialID::Oil) {
+                // Displace liquid with splash effect
+                target.velocity = {Random::randFloat(-3.0f, 3.0f), Random::randFloat(-2.0f, -5.0f)};
+                target.hasBeenUpdatedThisFrame = true;
+                
+                // Find a spot for displaced liquid
+                bool placed = false;
+                for (int searchRadius = 1; searchRadius <= 5 && !placed; searchRadius++) {
+                    for (int dy = -searchRadius; dy <= 0 && !placed; dy++) {
+                        for (int dx = -searchRadius; dx <= searchRadius && !placed; dx++) {
+                            if (isEmpty(x + dx, y + dy)) {
+                                setParticleAt(x + dx, y + dy, target);
+                                placed = true;
+                            }
+                        }
+                    }
+                }
+            }
             
-            lastValidLocation.x = modifiedMatrixX;
-            lastValidLocation.y = modifiedMatrixY;
-        } else {
-            world->setElementAtIndex(matrixX, matrixY, MaterialID::Empty);
+            swapParticles(x, y, targetX, targetY);
             return;
         }
     }
     
-    applyHeatToNeighborsIfIgnited(world);
-    modifyColor();
-    spawnSparkIfIgnited(world);
-    checkLifeSpan(world);
-    takeEffectsDamage(world);
-    
-    if (world->useChunks && isIgnited) {
-        world->reportToChunkActive(this);
-    }
-}
-
-bool Gas::actOnNeighboringParticle(Particle* neighbor, int modifiedX, int modifiedY, 
-                                  ParticleWorld* world, bool isFinal, bool isFirst, 
-                                  sf::Vector3f lastValidLocation, int depth) {
-    bool acted = actOnOther(neighbor, world);
-    if (acted) return true;
-    
-    if (!neighbor || neighbor->id == MaterialID::Empty) {
-        if (isFinal) {
-            swapPositions(world, neighbor, modifiedX, modifiedY);
-        } else {
-            return false;
-        }
-    } else if (Gas* gasNeighbor = dynamic_cast<Gas*>(neighbor)) {
-        if (compareGasDensities(gasNeighbor)) {
-            swapGasForDensities(world, gasNeighbor, modifiedX, modifiedY, lastValidLocation);
-            return false;
-        }
-        if (depth > 0) return true;
-        if (isFinal) {
-            moveToLastValid(world, lastValidLocation);
-            return true;
-        }
-        
-        vel.x = vel.x < 0 ? -62 : 62;
-        
-        sf::Vector3f normalizedVel = vel;
-        float length = std::sqrt(normalizedVel.x * normalizedVel.x + normalizedVel.y * normalizedVel.y);
-        if (length > 0) {
-            normalizedVel.x /= length;
-            normalizedVel.y /= length;
-        }
-        
-        int additionalX = getAdditional(normalizedVel.x);
-        int additionalY = getAdditional(normalizedVel.y);
-        
-        int distance = additionalX * (Random::randFloat(0.0f, 1.0f) > 0.5f ? dispersionRate + 2 : dispersionRate - 1);
-        
-        Particle* diagonalNeighbor = world->get(matrixX + additionalX, matrixY + additionalY);
-        if (isFirst) {
-            vel.y = getAverageVelOrGravity(vel.y, neighbor->vel.y);
-        } else {
-            vel.y = GRAVITY;
-        }
-        
-        neighbor->vel.y = vel.y;
-        vel.x *= frictionFactor;
-        
-        if (diagonalNeighbor != nullptr) {
-            bool stoppedDiagonally = iterateToAdditional(world, matrixX + additionalX, matrixY, distance);
-            if (!stoppedDiagonally) return true;
-        }
-        
-        Particle* adjacentNeighbor = world->get(matrixX + additionalX, matrixY);
-        if (adjacentNeighbor != nullptr && adjacentNeighbor != diagonalNeighbor) {
-            bool stoppedAdjacently = iterateToAdditional(world, matrixX + additionalX, matrixY, distance);
-            if (stoppedAdjacently) vel.x *= -1;
-            if (!stoppedAdjacently) return true;
-        }
-        
-        moveToLastValid(world, lastValidLocation);
-        return true;
-    } else if (dynamic_cast<Liquid*>(neighbor)) {
-        // Gas vs Liquid interaction (similar to Gas vs Gas but simpler)
-        if (depth > 0) return true;
-        if (isFinal) {
-            moveToLastValid(world, lastValidLocation);
-            return true;
-        }
-        if (neighbor->isFreeFalling) return true;
-        
-        float absY = std::max(std::abs(vel.y) / 31.0f, 105.0f);
-        vel.x = vel.x < 0 ? -absY : absY;
-        
-        sf::Vector3f normalizedVel = vel;
-        float length = std::sqrt(normalizedVel.x * normalizedVel.x + normalizedVel.y * normalizedVel.y);
-        if (length > 0) {
-            normalizedVel.x /= length;
-            normalizedVel.y /= length;
-        }
-        
-        int additionalX = getAdditional(normalizedVel.x);
-        int additionalY = getAdditional(normalizedVel.y);
-        
-        int distance = additionalX * (Random::randFloat(0.0f, 1.0f) > 0.5f ? dispersionRate + 2 : dispersionRate - 1);
-        
-        Particle* diagonalNeighbor = world->get(matrixX + additionalX, matrixY + additionalY);
-        if (isFirst) {
-            vel.y = getAverageVelOrGravity(vel.y, neighbor->vel.y);
-        } else {
-            vel.y = GRAVITY;
-        }
-        
-        neighbor->vel.y = vel.y;
-        vel.x *= frictionFactor;
-        
-        if (diagonalNeighbor != nullptr) {
-            bool stoppedDiagonally = iterateToAdditional(world, matrixX + additionalX, matrixY + additionalY, distance);
-            if (!stoppedDiagonally) return true;
-        }
-        
-        Particle* adjacentNeighbor = world->get(matrixX + additionalX, matrixY);
-        if (adjacentNeighbor != nullptr && adjacentNeighbor != diagonalNeighbor) {
-            bool stoppedAdjacently = iterateToAdditional(world, matrixX + additionalX, matrixY, distance);
-            if (stoppedAdjacently) vel.x *= -1;
-            if (!stoppedAdjacently) return true;
-        }
-        
-        moveToLastValid(world, lastValidLocation);
-        return true;
-    } else if (dynamic_cast<Solid*>(neighbor)) {
-        // Gas vs Solid interaction
-        if (depth > 0) return true;
-        if (isFinal) {
-            moveToLastValid(world, lastValidLocation);
-            return true;
-        }
-        if (neighbor->isFreeFalling) return true;
-        
-        float absY = std::max(std::abs(vel.y) / 31.0f, 105.0f);
-        vel.x = vel.x < 0 ? -absY : absY;
-        
-        sf::Vector3f normalizedVel = vel;
-        float length = std::sqrt(normalizedVel.x * normalizedVel.x + normalizedVel.y * normalizedVel.y);
-        if (length > 0) {
-            normalizedVel.x /= length;
-            normalizedVel.y /= length;
-        }
-        
-        int additionalX = getAdditional(normalizedVel.x);
-        int additionalY = getAdditional(normalizedVel.y);
-        
-        int distance = additionalX * (Random::randFloat(0.0f, 1.0f) > 0.5f ? dispersionRate + 2 : dispersionRate - 1);
-        
-        Particle* diagonalNeighbor = world->get(matrixX + additionalX, matrixY + additionalY);
-        if (isFirst) {
-            vel.y = getAverageVelOrGravity(vel.y, neighbor->vel.y);
-        } else {
-            vel.y = GRAVITY;
-        }
-        
-        neighbor->vel.y = vel.y;
-        vel.x *= frictionFactor;
-        
-        if (diagonalNeighbor != nullptr) {
-            bool stoppedDiagonally = iterateToAdditional(world, matrixX + additionalX, matrixY + additionalY, distance);
-            if (!stoppedDiagonally) return true;
-        }
-        
-        Particle* adjacentNeighbor = world->get(matrixX + additionalX, matrixY);
-        if (adjacentNeighbor != nullptr) {
-            bool stoppedAdjacently = iterateToAdditional(world, matrixX + additionalX, matrixY, distance);
-            if (stoppedAdjacently) vel.x *= -1;
-            if (!stoppedAdjacently) return true;
-        }
-        
-        moveToLastValid(world, lastValidLocation);
-        return true;
-    }
-    return false;
-}
-
-void Gas::swapGasForDensities(ParticleWorld* world, Gas* neighbor, int neighborX, int neighborY, sf::Vector3f lastValidLocation) {
-    vel.y = 62;
-    moveToLastValidAndSwap(world, neighbor, neighborX, neighborY, lastValidLocation);
-}
-
-bool Gas::iterateToAdditional(ParticleWorld* world, int startingX, int startingY, int distance) {
-    int distanceModifier = distance > 0 ? 1 : -1;
-    sf::Vector3f lastValidLocation(matrixX, matrixY, 0);
-    
-    for (int i = 0; i <= std::abs(distance); i++) {
-        Particle* neighbor = world->get(startingX + i * distanceModifier, startingY);
-        bool acted = actOnOther(neighbor, world);
-        if (acted) return false;
-        
-        bool isFirst = i == 0;
-        bool isFinal = i == std::abs(distance);
-        if (neighbor == nullptr) continue;
-        
-        if (!neighbor || neighbor->id == MaterialID::Empty) {
-            if (isFinal) {
-                swapPositions(world, neighbor, startingX + i * distanceModifier, startingY);
-                return false;
+    // If direct movement failed, try step by step movement downward
+    for (int step = 1; step <= std::abs(moveY); step++) {
+        int testY = y + step;
+        if (inBounds(x, testY)) {
+            auto& below = getParticleAt(x, testY);
+            if (below.id == MaterialID::Empty || 
+                (canDisplaceLiquids && (below.id == MaterialID::Water || below.id == MaterialID::Oil) && !below.hasBeenUpdatedThisFrame)) {
+                
+                if (below.id == MaterialID::Water || below.id == MaterialID::Oil) {
+                    // Displace liquid with splash effect
+                    below.velocity = {Random::randFloat(-3.0f, 3.0f), Random::randFloat(-2.0f, -5.0f)};
+                    below.hasBeenUpdatedThisFrame = true;
+                    
+                    // Find a spot for displaced liquid
+                    bool placed = false;
+                    for (int searchRadius = 1; searchRadius <= 5 && !placed; searchRadius++) {
+                        for (int dy = -searchRadius; dy <= 0 && !placed; dy++) {
+                            for (int dx = -searchRadius; dx <= searchRadius && !placed; dx++) {
+                                if (isEmpty(x + dx, y + dy)) {
+                                    setParticleAt(x + dx, y + dy, below);
+                                    placed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                swapParticles(x, y, x, testY);
+                return;
+            } else {
+                // Hit something - reduce velocity and try diagonal
+                p.velocity.y *= 0.3f;
+                break;
             }
-            lastValidLocation.x = startingX + i * distanceModifier;
-            lastValidLocation.y = startingY;
-            continue;
-        } else if (Gas* gasNeighbor = dynamic_cast<Gas*>(neighbor)) {
-            if (compareGasDensities(gasNeighbor)) {
-                swapGasForDensities(world, gasNeighbor, startingX + i * distanceModifier, startingY, lastValidLocation);
-                return false;
-            }
-        } else if (dynamic_cast<Solid*>(neighbor) || dynamic_cast<Liquid*>(neighbor)) {
-            if (isFirst) return true;
-            moveToLastValid(world, lastValidLocation);
-            return false;
         }
     }
-    return true;
+    
+    // Try diagonal movement if vertical movement failed
+    if (moveY > 0) {
+        int diagX = x + (moveX > 0 ? 1 : (moveX < 0 ? -1 : (Random::randBool() ? 1 : -1)));
+        
+        if (inBounds(diagX, y + 1)) {
+            auto& diag = getParticleAt(diagX, y + 1);
+            if (diag.id == MaterialID::Empty || 
+                (canDisplaceLiquids && (diag.id == MaterialID::Water || diag.id == MaterialID::Oil))) {
+                
+                p.velocity.x = (diagX > x) ? std::abs(p.velocity.x) : -std::abs(p.velocity.x);
+                swapParticles(x, y, diagX, y + 1);
+                return;
+            }
+        }
+    }
+    
+    // Settle in liquid if surrounded
+    int lx, ly;
+    if (isInLiquid(x, y, &lx, &ly) && Random::chance(15)) {
+        swapParticles(x, y, lx, ly);
+        p.velocity.y *= 0.5f;
+    }
+    
+    // Apply friction when not moving
+    p.velocity.x *= 0.9f;
+    if (std::abs(p.velocity.x) < 0.1f) p.velocity.x = 0.0f;
+}
+void ParticleWorld::updateGasMovement(int x, int y, float dt, float buoyancy, float chaosLevel) {
+    auto& p = getParticleAt(x, y);
+    
+    // Apply negative gravity (buoyancy) with chaos
+    p.velocity.y = std::clamp(p.velocity.y - (GRAVITY * dt * buoyancy), -5.0f, 2.0f);
+    
+    // Add chaotic horizontal movement
+    p.velocity.x += Random::randFloat(-chaosLevel, chaosLevel);
+    p.velocity.x = std::clamp(p.velocity.x, -3.0f, 3.0f);
+    
+    // Apply random turbulence
+    if (Random::chance(5)) {
+        p.velocity.x += Random::randFloat(-1.0f, 1.0f);
+        p.velocity.y += Random::randFloat(-0.5f, 0.5f);
+    }
+    
+    // Calculate intended movement
+    int targetX = x + static_cast<int>(std::round(p.velocity.x));
+    int targetY = y + static_cast<int>(std::round(p.velocity.y));
+    
+    // Try direct movement first
+    if (inBounds(targetX, targetY) && 
+        (isEmpty(targetX, targetY) || 
+         getParticleAt(targetX, targetY).id == MaterialID::Water ||
+         getParticleAt(targetX, targetY).id == MaterialID::Oil)) {
+        swapParticles(x, y, targetX, targetY);
+        return;
+    }
+    
+    // Try moving up (gases rise)
+    if (inBounds(x, y - 1) && 
+        (isEmpty(x, y - 1) || 
+         getParticleAt(x, y - 1).id == MaterialID::Water ||
+         getParticleAt(x, y - 1).id == MaterialID::Oil)) {
+        swapParticles(x, y, x, y - 1);
+        return;
+    }
+    
+    // Try horizontal movement with random direction preference
+    int direction = (Random::randFloat(-1.0f, 1.0f) > 0) ? 1 : -1;
+    if (inBounds(x + direction, y) && 
+        (isEmpty(x + direction, y) || 
+         getParticleAt(x + direction, y).id == MaterialID::Water ||
+         getParticleAt(x + direction, y).id == MaterialID::Oil)) {
+        p.velocity.x += direction * 0.5f;
+        swapParticles(x, y, x + direction, y);
+        return;
+    }
+    
+    // Try the opposite direction
+    if (inBounds(x - direction, y) && 
+        (isEmpty(x - direction, y) || 
+         getParticleAt(x - direction, y).id == MaterialID::Water ||
+         getParticleAt(x - direction, y).id == MaterialID::Oil)) {
+        p.velocity.x -= direction * 0.5f;
+        swapParticles(x, y, x - direction, y);
+        return;
+    }
+    
+    // Try diagonal up movement
+    for (int dx = -1; dx <= 1; dx += 2) {
+        if (inBounds(x + dx, y - 1) && 
+            (isEmpty(x + dx, y - 1) || 
+             getParticleAt(x + dx, y - 1).id == MaterialID::Water ||
+             getParticleAt(x + dx, y - 1).id == MaterialID::Oil)) {
+            swapParticles(x, y, x + dx, y - 1);
+            return;
+        }
+    }
+    
+    // Apply friction when stuck
+    p.velocity.x *= 0.8f;
+    p.velocity.y *= 0.9f;
 }
 
-// FireParticle step implementation
-void FireParticle::step(ParticleWorld* world) {
-    stepped = true; // Mark as stepped for this frame
-
-    // The Gas::step logic isn't called, so we manually handle effects and lifespan
-    applyHeatToNeighborsIfIgnited(world);
-    takeEffectsDamage(world);
-    checkLifeSpan(world); // This will call die() when lifeSpan runs out
+void ParticleWorld::updateSand(int x, int y, float dt) {
+    auto& p = getParticleAt(x, y);
+    if (p.hasBeenUpdatedThisFrame) return;
+    p.hasBeenUpdatedThisFrame = true;
     
-    if (isDead) return;
+    // Apply gravity acceleration like liquids for more realistic falling
+    p.velocity.y = std::clamp(p.velocity.y + (GRAVITY * dt), -10.0f, 10.0f);
+    
+    updateSolidMovement(x, y, dt, true);
+}
 
-    // Fire spreading logic (your version was good, this is just slightly refined)
+void ParticleWorld::updateWater(int x, int y, float dt) {
+    auto& p = getParticleAt(x, y);
+    if (p.hasBeenUpdatedThisFrame) return;
+    p.hasBeenUpdatedThisFrame = true;
+    
+    updateLiquidMovement(x, y, dt, 3.0f, 1.5f);
+}
+
+void ParticleWorld::updateSalt(int x, int y, float dt) {
+    auto& p = getParticleAt(x, y);
+    if (p.hasBeenUpdatedThisFrame) return;
+    p.hasBeenUpdatedThisFrame = true;
+    
+    // Dissolve in liquid
+    int lx, ly;
+    if (isInLiquid(x, y, &lx, &ly) && Random::chance(800)) {
+        setParticleAt(x, y, Particle::createEmpty());
+        return;
+    }
+    
+    updateSolidMovement(x, y, dt, false);
+}
+
+void ParticleWorld::updateFire(int x, int y, float dt) {
+    auto& p = getParticleAt(x, y);
+    if (p.hasBeenUpdatedThisFrame) return;
+    p.hasBeenUpdatedThisFrame = true;
+    
+    // Die after some time or randomly
+    if (p.lifeTime > 1.5f || (p.lifeTime > 0.3f && Random::chance(150))) {
+        // Create embers when dying
+        if (Random::chance(5)) {
+            setParticleAt(x, y, Particle::createEmber());
+        } else if (Random::chance(3)) {
+            setParticleAt(x, y, Particle::createSmoke());
+        } else {
+            setParticleAt(x, y, Particle::createEmpty());
+        }
+        return;
+    }
+    
+    // Update color BEFORE movement (fire stays in place)
+    if (Random::chance(20)) {
+        int colorVariant = Random::randInt(0, 3);
+        switch (colorVariant) {
+            case 0: p.color = sf::Color(255, 80, 20, 255); break;
+            case 1: p.color = sf::Color(250, 150, 10, 255); break;
+            case 2: p.color = sf::Color(200, 150, 0, 255); break;
+            case 3: p.color = sf::Color(255, 200, 50, 255); break;
+        }
+    }
+    
+    // Fire stays in place and spreads
+    // Ignite nearby materials
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
-            
-            Particle* neighbor = world->get(matrixX + dx, matrixY + dy);
-            if (neighbor) {
-                // Fire can be put out by water
-                if (neighbor->id == MaterialID::Water) {
-                    dieAndReplace(world, MaterialID::Smoke);
-                    return; 
+            int nx = x + dx, ny = y + dy;
+            if (inBounds(nx, ny)) {
+                auto& neighbor = getParticleAt(nx, ny);
+                if ((neighbor.id == MaterialID::Wood || neighbor.id == MaterialID::Oil || 
+                     neighbor.id == MaterialID::Gunpowder) && Random::chance(100)) {
+                    setParticleAt(nx, ny, Particle::createFire());
                 }
-                // Spread heat/fire to flammable neighbors
-                neighbor->receiveHeat(world, heatFactor * 2);
             }
         }
     }
-
-    // Randomly die and turn into smoke
-    if (Random::randFloat(0.0f, 1.0f) < 0.05f) { // 5% chance per frame
-        dieAndReplace(world, MaterialID::Smoke);
+    
+    // Create steam when touching water
+    int lx, ly;
+    if (isInWater(x, y, &lx, &ly) && Random::chance(5)) {
+        setParticleAt(x, y, Particle::createSteam());
+        setParticleAt(lx, ly, Particle::createSteam());
         return;
     }
+}
 
-    // Update color to flicker
-    if (Random::randFloat(0.0f, 1.0f) > 0.5f) {
-        modifyColor();
-        world->updatePixelBuffer(matrixX, matrixY);
+void ParticleWorld::updateSmoke(int x, int y, float dt) {
+    auto& p = getParticleAt(x, y);
+    if (p.hasBeenUpdatedThisFrame) return;
+    p.hasBeenUpdatedThisFrame = true;
+    
+    // Die after some time
+    if (p.lifeTime > 15.0f) {
+        setParticleAt(x, y, Particle::createEmpty());
+        return;
     }
+    
+    // Update color BEFORE movement
+    float lifeFactor = std::clamp((15.0f - p.lifeTime) / 15.0f, 0.1f, 1.0f);
+    p.color.r = static_cast<uint8_t>(lifeFactor * 80);
+    p.color.g = static_cast<uint8_t>(lifeFactor * 70);
+    p.color.b = static_cast<uint8_t>(lifeFactor * 60);
+    p.color.a = static_cast<uint8_t>(lifeFactor * 255);
+    
+    // Use gas movement for chaotic behavior
+    updateGasMovement(x, y, dt, 0.8f, 1.2f);
+}
+
+void ParticleWorld::updateEmber(int x, int y, float dt) {
+    auto& p = getParticleAt(x, y);
+    if (p.hasBeenUpdatedThisFrame) return;
+    p.hasBeenUpdatedThisFrame = true;
+    
+    // Die after short time
+    if (p.lifeTime > 0.2f && Random::chance(100)) {
+        setParticleAt(x, y, Particle::createEmpty());
+        return;
+    }
+    
+    // Ember rises (using old fire movement logic)
+    p.velocity.y = std::clamp(p.velocity.y - (GRAVITY * dt) * 0.2f, -5.0f, 0.0f);
+    p.velocity.x = std::clamp(p.velocity.x + Random::randFloat(-0.01f, 0.01f), -0.5f, 0.5f);
+    
+    // Color variation for embers
+    if (Random::chance(static_cast<int>(p.lifeTime * 100.0f + 1)) && Random::chance(200)) {
+        int colorVariant = Random::randInt(0, 3);
+        switch (colorVariant) {
+            case 0: p.color = sf::Color(255, 80, 20, 255); break;
+            case 1: p.color = sf::Color(250, 150, 10, 255); break;
+            case 2: p.color = sf::Color(200, 150, 0, 255); break;
+            case 3: p.color = sf::Color(100, 50, 2, 255); break;
+        }
+        int idx = computeIndex(x, y);
+        int pixelIdx = idx * 4;
+        pixelBuffer[pixelIdx] = p.color.r;
+        pixelBuffer[pixelIdx + 1] = p.color.g;
+        pixelBuffer[pixelIdx + 2] = p.color.b;
+        pixelBuffer[pixelIdx + 3] = p.color.a;
+    }
+    
+    // Ignite materials (embers can still ignite wood)
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            int nx = x + dx, ny = y + dy;
+            if (inBounds(nx, ny) && getParticleAt(nx, ny).id == MaterialID::Wood && Random::chance(150)) {
+                setParticleAt(nx, ny, Particle::createFire());
+            }
+        }
+    }
+    
+    // Create steam when touching water
+    int lx, ly;
+    if (isInWater(x, y, &lx, &ly)) {
+        if (Random::randBool()) {
+            // Create steam
+            for (int i = -5; i > -5; --i) {
+                for (int j = -5; j < 5; ++j) {
+                    if (inBounds(x + j, y + i) && isEmpty(x + j, y + i)) {
+                        setParticleAt(x + j, y + i, Particle::createSteam());
+                        break;
+                    }
+                }
+            }
+            setParticleAt(lx, ly, Particle::createEmpty()); // Remove water
+            setParticleAt(x, y, Particle::createEmpty()); // Remove ember
+            return;
+        }
+    }
+    
+    // Movement (ember rises)
+    int vx = static_cast<int>(p.velocity.x);
+    int vy = static_cast<int>(p.velocity.y);
+    
+    if (inBounds(x + vx, y + vy) && (isEmpty(x + vx, y + vy) || 
+        getParticleAt(x + vx, y + vy).id == MaterialID::Water ||
+        getParticleAt(x + vx, y + vy).id == MaterialID::Smoke)) {
+        swapParticles(x, y, x + vx, y + vy);
+    }
+    else if (inBounds(x, y - 1) && (isEmpty(x, y - 1) || 
+             getParticleAt(x, y - 1).id == MaterialID::Water ||
+             getParticleAt(x, y - 1).id == MaterialID::Smoke)) {
+        swapParticles(x, y, x, y - 1);
+    }
+}
+
+void ParticleWorld::updateSteam(int x, int y, float dt) {
+    auto& p = getParticleAt(x, y);
+    if (p.hasBeenUpdatedThisFrame) return;
+    p.hasBeenUpdatedThisFrame = true;
+    
+    // Die after some time
+    if (p.lifeTime > 12.0f) {
+        setParticleAt(x, y, Particle::createEmpty());
+        return;
+    }
+    
+    // Update color BEFORE movement
+    float lifeFactor = std::clamp((12.0f - p.lifeTime) / 12.0f, 0.1f, 1.0f);
+    p.color.a = static_cast<uint8_t>(lifeFactor * 255 * 0.8f);
+    
+    // Steam rises chaotically
+    updateGasMovement(x, y, dt, 1.0f, 1.8f);
+    
+    // Condense into water when cooled
+    if (p.lifeTime > 8.0f && Random::chance(200)) {
+        setParticleAt(x, y, Particle::createWater());
+        return;
+    }
+}
+
+void ParticleWorld::updateGunpowder(int x, int y, float dt) {
+    auto& p = getParticleAt(x, y);
+    if (p.hasBeenUpdatedThisFrame) return;
+    p.hasBeenUpdatedThisFrame = true;
+    
+    // Check for fire first
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            int nx = x + dx, ny = y + dy;
+            if (inBounds(nx, ny) && getParticleAt(nx, ny).id == MaterialID::Fire) {
+                // Explosion
+                for (int ey = -4; ey <= 4; ey++) {
+                    for (int ex = -4; ex <= 4; ex++) {
+                        int explosionX = x + ex, explosionY = y + ey;
+                        if (inBounds(explosionX, explosionY)) {
+                            float distance = std::sqrt(ex * ex + ey * ey);
+                            if (distance <= 4.0f && Random::chance(3)) {
+                                setParticleAt(explosionX, explosionY, Particle::createFire());
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+        }
+    }
+    
+    updateSolidMovement(x, y, dt, true);
+}
+
+void ParticleWorld::updateOil(int x, int y, float dt) {
+    auto& p = getParticleAt(x, y);
+    if (p.hasBeenUpdatedThisFrame) return;
+    p.hasBeenUpdatedThisFrame = true;
+    
+    // Check for fire
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            int nx = x + dx, ny = y + dy;
+            if (inBounds(nx, ny) && getParticleAt(nx, ny).id == MaterialID::Fire && Random::chance(30)) {
+                setParticleAt(x, y, Particle::createFire());
+                return;
+            }
+        }
+    }
+    
+    // Oil flows like thick liquid
+    updateLiquidMovement(x, y, dt, 5.0f, 1.0f);
+}
+
+void ParticleWorld::updateLava(int x, int y, float dt) {
+    auto& p = getParticleAt(x, y);
+    if (p.hasBeenUpdatedThisFrame) return;
+    p.hasBeenUpdatedThisFrame = true;
+    
+    // Apply gravity acceleration like other liquids but slower
+    p.velocity.y = std::clamp(p.velocity.y + (GRAVITY * dt * 0.7f), -8.0f, 8.0f);
+    
+    // Ignite nearby materials
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            int nx = x + dx, ny = y + dy;
+            if (inBounds(nx, ny)) {
+                auto& neighbor = getParticleAt(nx, ny);
+                if ((neighbor.id == MaterialID::Wood || neighbor.id == MaterialID::Oil) && Random::chance(80)) {
+                    setParticleAt(nx, ny, Particle::createFire());
+                }
+                else if (neighbor.id == MaterialID::Water && Random::chance(15)) {
+                    setParticleAt(nx, ny, Particle::createSteam());
+                }
+            }
+        }
+    }
+    
+    // Lava movement (slower than water)
+    int targetY = y + static_cast<int>(std::round(p.velocity.y * 0.5f));
+    
+    if (inBounds(x, targetY) && isEmpty(x, targetY)) {
+        swapParticles(x, y, x, targetY);
+        return;
+    }
+    
+    if (inBounds(x, y + 1) && isEmpty(x, y + 1)) {
+        swapParticles(x, y, x, y + 1);
+        return;
+    }
+    
+    // Horizontal flow
+    if (Random::chance(8)) {
+        int direction = Random::randBool() ? -1 : 1;
+        if (inBounds(x + direction, y) && isEmpty(x + direction, y)) {
+            swapParticles(x, y, x + direction, y);
+            return;
+        }
+    }
+    
+    // Friction
+    p.velocity.y *= 0.9f;
+}
+
+void ParticleWorld::updateAcid(int x, int y, float dt) {
+    auto& p = getParticleAt(x, y);
+    if (p.hasBeenUpdatedThisFrame) return;
+    p.hasBeenUpdatedThisFrame = true;
+    
+    // Dissolve nearby materials
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            int nx = x + dx, ny = y + dy;
+            if (inBounds(nx, ny)) {
+                auto& neighbor = getParticleAt(nx, ny);
+                if (neighbor.id != MaterialID::Empty && neighbor.id != MaterialID::Acid && 
+                    neighbor.id != MaterialID::Stone && Random::chance(300)) {
+                    setParticleAt(nx, ny, Particle::createEmpty());
+                }
+            }
+        }
+    }
+    
+    updateLiquidMovement(x, y, dt, 3.0f, 1.3f);
 }
 
 } // namespace SandSim
