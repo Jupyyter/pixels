@@ -92,14 +92,14 @@ namespace SandSim {
         }
         
         float getAverageVelOrGravity(float vel, float otherVel) {
-            if (otherVel > -125.0f) {
-                return -124.0f;
+            if (otherVel > -GRAVITY) {
+                return -GRAVITY;
             }
             float avg = (vel + otherVel) / 2.0f;
             if (avg > 0) {
                 return avg;
             } else {
-                return std::min(avg, -124.0f);
+                return std::min(avg, -GRAVITY);
             }
         }
         
@@ -274,8 +274,6 @@ namespace SandSim {
     class Solid : public Particle {
     public:
         Solid(int x, int y, MaterialID materialId) : Particle(x, y, materialId) {
-            // Start with zero velocity - gravity will be applied during step()
-            vel = sf::Vector3f(0.0f, 0.0f, 0.0f);
         }
     };
     
@@ -284,7 +282,6 @@ namespace SandSim {
     public:
         MovableSolid(int x, int y, MaterialID materialId) : Solid(x, y, materialId) {
             stoppedMovingThreshold = 5;
-            // Keep zero velocity from parent constructor - gravity will accelerate particles naturally
         }
         
         void step(ParticleWorld* world) override;
@@ -300,7 +297,6 @@ namespace SandSim {
     public:
         ImmovableSolid(int x, int y, MaterialID materialId) : Solid(x, y, materialId) {
             isFreeFalling = false;
-            // Immovable solids stay at zero velocity
         }
         
         void step(ParticleWorld* world) override;
@@ -321,8 +317,6 @@ namespace SandSim {
         
         Liquid(int x, int y, MaterialID materialId) : Particle(x, y, materialId) {
             stoppedMovingThreshold = 10;
-            // Start with zero velocity - gravity will accelerate liquids naturally
-            vel = sf::Vector3f(0.0f, 0.0f, 0.0f);
         }
         
         void step(ParticleWorld* world) override;
@@ -354,8 +348,6 @@ namespace SandSim {
         int dispersionRate = 2;
         
         Gas(int x, int y, MaterialID materialId) : Particle(x, y, materialId) {
-            // Start with zero velocity - gases will naturally rise due to inverted gravity
-            vel = sf::Vector3f(0.0f, 0.0f, 0.0f);
         }
         
         void step(ParticleWorld* world) override;

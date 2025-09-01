@@ -910,7 +910,7 @@ bool Gas::actOnNeighboringParticle(Particle* neighbor, int modifiedX, int modifi
         if (isFirst) {
             vel.y = getAverageVelOrGravity(vel.y, neighbor->vel.y);
         } else {
-            vel.y = 124;
+            vel.y = GRAVITY;
         }
         
         neighbor->vel.y = vel.y;

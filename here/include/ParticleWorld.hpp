@@ -15,7 +15,7 @@ namespace SandSim {
         int width, height;
         uint32_t frameCounter;
         bool currentStep = false; // For frame stepping like Java's stepped BitSet
-        sf::Vector3f gravity{0.0f, 124.0f, 0.0f}; // Match Java gravity
+        sf::Vector3f gravity{0.0f, GRAVITY, 0.0f}; // Match Java gravity
         
     public:
         ParticleWorld(int w, int h) : width(w), height(h), frameCounter(0) {
