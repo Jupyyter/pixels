@@ -322,7 +322,7 @@ bool MovableSolid::actOnNeighboringParticle(Particle* neighbor, int modifiedX, i
         if (isFirst) {
             vel.y = getAverageVelOrGravity(vel.y, neighbor->vel.y);
         } else {
-            vel.y = -124;
+            vel.y = -GRAVITY;
         }
         
         neighbor->vel.y = vel.y;
@@ -531,7 +531,7 @@ bool Liquid::actOnNeighboringParticle(Particle* neighbor, int modifiedX, int mod
         if (isFirst) {
             vel.y = getAverageVelOrGravity(vel.y, neighbor->vel.y);
         } else {
-            vel.y = -124;
+            vel.y = -GRAVITY;
         }
         
         neighbor->vel.y = vel.y;
@@ -585,7 +585,7 @@ bool Liquid::actOnNeighboringParticle(Particle* neighbor, int modifiedX, int mod
         if (isFirst) {
             vel.y = getAverageVelOrGravity(vel.y, neighbor->vel.y);
         } else {
-            vel.y = -124;
+            vel.y = -GRAVITY;
         }
         
         neighbor->vel.y = vel.y;
@@ -672,8 +672,8 @@ void Gas::step(ParticleWorld* world) {
     
     // Gases rise (subtract gravity instead of add)
     vel = vel - world->getGravity(); 
-    vel.y = std::min(vel.y, 124.0f);
-    if (vel.y == 124 && Random::randFloat(0.0f, 1.0f) > 0.7f) {
+    vel.y = std::min(vel.y, GRAVITY);
+    if (vel.y == GRAVITY && Random::randFloat(0.0f, 1.0f) > 0.7f) {
         vel.y = 64;
     }
     vel.x *= 0.9f;
@@ -814,7 +814,7 @@ bool Gas::actOnNeighboringParticle(Particle* neighbor, int modifiedX, int modifi
         if (isFirst) {
             vel.y = getAverageVelOrGravity(vel.y, neighbor->vel.y);
         } else {
-            vel.y = 124;
+            vel.y = GRAVITY;
         }
         
         neighbor->vel.y = vel.y;
@@ -862,7 +862,7 @@ bool Gas::actOnNeighboringParticle(Particle* neighbor, int modifiedX, int modifi
         if (isFirst) {
             vel.y = getAverageVelOrGravity(vel.y, neighbor->vel.y);
         } else {
-            vel.y = 124;
+            vel.y = GRAVITY;
         }
         
         neighbor->vel.y = vel.y;
