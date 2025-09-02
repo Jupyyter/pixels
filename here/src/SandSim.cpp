@@ -53,14 +53,16 @@ void SandSimApp::handleEvents() {
 }
 
 void SandSimApp::handleMenuEvents(const sf::Event& event) {
-    sf::Vector2f mousePos = screenToWorldCoordinates(sf::Vector2f(
+    // FIXED: Use level menu coordinate conversion instead of game world coordinates
+    sf::Vector2f windowMousePos = sf::Vector2f(
         static_cast<float>(sf::Mouse::getPosition(window).x), 
         static_cast<float>(sf::Mouse::getPosition(window).y)
-    ));
+    );
+    sf::Vector2f menuMousePos = levelMenu->windowToMenuCoords(windowMousePos, window);
     
     if (auto mouseEvent = event.getIf<sf::Event::MouseButtonPressed>()) {
         if (mouseEvent->button == sf::Mouse::Button::Left) {
-            if (levelMenu->handleClick(mousePos)) {
+            if (levelMenu->handleClick(menuMousePos)) {
                 // Level selected, switch to game
                 std::string selectedFile = levelMenu->getSelectedLevelFile();
                 if (!selectedFile.empty()) {
@@ -71,8 +73,8 @@ void SandSimApp::handleMenuEvents(const sf::Event& event) {
     }
     else if (event.is<sf::Event::MouseMoved>()) {
         bool pressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
-        levelMenu->handleMouseDrag(mousePos, pressed);
-        levelMenu->update(mousePos);
+        levelMenu->handleMouseDrag(menuMousePos, pressed);
+        levelMenu->update(menuMousePos);
     }
     else if (auto wheelEvent = event.getIf<sf::Event::MouseWheelScrolled>()) {
         levelMenu->handleMouseWheel(wheelEvent->delta);
@@ -81,6 +83,10 @@ void SandSimApp::handleMenuEvents(const sf::Event& event) {
         if (keyEvent->code == sf::Keyboard::Key::Escape) {
             running = false;
         }
+    }
+    // ADDED: Handle resize events in menu state too
+    else if (auto resizeEvent = event.getIf<sf::Event::Resized>()) {
+        handleResize(resizeEvent->size.x, resizeEvent->size.y);
     }
 }
 

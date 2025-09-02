@@ -17,11 +17,10 @@ namespace SandSim {
         bool isHovered;
         bool thumbnailLoaded;
         
-        // In levelmenu.hpp, modify the LevelInfo constructor:
-LevelInfo(sf::Font fonttt) : isHovered(false), thumbnailLoaded(false),
-    thumbnail(), 
-    thumbnailSprite(thumbnail), // Keep this as is for now
-    nameText(fonttt) {}
+        LevelInfo(sf::Font& font) : isHovered(false), thumbnailLoaded(false),
+            thumbnail(), 
+            thumbnailSprite(thumbnail),
+            nameText(font) {}
     };
     
     class LevelMenu {
@@ -29,6 +28,7 @@ LevelInfo(sf::Font fonttt) : isHovered(false), thumbnailLoaded(false),
         std::vector<LevelInfo> levels;
         sf::RenderTexture menuTexture;
         sf::Sprite menuSprite;
+        sf::Font fonttt;
         bool fontLoaded;
         
         // Scrolling
@@ -38,23 +38,30 @@ LevelInfo(sf::Font fonttt) : isHovered(false), thumbnailLoaded(false),
         sf::Vector2f dragStartPos;
         float dragStartOffset;
         
-        // Layout constants
-        static const int THUMBNAIL_WIDTH = 200;
-        static const int THUMBNAIL_HEIGHT = 150;
-        static const int THUMBNAIL_MARGIN = 20;
-        static const int LEVELS_PER_ROW = 4;
-        static const int MENU_PADDING = 50;
+        // Dynamic layout parameters
+        int levelsPerRow;           // Number of levels per row
+        float paddingPercent;       // Padding as percentage of available width
+        int thumbnailWidth;         // Calculated thumbnail width
+        int thumbnailHeight;        // Calculated thumbnail height
+        int thumbnailMargin;        // Calculated margin between thumbnails
+        int edgePadding;           // Calculated padding from edges
+        
+        // Fixed constants
+        static const int MENU_HEADER_HEIGHT = 60;
+        static const int TEXT_AREA_HEIGHT = 30;
+        static const float ASPECT_RATIO; // 4:3 aspect ratio for thumbnails
         
         // Selection
         int selectedLevel;
         
         // Background
         sf::RectangleShape background;
-        sf::Text titleText{fonttt};
-        sf::Text instructionsText{fonttt};
+        sf::RectangleShape headerBackground;
+        sf::Text titleText;
+        sf::Text instructionsText;
         
     public:
-        LevelMenu();
+        LevelMenu(int levelsPerRow = 3, float paddingPercent = 0.1f);
         ~LevelMenu() = default;
         
         void loadLevels();
@@ -68,9 +75,18 @@ LevelInfo(sf::Font fonttt) : isHovered(false), thumbnailLoaded(false),
         std::string getSelectedLevelFile() const;
         void resetSelection() { selectedLevel = -1; }
         
+        // Configuration methods
+        void setLevelsPerRow(int count);
+        void setPaddingPercent(float percent);
+        int getLevelsPerRow() const { return levelsPerRow; }
+        float getPaddingPercent() const { return paddingPercent; }
+        
+        // Coordinate conversion
+        sf::Vector2f windowToMenuCoords(const sf::Vector2f& windowPos, const sf::RenderWindow& window) const;
+        
     private:
-    sf::Font fonttt;
         void generateThumbnail(const std::string& worldFile, sf::Texture& thumbnail);
+        void calculateLayout();
         void setupLayout();
         void updateScrollBounds();
         bool loadFont();

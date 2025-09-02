@@ -681,7 +681,7 @@ void ParticleWorld::updateLava(int x, int y, float dt) {
             int nx = x + dx, ny = y + dy;
             if (inBounds(nx, ny)) {
                 auto& neighbor = getParticleAt(nx, ny);
-                if ((neighbor.id == MaterialID::Wood || neighbor.id == MaterialID::Oil) && Random::chance(80)) {
+                if ((neighbor.id == MaterialID::Wood || neighbor.id == MaterialID::Oil||neighbor.id==MaterialID::Gunpowder) && Random::chance(80)) {
                     setParticleAt(nx, ny, Particle::createFire());
                 }
                 else if (neighbor.id == MaterialID::Water && Random::chance(15)) {

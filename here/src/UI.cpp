@@ -38,7 +38,7 @@ UI::UI(ParticleWorld* worldPtr) : currentSelection(MaterialSelection::Sand),
         simulationStateText.setFont(font);
         simulationStateText.setCharacterSize(14);
         simulationStateText.setFillColor(sf::Color::White);
-        simulationStateText.setPosition({10, 50});
+        simulationStateText.setPosition({10, 0});
 
         controlsText.setFont(font);
         controlsText.setCharacterSize(12);
