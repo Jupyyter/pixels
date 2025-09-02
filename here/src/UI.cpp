@@ -1,10 +1,12 @@
 #include "UI.hpp"
 #include <iostream>
 #include <algorithm>
-
+#include "ParticleWorld.hpp"
+#include <SFML/Graphics.hpp>
+#include <SFML/System.hpp>
 namespace SandSim {
 
-UI::UI() : currentSelection(MaterialSelection::Sand),
+UI::UI(ParticleWorld* worldPtr) : currentSelection(MaterialSelection::Sand),
            showMaterialPanel(true),
            showFrameCount(true),
            showSimulationState(true),
@@ -12,7 +14,8 @@ UI::UI() : currentSelection(MaterialSelection::Sand),
            selectionRadius(DEFAULT_SELECTION_RADIUS),
            uiTexture(sf::Vector2u(TEXTURE_WIDTH, TEXTURE_HEIGHT)),
            uiSprite(uiTexture.getTexture()),
-           fontLoaded(false) {
+           fontLoaded(false),
+           world(worldPtr){  // Initialize world pointer
 
     // Apply no-repeat settings to UI texture to prevent edge bleeding
     const_cast<sf::Texture&>(uiTexture.getTexture()).setRepeated(false);
@@ -24,7 +27,7 @@ UI::UI() : currentSelection(MaterialSelection::Sand),
     // Initialize text objects if font loaded successfully
     if (fontLoaded) {
         frameInfoText.setFont(font);
-        frameInfoText.setCharacterSize(16); // Increased size for better readability
+        frameInfoText.setCharacterSize(16);
         frameInfoText.setFillColor(sf::Color::White);
         frameInfoText.setPosition({10, 10});
 
@@ -35,25 +38,94 @@ UI::UI() : currentSelection(MaterialSelection::Sand),
         simulationStateText.setFont(font);
         simulationStateText.setCharacterSize(14);
         simulationStateText.setFillColor(sf::Color::White);
-        simulationStateText.setPosition({10, 40});
+        simulationStateText.setPosition({10, 50});
 
-        // Initialize controls text (smaller than FPS counter)
         controlsText.setFont(font);
-        controlsText.setCharacterSize(12); // Smaller than FPS counter
-        controlsText.setFillColor(sf::Color(200, 200, 200)); // Slightly dimmer
-        controlsText.setPosition({10, 70}); // Below simulation state
+        controlsText.setCharacterSize(12);
+        controlsText.setFillColor(sf::Color(200, 200, 200));
+        controlsText.setPosition({10, 70});
         
-        // Set the controls text content
         std::string controls = 
             "Controls:\n"
             "B - Bloom\n"
             "I - Toggle UI | F - Toggle FPS\n";
         controlsText.setString(controls);
+
+        // Initialize save button text
+        saveButtonText.setFont(font);
+        saveButtonText.setCharacterSize(14);
+        saveButtonText.setFillColor(sf::Color::White);
     }
 
     setupMaterialButtons();
+    setupSaveButton();  // Initialize save button
 }
+// Fixed setupSaveButton method - place this in your UI.cpp file
 
+void UI::setupSaveButton() {
+    // Position button right under the controls text
+    // Controls text is at {10, 70} and has 3 lines with font size 12
+    // Each line is approximately 14-16 pixels tall (font size + line spacing)
+    int controlsTextHeight = 3 * 16; // 3 lines * ~16px per line
+    int buttonY = 70 + controlsTextHeight + 10; // controls Y + text height + 10px gap
+    
+    // Calculate button size based on text dimensions if font is loaded
+    if (fontLoaded) {
+        saveButtonText.setString(saveButton.text);
+        sf::FloatRect textBounds = saveButtonText.getLocalBounds();
+        
+        // Add padding around the text (20px horizontal, 10px vertical)
+        saveButton.size = {
+            static_cast<int>(textBounds.size.x) + 20,
+            static_cast<int>(textBounds.size.y) + 10
+        };
+    } else {
+        // Fallback size if font isn't loaded
+        saveButton.size = {100, 30}; // Reasonable default size
+    }
+    
+    // Position button on the LEFT side, aligned with controls text
+    saveButton.position = {10, buttonY}; // Same X as controls text (10px from left)
+    
+    if (fontLoaded) {
+        saveButtonText.setString(saveButton.text);
+        
+        // Recalculate text position after button size is determined
+        sf::FloatRect textBounds = saveButtonText.getLocalBounds();
+
+        float textX = saveButton.position.x + 
+                      (saveButton.size.x - textBounds.size.x) / 2.f;
+
+        float textY = saveButton.position.y + 
+                      (saveButton.size.y - textBounds.size.y) / 2.f - textBounds.position.y;
+
+        saveButtonText.setPosition({textX, textY});  // SFML 3 syntax
+    }
+}
+bool UI::handleClick(const sf::Vector2f& worldMousePos) {
+    if (!showMaterialPanel) return false;
+    
+    // Check save button click first
+    if (isPointInRect(worldMousePos, saveButton.position, saveButton.size)) {
+        if (world != nullptr) {
+            saveButton.isPressed = true;
+            world->saveWorld("world");  // Call save method
+            std::cout << "Save button clicked!" << std::endl;
+        } else {
+            std::cerr << "Warning: World reference not set in UI!" << std::endl;
+        }
+        return true; // UI consumed the click
+    }
+    
+    // Check material buttons
+    for (const auto& button : materialButtons) {
+        if (isPointInRect(worldMousePos, button.position, button.size)) {
+            currentSelection = button.selection;
+            return true; // UI consumed the click
+        }
+    }
+    return false; // Click not consumed by UI
+}
 bool UI::loadFont() {
     // Try multiple font paths as fallbacks
     std::vector<std::string> fontPaths = {
@@ -120,6 +192,18 @@ void UI::setupMaterialButtons() {
 void UI::update(const sf::Vector2f& worldMousePos, float frameTime, bool simulationRunning) {
     mousePos = worldMousePos;
 
+    // Update save button hover state
+    saveButton.isHovered = isPointInRect(worldMousePos, saveButton.position, saveButton.size);
+    
+    // Reset press state after a short time
+    if (saveButton.isPressed) {
+        static sf::Clock pressTimer;
+        if (pressTimer.getElapsedTime().asSeconds() > 0.2f) {
+            saveButton.isPressed = false;
+            pressTimer.restart();
+        }
+    }
+
     // Update frame info text content
     if (showFrameCount && fontLoaded) {
         std::string fpsText = "FPS: " + std::to_string(static_cast<int>(1000.0f / std::max(frameTime, 1.0f)));
@@ -129,20 +213,35 @@ void UI::update(const sf::Vector2f& worldMousePos, float frameTime, bool simulat
 
     // Update simulation state text content
     if (showSimulationState && fontLoaded) {
-        simulationStateText.setString(simulationRunning ? "Simulation: Running (P)" : "Simulation: Paused (P)");
+        simulationStateText.setString(simulationRunning ? "Simulation: Running" : "Simulation: Paused");
     }
 }
-
-bool UI::handleClick(const sf::Vector2f& worldMousePos) {
-    if (!showMaterialPanel) return false;
+void UI::drawSaveButton() {
+    sf::RectangleShape buttonRect;
+    buttonRect.setPosition(sf::Vector2f(static_cast<float>(saveButton.position.x), 
+                                       static_cast<float>(saveButton.position.y)));
+    buttonRect.setSize(sf::Vector2f(static_cast<float>(saveButton.size.x), 
+                                   static_cast<float>(saveButton.size.y)));
     
-    for (const auto& button : materialButtons) {
-        if (isPointInRect(worldMousePos, button.position, button.size)) {
-            currentSelection = button.selection;
-            return true; // UI consumed the click
-        }
+    // Set button color based on state
+    if (saveButton.isPressed) {
+        buttonRect.setFillColor(sf::Color(50, 100, 150));  // Darker when pressed
+    } else if (saveButton.isHovered) {
+        buttonRect.setFillColor(saveButton.hoverColor);
+    } else {
+        buttonRect.setFillColor(saveButton.color);
     }
-    return false; // Click not consumed by UI
+    
+    // Add border
+    buttonRect.setOutlineThickness(1);
+    buttonRect.setOutlineColor(sf::Color::White);
+    
+    uiTexture.draw(buttonRect);
+    
+    // Draw button text if font is loaded
+    if (fontLoaded) {
+        uiTexture.draw(saveButtonText);
+    }
 }
 
 void UI::handleKeyPress(sf::Keyboard::Key key) {
@@ -182,6 +281,7 @@ void UI::render(sf::RenderTarget& target) {
     if (fontLoaded) {
         if (showMaterialPanel) {
             drawMaterialPanel();
+            drawSaveButton();  // Draw save button
         }
 
         if (showFrameCount) {
@@ -214,6 +314,9 @@ void UI::render(sf::RenderTarget& target) {
             
             uiTexture.draw(rect);
         }
+        
+        // Draw save button even without font
+        drawSaveButton();
     }
 
     // Always draw selection circle (doesn't require font)

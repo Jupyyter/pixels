@@ -4,16 +4,18 @@
 
 namespace SandSim {
 
-SandSimApp::SandSimApp() : running(true), simulationRunning(true), frameTime(0.0f), hasPreviousMousePos(false) {
+SandSimApp::SandSimApp() : running(true), simulationRunning(true), frameTime(0.0f), 
+                          hasPreviousMousePos(false), currentState(GameState::MENU) {
     // Initialize window
     window.create(sf::VideoMode({static_cast<unsigned int>(WINDOW_WIDTH), static_cast<unsigned int>(WINDOW_HEIGHT)}), "Sand Simulation - SFML 3");
     window.setFramerateLimit(60);
     window.setVerticalSyncEnabled(false);
     
-    // Initialize components
-    world = std::make_unique<ParticleWorld>(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+    // Initialize level menu first
+    levelMenu = std::make_unique<LevelMenu>();
+    
+    // Don't initialize world and UI yet - wait for level selection
     renderer = std::make_unique<Renderer>();
-    ui = std::make_unique<UI>();
     
     // Initialize random seed
     Random::setSeed(static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -33,42 +35,114 @@ void SandSimApp::handleEvents() {
         if (event->is<sf::Event::Closed>()) {
             running = false;
         }
-        else if (auto keyEvent = event->getIf<sf::Event::KeyPressed>()) {
-            handleKeyPress(keyEvent->code);
-            ui->handleKeyPress(keyEvent->code);
-        }
-        else if (auto wheelEvent = event->getIf<sf::Event::MouseWheelScrolled>()) {
-            ui->handleMouseWheel(wheelEvent->delta);
-        }
-        else if (auto mouseEvent = event->getIf<sf::Event::MouseButtonPressed>()) {
-            handleMousePress(*mouseEvent);
-        }
-        else if (auto mouseEvent = event->getIf<sf::Event::MouseButtonReleased>()) {
-            handleMouseRelease(*mouseEvent);
-        }
-        else if (auto resizeEvent = event->getIf<sf::Event::Resized>()) {
-            handleResize(resizeEvent->size.x, resizeEvent->size.y);
+        
+        if (currentState == GameState::MENU) {
+            handleMenuEvents(*event);
+        } else if (currentState == GameState::PLAYING) {
+            handleGameEvents(*event);
         }
     }
     
-    // Handle continuous mouse input
-    if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) || sf::Mouse::isButtonPressed(sf::Mouse::Button::Right)) {
-        handleMouseHeld();
+    // Handle continuous input based on current state
+    if (currentState == GameState::PLAYING) {
+        // Handle continuous mouse input for game
+        if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) || sf::Mouse::isButtonPressed(sf::Mouse::Button::Right)) {
+            handleMouseHeld();
+        }
     }
 }
 
-void SandSimApp::handleKeyPress(sf::Keyboard::Key key) {
-    switch (key) {
-        case sf::Keyboard::Key::Escape:
+void SandSimApp::handleMenuEvents(const sf::Event& event) {
+    sf::Vector2f mousePos = screenToWorldCoordinates(sf::Vector2f(
+        static_cast<float>(sf::Mouse::getPosition(window).x), 
+        static_cast<float>(sf::Mouse::getPosition(window).y)
+    ));
+    
+    if (auto mouseEvent = event.getIf<sf::Event::MouseButtonPressed>()) {
+        if (mouseEvent->button == sf::Mouse::Button::Left) {
+            if (levelMenu->handleClick(mousePos)) {
+                // Level selected, switch to game
+                std::string selectedFile = levelMenu->getSelectedLevelFile();
+                if (!selectedFile.empty()) {
+                    startGame(selectedFile);
+                }
+            }
+        }
+    }
+    else if (event.is<sf::Event::MouseMoved>()) {
+        bool pressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
+        levelMenu->handleMouseDrag(mousePos, pressed);
+        levelMenu->update(mousePos);
+    }
+    else if (auto wheelEvent = event.getIf<sf::Event::MouseWheelScrolled>()) {
+        levelMenu->handleMouseWheel(wheelEvent->delta);
+    }
+    else if (auto keyEvent = event.getIf<sf::Event::KeyPressed>()) {
+        if (keyEvent->code == sf::Keyboard::Key::Escape) {
             running = false;
-            break;
-            
+        }
+    }
+}
+
+void SandSimApp::handleGameEvents(const sf::Event& event) {
+    if (auto keyEvent = event.getIf<sf::Event::KeyPressed>()) {
+        if (keyEvent->code == sf::Keyboard::Key::Escape) {
+            // Return to menu
+            returnToMenu();
+            return;
+        }
+        handleKeyPress(keyEvent->code);
+        if (ui) {
+            ui->handleKeyPress(keyEvent->code);
+        }
+    }
+    else if (auto wheelEvent = event.getIf<sf::Event::MouseWheelScrolled>()) {
+        if (ui) {
+            ui->handleMouseWheel(wheelEvent->delta);
+        }
+    }
+    else if (auto mouseEvent = event.getIf<sf::Event::MouseButtonPressed>()) {
+        handleMousePress(*mouseEvent);
+    }
+    else if (auto mouseEvent = event.getIf<sf::Event::MouseButtonReleased>()) {
+        handleMouseRelease(*mouseEvent);
+    }
+    else if (auto resizeEvent = event.getIf<sf::Event::Resized>()) {
+        handleResize(resizeEvent->size.x, resizeEvent->size.y);
+    }
+}
+
+void SandSimApp::startGame(const std::string& worldFile) {
+    // Initialize world with selected level
+    world = std::make_unique<ParticleWorld>(TEXTURE_WIDTH, TEXTURE_HEIGHT, worldFile);
+    ui = std::make_unique<UI>(world.get());
+    currentState = GameState::PLAYING;
+    
+    std::cout << "Started game with level: " << worldFile << std::endl;
+}
+
+void SandSimApp::returnToMenu() {
+    // Clean up game objects
+    world.reset();
+    ui.reset();
+    
+    // Reset level menu selection and return to menu state
+    levelMenu->resetSelection();
+    currentState = GameState::MENU;
+    
+    std::cout << "Returned to menu" << std::endl;
+}
+
+void SandSimApp::handleKeyPress(sf::Keyboard::Key key) {
+    switch (key) {            
         case sf::Keyboard::Key::Space:
             simulationRunning = !simulationRunning;
             break;
             
         case sf::Keyboard::Key::R:
-            world->clear();
+            if (world) {
+                world->clear();
+            }
             break;
             
         case sf::Keyboard::Key::B:
@@ -84,7 +158,7 @@ void SandSimApp::handleMousePress(const sf::Event::MouseButtonPressed& mouseButt
     sf::Vector2f worldPos = screenToWorldCoordinates(sf::Vector2f(static_cast<float>(mouseButton.position.x), static_cast<float>(mouseButton.position.y)));
     
     // Check if UI consumed the click first
-    if (ui->handleClick(worldPos)) {
+    if (ui && ui->handleClick(worldPos)) {
         return; // UI handled it, don't spawn particles
     }
     
@@ -167,23 +241,27 @@ sf::Vector2f SandSimApp::screenToWorldCoordinates(const sf::Vector2f& screenPos)
 }
 
 bool SandSimApp::isMouseOverUI(const sf::Vector2f& worldPos) {
+    // Only check UI collision if we're in game and UI exists
+    if (currentState != GameState::PLAYING || !ui) {
+        return false;
+    }
+    
     // Only consider mouse over UI if the material panel is actually shown
     if (!ui->getShowMaterialPanel()) {
         return false;
     }
 
-    // FIXED: Calculate the correct bounding box of the material selection panel
-    // The buttons are positioned at (TEXTURE_WIDTH - UI_PANEL_X_OFFSET, UI_PANEL_BASE + i * UI_PANEL_OFFSET)
-    // So the left edge is at (TEXTURE_WIDTH - UI_PANEL_X_OFFSET) and extends UI_PANEL_BUTTON_SIZE to the right
-    
+    // Calculate the correct bounding box of the material selection panel
     float panelLeft = static_cast<float>(TEXTURE_WIDTH - UI_PANEL_X_OFFSET);
     float panelRight = static_cast<float>(TEXTURE_WIDTH - UI_PANEL_X_OFFSET + UI_PANEL_BUTTON_SIZE);
 
     // The buttons start at UI_PANEL_BASE Y and each button is UI_PANEL_BUTTON_SIZE tall
-    // with UI_PANEL_OFFSET spacing between them
     float panelTop = static_cast<float>(UI_PANEL_BASE);
     size_t numButtons = ui->getMaterialButtons().size();
-    float panelBottom = static_cast<float>(UI_PANEL_BASE + (numButtons - 1) * UI_PANEL_OFFSET + UI_PANEL_BUTTON_SIZE);
+    
+    // Account for save button (it's wider and positioned below material buttons)
+    float saveButtonBottom = static_cast<float>(UI_PANEL_BASE + numButtons * UI_PANEL_OFFSET + 20 + UI_PANEL_BUTTON_SIZE);
+    float panelBottom = saveButtonBottom;
 
     // Add some padding to make it easier to interact with UI
     const float UI_PADDING = 5.0f;
@@ -200,6 +278,8 @@ bool SandSimApp::isMouseOverUI(const sf::Vector2f& worldPos) {
 }
 
 void SandSimApp::addParticles(const sf::Vector2f& worldPos) {
+    if (!world || !ui) return;
+    
     int x = static_cast<int>(worldPos.x);
     int y = static_cast<int>(worldPos.y);
     
@@ -209,6 +289,8 @@ void SandSimApp::addParticles(const sf::Vector2f& worldPos) {
 }
 
 void SandSimApp::eraseParticles(const sf::Vector2f& worldPos) {
+    if (!world || !ui) return;
+    
     int x = static_cast<int>(worldPos.x);
     int y = static_cast<int>(worldPos.y);
     
@@ -218,6 +300,8 @@ void SandSimApp::eraseParticles(const sf::Vector2f& worldPos) {
 }
 
 void SandSimApp::addParticlesLine(const sf::Vector2f& startPos, const sf::Vector2f& endPos) {
+    if (!ui) return;
+    
     // Calculate the distance between start and end positions
     float dx = endPos.x - startPos.x;
     float dy = endPos.y - startPos.y;
@@ -230,7 +314,6 @@ void SandSimApp::addParticlesLine(const sf::Vector2f& startPos, const sf::Vector
     }
     
     // Calculate the number of steps based on the distance and brush radius
-    // Use smaller steps for smoother lines, but ensure we have at least a few steps
     float stepSize = std::max(1.0f, ui->getSelectionRadius() * 0.5f);
     int steps = static_cast<int>(std::ceil(distance / stepSize));
     
@@ -246,6 +329,8 @@ void SandSimApp::addParticlesLine(const sf::Vector2f& startPos, const sf::Vector
 }
 
 void SandSimApp::eraseParticlesLine(const sf::Vector2f& startPos, const sf::Vector2f& endPos) {
+    if (!ui) return;
+    
     // Calculate the distance between start and end positions
     float dx = endPos.x - startPos.x;
     float dy = endPos.y - startPos.y;
@@ -258,7 +343,6 @@ void SandSimApp::eraseParticlesLine(const sf::Vector2f& startPos, const sf::Vect
     }
     
     // Calculate the number of steps based on the distance and brush radius
-    // Use smaller steps for smoother lines, but ensure we have at least a few steps
     float stepSize = std::max(1.0f, ui->getSelectionRadius() * 0.5f);
     int steps = static_cast<int>(std::ceil(distance / stepSize));
     
@@ -274,31 +358,44 @@ void SandSimApp::eraseParticlesLine(const sf::Vector2f& startPos, const sf::Vect
 }
 
 void SandSimApp::update() {
-    sf::Time deltaTime = clock.restart();
-    
-    // Measure frame time
-    frameTime = static_cast<float>(frameClock.restart().asMilliseconds());
-    
-    // Update simulation
-    if (simulationRunning) {
-        world->update(deltaTime.asSeconds());
+    if (currentState == GameState::PLAYING) {
+        sf::Time deltaTime = clock.restart();
+        
+        // Measure frame time
+        frameTime = static_cast<float>(frameClock.restart().asMilliseconds());
+        
+        // Update simulation
+        if (simulationRunning && world) {
+            world->update(deltaTime.asSeconds());
+        }
+        
+        // Update UI
+        if (ui) {
+            sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
+            sf::Vector2f worldMousePos = screenToWorldCoordinates(sf::Vector2f(static_cast<float>(mousePixelPos.x), static_cast<float>(mousePixelPos.y)));
+            ui->update(worldMousePos, frameTime, simulationRunning);
+        }
     }
-    
-    // Update UI
-    sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
-    sf::Vector2f worldMousePos = screenToWorldCoordinates(sf::Vector2f(static_cast<float>(mousePixelPos.x), static_cast<float>(mousePixelPos.y)));
-    ui->update(worldMousePos, frameTime, simulationRunning);
+    // Menu doesn't need update in the main loop - it's handled in events
 }
 
 void SandSimApp::render() {
     // Clear window
     window.clear(sf::Color(20, 20, 20));
     
-    // Render particle world
-    renderer->render(window, *world);
-    
-    // Render UI
-    ui->render(window);
+    if (currentState == GameState::MENU) {
+        // Render menu
+        levelMenu->render(window);
+    } else if (currentState == GameState::PLAYING) {
+        // Render game
+        if (world && renderer) {
+            renderer->render(window, *world);
+        }
+        
+        if (ui) {
+            ui->render(window);
+        }
+    }
     
     // Display
     window.display();

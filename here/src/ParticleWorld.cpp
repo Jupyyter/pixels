@@ -1,8 +1,132 @@
 #include "ParticleWorld.hpp"
 #include <algorithm>
 #include <cmath>
-
+#include <string>
+#include <fstream>
+#include <filesystem>
 namespace SandSim {
+std::string ParticleWorld::getNextAvailableFilename(const std::string& baseName) {
+    std::string filename;
+    int counter = 0;
+    
+    do {
+        filename = baseName + std::to_string(counter) + ".rrr";
+        counter++;
+    } while (std::filesystem::exists(filename));
+    
+    return filename;
+}
+
+bool ParticleWorld::saveWorld(const std::string& baseFilename) {
+    std::string filename = getNextAvailableFilename(baseFilename);
+    
+    std::ofstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open file for writing: " << filename << std::endl;
+        return false;
+    }
+    
+    try {
+        // Write header information
+        file.write(reinterpret_cast<const char*>(&width), sizeof(width));
+        file.write(reinterpret_cast<const char*>(&height), sizeof(height));
+        file.write(reinterpret_cast<const char*>(&frameCounter), sizeof(frameCounter));
+        
+        // Write particle data
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const auto& particle = getParticleAt(x, y);
+                
+                // Write material ID
+                file.write(reinterpret_cast<const char*>(&particle.id), sizeof(particle.id));
+                
+                // Write velocity
+                file.write(reinterpret_cast<const char*>(&particle.velocity.x), sizeof(particle.velocity.x));
+                file.write(reinterpret_cast<const char*>(&particle.velocity.y), sizeof(particle.velocity.y));
+                
+                // Write lifetime
+                file.write(reinterpret_cast<const char*>(&particle.lifeTime), sizeof(particle.lifeTime));
+                
+                // Write color
+                file.write(reinterpret_cast<const char*>(&particle.color.r), sizeof(particle.color.r));
+                file.write(reinterpret_cast<const char*>(&particle.color.g), sizeof(particle.color.g));
+                file.write(reinterpret_cast<const char*>(&particle.color.b), sizeof(particle.color.b));
+                file.write(reinterpret_cast<const char*>(&particle.color.a), sizeof(particle.color.a));
+            }
+        }
+        
+        file.close();
+        std::cout << "World saved successfully as: " << filename << std::endl;
+        return true;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error saving world: " << e.what() << std::endl;
+        file.close();
+        return false;
+    }
+}
+
+bool ParticleWorld::loadWorld(const std::string& filename) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open file for reading: " << filename << std::endl;
+        return false;
+    }
+    
+    try {
+        // Read and verify header information
+        int fileWidth, fileHeight;
+        file.read(reinterpret_cast<char*>(&fileWidth), sizeof(fileWidth));
+        file.read(reinterpret_cast<char*>(&fileHeight), sizeof(fileHeight));
+        
+        if (fileWidth != width || fileHeight != height) {
+            std::cerr << "World dimensions mismatch! File: " << fileWidth << "x" << fileHeight 
+                      << ", Current: " << width << "x" << height << std::endl;
+            file.close();
+            return false;
+        }
+        
+        file.read(reinterpret_cast<char*>(&frameCounter), sizeof(frameCounter));
+        
+        // Read particle data
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                Particle particle;
+                
+                // Read material ID
+                file.read(reinterpret_cast<char*>(&particle.id), sizeof(particle.id));
+                
+                // Read velocity
+                file.read(reinterpret_cast<char*>(&particle.velocity.x), sizeof(particle.velocity.x));
+                file.read(reinterpret_cast<char*>(&particle.velocity.y), sizeof(particle.velocity.y));
+                
+                // Read lifetime
+                file.read(reinterpret_cast<char*>(&particle.lifeTime), sizeof(particle.lifeTime));
+                
+                // Read color
+                file.read(reinterpret_cast<char*>(&particle.color.r), sizeof(particle.color.r));
+                file.read(reinterpret_cast<char*>(&particle.color.g), sizeof(particle.color.g));
+                file.read(reinterpret_cast<char*>(&particle.color.b), sizeof(particle.color.b));
+                file.read(reinterpret_cast<char*>(&particle.color.a), sizeof(particle.color.a));
+                
+                // Initialize update flag
+                particle.hasBeenUpdatedThisFrame = false;
+                
+                // Set the particle
+                setParticleAt(x, y, particle);
+            }
+        }
+        
+        file.close();
+        std::cout << "World loaded successfully from: " << filename << std::endl;
+        return true;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error loading world: " << e.what() << std::endl;
+        file.close();
+        return false;
+    }
+}
 
 void ParticleWorld::updateLiquidMovement(int x, int y, float dt, float horizontalChance, float velocityMultiplier) {
     auto& p = getParticleAt(x, y);
@@ -58,23 +182,23 @@ void ParticleWorld::updateLiquidMovement(int x, int y, float dt, float horizonta
         return;
     }
     
-    // Horizontal flow with pressure simulation
+    // Horizontal flow with pressure simulation - MUCH faster spreading
     bool canFlowLeft = inBounds(x - 1, y) && isEmpty(x - 1, y);
     bool canFlowRight = inBounds(x + 1, y) && isEmpty(x + 1, y);
     
     if (canFlowLeft || canFlowRight) {
         // Add pressure-based horizontal movement
-        p.velocity.x += Random::randFloat(-0.5f, 0.5f);
+        p.velocity.x += Random::randFloat(-0.8f, 0.8f); // Increased randomness
         
         if (canFlowLeft && (p.velocity.x < 0 || !canFlowRight)) {
-            if (Random::chance(static_cast<int>(horizontalChance))) {
+            if (Random::chance(2)) { // Much faster horizontal flow
                 swapParticles(x, y, x - 1, y);
                 return;
             }
         }
         
         if (canFlowRight && (p.velocity.x > 0 || !canFlowLeft)) {
-            if (Random::chance(static_cast<int>(horizontalChance))) {
+            if (Random::chance(2)) { // Much faster horizontal flow
                 swapParticles(x, y, x + 1, y);
                 return;
             }
@@ -113,13 +237,12 @@ void ParticleWorld::updateSolidMovement(int x, int y, float dt, bool canDisplace
             (canDisplaceLiquids && (target.id == MaterialID::Water || target.id == MaterialID::Oil) && !target.hasBeenUpdatedThisFrame)) {
             
             if (target.id == MaterialID::Water || target.id == MaterialID::Oil) {
-                // Displace liquid with splash effect
-                target.velocity = {Random::randFloat(-3.0f, 3.0f), Random::randFloat(-2.0f, -5.0f)};
+                // Reduced splash effect - less violent displacement
                 target.hasBeenUpdatedThisFrame = true;
                 
                 // Find a spot for displaced liquid
                 bool placed = false;
-                for (int searchRadius = 1; searchRadius <= 5 && !placed; searchRadius++) {
+                for (int searchRadius = 1; searchRadius <= 3 && !placed; searchRadius++) {
                     for (int dy = -searchRadius; dy <= 0 && !placed; dy++) {
                         for (int dx = -searchRadius; dx <= searchRadius && !placed; dx++) {
                             if (isEmpty(x + dx, y + dy)) {
@@ -145,13 +268,13 @@ void ParticleWorld::updateSolidMovement(int x, int y, float dt, bool canDisplace
                 (canDisplaceLiquids && (below.id == MaterialID::Water || below.id == MaterialID::Oil) && !below.hasBeenUpdatedThisFrame)) {
                 
                 if (below.id == MaterialID::Water || below.id == MaterialID::Oil) {
-                    // Displace liquid with splash effect
-                    below.velocity = {Random::randFloat(-3.0f, 3.0f), Random::randFloat(-2.0f, -5.0f)};
+                    // Reduced splash effect - less violent displacement
+                    below.velocity = {Random::randFloat(-1.5f, 1.5f), Random::randFloat(-0.5f, -1.5f)};
                     below.hasBeenUpdatedThisFrame = true;
                     
                     // Find a spot for displaced liquid
                     bool placed = false;
-                    for (int searchRadius = 1; searchRadius <= 5 && !placed; searchRadius++) {
+                    for (int searchRadius = 1; searchRadius <= 3 && !placed; searchRadius++) {
                         for (int dy = -searchRadius; dy <= 0 && !placed; dy++) {
                             for (int dx = -searchRadius; dx <= searchRadius && !placed; dx++) {
                                 if (isEmpty(x + dx, y + dy)) {
@@ -291,7 +414,7 @@ void ParticleWorld::updateWater(int x, int y, float dt) {
     if (p.hasBeenUpdatedThisFrame) return;
     p.hasBeenUpdatedThisFrame = true;
     
-    updateLiquidMovement(x, y, dt, 3.0f, 1.5f);
+    updateLiquidMovement(x, y, dt, 2.0f, 2.0f); // Faster spreading
 }
 
 void ParticleWorld::updateSalt(int x, int y, float dt) {
@@ -536,8 +659,8 @@ void ParticleWorld::updateOil(int x, int y, float dt) {
         }
     }
     
-    // Oil flows like thick liquid
-    updateLiquidMovement(x, y, dt, 5.0f, 1.0f);
+    // Oil flows like thick liquid but still spreads reasonably fast
+    updateLiquidMovement(x, y, dt, 4.0f, 1.5f); // Faster than before
 }
 
 void ParticleWorld::updateLava(int x, int y, float dt) {
@@ -545,8 +668,11 @@ void ParticleWorld::updateLava(int x, int y, float dt) {
     if (p.hasBeenUpdatedThisFrame) return;
     p.hasBeenUpdatedThisFrame = true;
     
-    // Apply gravity acceleration like other liquids but slower
-    p.velocity.y = std::clamp(p.velocity.y + (GRAVITY * dt * 0.7f), -8.0f, 8.0f);
+    // Apply gravity acceleration like other liquids but slightly slower
+    p.velocity.y = std::clamp(p.velocity.y + (GRAVITY * dt * 0.85f), -8.0f, 8.0f);
+    
+    // Add slight friction
+    p.velocity.x *= 0.95f;
     
     // Ignite nearby materials
     for (int dy = -1; dy <= 1; dy++) {
@@ -565,32 +691,76 @@ void ParticleWorld::updateLava(int x, int y, float dt) {
         }
     }
     
-    // Lava movement (slower than water)
-    int targetY = y + static_cast<int>(std::round(p.velocity.y * 0.5f));
+    // Use floating point movement with accumulation like other liquids
+    int targetX = x + static_cast<int>(std::round(p.velocity.x));
+    int targetY = y + static_cast<int>(std::round(p.velocity.y));
     
-    if (inBounds(x, targetY) && isEmpty(x, targetY)) {
-        swapParticles(x, y, x, targetY);
+    if (inBounds(targetX, targetY) && isEmpty(targetX, targetY)) {
+        swapParticles(x, y, targetX, targetY);
         return;
     }
     
+    // Fall down
     if (inBounds(x, y + 1) && isEmpty(x, y + 1)) {
         swapParticles(x, y, x, y + 1);
         return;
     }
     
-    // Horizontal flow
-    if (Random::chance(8)) {
-        int direction = Random::randBool() ? -1 : 1;
-        if (inBounds(x + direction, y) && isEmpty(x + direction, y)) {
-            swapParticles(x, y, x + direction, y);
-            return;
+    // Diagonal fall
+    bool canFallLeft = inBounds(x - 1, y + 1) && isEmpty(x - 1, y + 1);
+    bool canFallRight = inBounds(x + 1, y + 1) && isEmpty(x + 1, y + 1);
+    
+    if (canFallLeft && canFallRight) {
+        if (std::abs(p.velocity.x) > 0.1f) {
+            if (p.velocity.x < 0) {
+                swapParticles(x, y, x - 1, y + 1);
+            } else {
+                swapParticles(x, y, x + 1, y + 1);
+            }
+        } else {
+            swapParticles(x, y, Random::randBool() ? x - 1 : x + 1, y + 1);
+        }
+        return;
+    }
+    
+    if (canFallLeft) {
+        p.velocity.x = std::clamp(p.velocity.x - 0.8f, -4.0f, 4.0f);
+        swapParticles(x, y, x - 1, y + 1);
+        return;
+    }
+    
+    if (canFallRight) {
+        p.velocity.x = std::clamp(p.velocity.x + 0.8f, -4.0f, 4.0f);
+        swapParticles(x, y, x + 1, y + 1);
+        return;
+    }
+    
+    // Horizontal flow (slower than water)
+    bool canFlowLeft = inBounds(x - 1, y) && isEmpty(x - 1, y);
+    bool canFlowRight = inBounds(x + 1, y) && isEmpty(x + 1, y);
+    
+    if (canFlowLeft || canFlowRight) {
+        p.velocity.x += Random::randFloat(-0.3f, 0.3f);
+        
+        if (canFlowLeft && (p.velocity.x < 0 || !canFlowRight)) {
+            if (Random::chance(5)) { // Faster horizontal flow
+                swapParticles(x, y, x - 1, y);
+                return;
+            }
+        }
+        
+        if (canFlowRight && (p.velocity.x > 0 || !canFlowLeft)) {
+            if (Random::chance(5)) {
+                swapParticles(x, y, x + 1, y);
+                return;
+            }
         }
     }
     
-    // Friction
-    p.velocity.y *= 0.9f;
+    // Reset velocity when blocked
+    p.velocity.y *= 0.8f;
+    p.velocity.x *= 0.85f;
 }
-
 void ParticleWorld::updateAcid(int x, int y, float dt) {
     auto& p = getParticleAt(x, y);
     if (p.hasBeenUpdatedThisFrame) return;
