@@ -4,8 +4,207 @@
 #include <string>
 #include <fstream>
 #include <filesystem>
-namespace SandSim {
-std::string ParticleWorld::getNextAvailableFilename(const std::string& baseName) {
+
+namespace SandSim 
+{
+
+ParticleWorld::ParticleWorld(unsigned int w, unsigned int h, const std::string &worldFile)
+    : width(w), height(h), frameCounter(0)
+{
+    particles.resize(width * height);
+    pixelBuffer.resize(width * height * 4); // RGBA
+
+    if (!worldFile.empty() && std::filesystem::exists(worldFile))
+    {
+        if (!loadWorld(worldFile))
+        {
+            std::cerr << "Failed to load world file, starting with empty world" << std::endl;
+            clear();
+        }
+    }
+    else
+    {
+        clear();
+    }
+}
+
+void ParticleWorld::clear()
+{
+    for (auto &p : particles)
+    {
+        p = Particle::createEmpty();
+    }
+    std::fill(pixelBuffer.begin(), pixelBuffer.end(), 0);
+}
+
+void ParticleWorld::setParticleAt(int x, int y, const Particle &particle)
+{
+    if (!inBounds(x, y))
+        return;
+
+    int idx = computeIndex(x, y);
+    particles[idx] = particle;
+
+    // Update pixel buffer for rendering
+    int pixelIdx = idx * 4;
+    pixelBuffer[pixelIdx] = particle.color.r;
+    pixelBuffer[pixelIdx + 1] = particle.color.g;
+    pixelBuffer[pixelIdx + 2] = particle.color.b;
+    pixelBuffer[pixelIdx + 3] = particle.color.a;
+}
+
+void ParticleWorld::swapParticles(int x1, int y1, int x2, int y2)
+{
+    if (!inBounds(x1, y1) || !inBounds(x2, y2))
+        return;
+
+    Particle temp = getParticleAt(x1, y1);
+    setParticleAt(x1, y1, getParticleAt(x2, y2));
+    setParticleAt(x2, y2, temp);
+}
+
+bool ParticleWorld::isInLiquid(int x, int y, int *lx, int *ly) const
+{
+    // Check 8-directional neighbors for liquid particles
+    for (int dy = -1; dy <= 1; dy++)
+    {
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            int nx = x + dx, ny = y + dy;
+            if (inBounds(nx, ny))
+            {
+                const auto &p = getParticleAt(nx, ny);
+                if (p.id == MaterialID::Water || p.id == MaterialID::Oil)
+                {
+                    *lx = nx;
+                    *ly = ny;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+bool ParticleWorld::isInWater(int x, int y, int *lx, int *ly) const
+{
+    // Check 8-directional neighbors for water specifically
+    for (int dy = -1; dy <= 1; dy++)
+    {
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            int nx = x + dx, ny = y + dy;
+            if (inBounds(nx, ny))
+            {
+                const auto &p = getParticleAt(nx, ny);
+                if (p.id == MaterialID::Water)
+                {
+                    *lx = nx;
+                    *ly = ny;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+void ParticleWorld::update(float deltaTime)
+{
+    frameCounter++;
+    bool frameCounterEven = (frameCounter % 2) == 0;
+    int ran = frameCounterEven ? 0 : 1;
+
+    // Process from bottom to top to prevent double updates
+    for (int y = height - 1; y >= 0; --y)
+    {
+        for (int x = ran ? 0 : width - 1; ran ? x < width : x > 0; ran ? ++x : --x)
+        {
+            auto &particle = getParticleAt(x, y);
+
+            if (particle.id == MaterialID::Empty)
+                continue;
+
+            // Update particle lifetime
+            particle.lifeTime += deltaTime;
+
+            // Dispatch to material-specific update function
+            switch (particle.id)
+            {
+            case MaterialID::Sand:      updateSand(x, y, deltaTime); break;
+            case MaterialID::Water:     updateWater(x, y, deltaTime); break;
+            case MaterialID::Salt:      updateSalt(x, y, deltaTime); break;
+            case MaterialID::Fire:      updateFire(x, y, deltaTime); break;
+            case MaterialID::Smoke:     updateSmoke(x, y, deltaTime); break;
+            case MaterialID::Ember:     updateEmber(x, y, deltaTime); break;
+            case MaterialID::Steam:     updateSteam(x, y, deltaTime); break;
+            case MaterialID::Gunpowder: updateGunpowder(x, y, deltaTime); break;
+            case MaterialID::Oil:       updateOil(x, y, deltaTime); break;
+            case MaterialID::Lava:      updateLava(x, y, deltaTime); break;
+            case MaterialID::Acid:      updateAcid(x, y, deltaTime); break;
+            default: break;
+            }
+        }
+    }
+
+    // Reset frame update flags
+    for (auto &p : particles)
+    {
+        p.hasBeenUpdatedThisFrame = false;
+    }
+}
+
+void ParticleWorld::addParticleCircle(int centerX, int centerY, float radius, MaterialID materialType)
+{
+    // Place particles in circular area around center point
+    for (int dy = -static_cast<int>(radius); dy <= static_cast<int>(radius); ++dy)
+    {
+        for (int dx = -static_cast<int>(radius); dx <= static_cast<int>(radius); ++dx)
+        {
+            int x = centerX + dx;
+            int y = centerY + dy;
+
+            // Check distance from center
+            float distance = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+            if (distance <= radius)
+            {
+                // Only place particle if cell is empty
+                if (isEmpty(x, y))
+                {
+                    Particle p = createParticleByType(materialType);
+                    // Add random initial velocity
+                    p.velocity = {Random::randFloat(-0.5f, 0.5f), Random::randFloat(-0.5f, 0.5f)};
+                    setParticleAt(x, y, p);
+                }
+            }
+        }
+    }
+}
+
+void ParticleWorld::eraseCircle(int centerX, int centerY, float radius)
+{
+    // Remove particles in circular area
+    for (int i = -radius; i < radius; ++i)
+    {
+        for (int j = -radius; j < radius; ++j)
+        {
+            int x = centerX + j;
+            int y = centerY + i;
+
+            if (inBounds(x, y))
+            {
+                float distance = std::sqrt(i * i + j * j);
+                if (distance <= radius)
+                {
+                    setParticleAt(x, y, Particle::createEmpty());
+                }
+            }
+        }
+    }
+}
+
+std::string ParticleWorld::getNextAvailableFilename(const std::string& baseName) 
+{
     std::string filename;
     int counter = 0;
     
@@ -17,7 +216,8 @@ std::string ParticleWorld::getNextAvailableFilename(const std::string& baseName)
     return filename;
 }
 
-bool ParticleWorld::saveWorld(const std::string& baseFilename) {
+bool ParticleWorld::saveWorld(const std::string& baseFilename) 
+{
     std::string filename = getNextAvailableFilename("worlds/" + baseFilename);
     
     std::ofstream file(filename, std::ios::binary);
@@ -27,27 +227,20 @@ bool ParticleWorld::saveWorld(const std::string& baseFilename) {
     }
     
     try {
-        // Write header information
+        // Write header: dimensions and frame counter
         file.write(reinterpret_cast<const char*>(&width), sizeof(width));
         file.write(reinterpret_cast<const char*>(&height), sizeof(height));
         file.write(reinterpret_cast<const char*>(&frameCounter), sizeof(frameCounter));
         
-        // Write particle data
+        // Write all particle data sequentially
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
                 const auto& particle = getParticleAt(x, y);
                 
-                // Write material ID
                 file.write(reinterpret_cast<const char*>(&particle.id), sizeof(particle.id));
-                
-                // Write velocity
                 file.write(reinterpret_cast<const char*>(&particle.velocity.x), sizeof(particle.velocity.x));
                 file.write(reinterpret_cast<const char*>(&particle.velocity.y), sizeof(particle.velocity.y));
-                
-                // Write lifetime
                 file.write(reinterpret_cast<const char*>(&particle.lifeTime), sizeof(particle.lifeTime));
-                
-                // Write color
                 file.write(reinterpret_cast<const char*>(&particle.color.r), sizeof(particle.color.r));
                 file.write(reinterpret_cast<const char*>(&particle.color.g), sizeof(particle.color.g));
                 file.write(reinterpret_cast<const char*>(&particle.color.b), sizeof(particle.color.b));
@@ -66,7 +259,8 @@ bool ParticleWorld::saveWorld(const std::string& baseFilename) {
     }
 }
 
-bool ParticleWorld::loadWorld(const std::string& filename) {
+bool ParticleWorld::loadWorld(const std::string& filename) 
+{
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) {
         std::cerr << "Failed to open file for reading: " << filename << std::endl;
@@ -74,7 +268,7 @@ bool ParticleWorld::loadWorld(const std::string& filename) {
     }
     
     try {
-        // Read and verify header information
+        // Read and verify header dimensions
         int fileWidth, fileHeight;
         file.read(reinterpret_cast<char*>(&fileWidth), sizeof(fileWidth));
         file.read(reinterpret_cast<char*>(&fileHeight), sizeof(fileHeight));
@@ -88,31 +282,21 @@ bool ParticleWorld::loadWorld(const std::string& filename) {
         
         file.read(reinterpret_cast<char*>(&frameCounter), sizeof(frameCounter));
         
-        // Read particle data
+        // Read particle data sequentially
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
                 Particle particle;
                 
-                // Read material ID
                 file.read(reinterpret_cast<char*>(&particle.id), sizeof(particle.id));
-                
-                // Read velocity
                 file.read(reinterpret_cast<char*>(&particle.velocity.x), sizeof(particle.velocity.x));
                 file.read(reinterpret_cast<char*>(&particle.velocity.y), sizeof(particle.velocity.y));
-                
-                // Read lifetime
                 file.read(reinterpret_cast<char*>(&particle.lifeTime), sizeof(particle.lifeTime));
-                
-                // Read color
                 file.read(reinterpret_cast<char*>(&particle.color.r), sizeof(particle.color.r));
                 file.read(reinterpret_cast<char*>(&particle.color.g), sizeof(particle.color.g));
                 file.read(reinterpret_cast<char*>(&particle.color.b), sizeof(particle.color.b));
                 file.read(reinterpret_cast<char*>(&particle.color.a), sizeof(particle.color.a));
                 
-                // Initialize update flag
                 particle.hasBeenUpdatedThisFrame = false;
-                
-                // Set the particle
                 setParticleAt(x, y, particle);
             }
         }
@@ -127,16 +311,36 @@ bool ParticleWorld::loadWorld(const std::string& filename) {
     }
 }
 
-void ParticleWorld::updateLiquidMovement(int x, int y, float dt, float horizontalChance, float velocityMultiplier) {
+Particle ParticleWorld::createParticleByType(MaterialID type)
+{
+    switch (type)
+    {
+    case MaterialID::Sand:      return Particle::createSand();
+    case MaterialID::Water:     return Particle::createWater();
+    case MaterialID::Salt:      return Particle::createSalt();
+    case MaterialID::Wood:      return Particle::createWood();
+    case MaterialID::Fire:      return Particle::createFire();
+    case MaterialID::Smoke:     return Particle::createSmoke();
+    case MaterialID::Ember:     return Particle::createEmber();
+    case MaterialID::Steam:     return Particle::createSteam();
+    case MaterialID::Gunpowder: return Particle::createGunpowder();
+    case MaterialID::Oil:       return Particle::createOil();
+    case MaterialID::Lava:      return Particle::createLava();
+    case MaterialID::Stone:     return Particle::createStone();
+    case MaterialID::Acid:      return Particle::createAcid();
+    default:                    return Particle::createEmpty();
+    }
+}
+
+void ParticleWorld::updateLiquidMovement(int x, int y, float dt, float horizontalChance, float velocityMultiplier) 
+{
     auto& p = getParticleAt(x, y);
     
-    // Apply gravity acceleration
+    // Apply gravity with velocity clamping
     p.velocity.y = std::clamp(p.velocity.y + (GRAVITY * dt), -10.0f, 10.0f);
+    p.velocity.x *= 0.98f; // Apply friction
     
-    // Use floating point movement with accumulation
-    p.velocity.x *= 0.98f; // Add slight friction
-    
-    // Try to move with accumulated velocity
+    // Try movement with accumulated velocity
     int targetX = x + static_cast<int>(std::round(p.velocity.x));
     int targetY = y + static_cast<int>(std::round(p.velocity.y));
     
@@ -145,7 +349,7 @@ void ParticleWorld::updateLiquidMovement(int x, int y, float dt, float horizonta
         return;
     }
     
-    // Fall down with proper acceleration
+    // Direct downward fall
     if (inBounds(x, y + 1) && isEmpty(x, y + 1)) {
         swapParticles(x, y, x, y + 1);
         return;
@@ -156,7 +360,7 @@ void ParticleWorld::updateLiquidMovement(int x, int y, float dt, float horizonta
     bool canFallRight = inBounds(x + 1, y + 1) && isEmpty(x + 1, y + 1);
     
     if (canFallLeft && canFallRight) {
-        // Choose based on horizontal velocity or random
+        // Choose direction based on horizontal velocity or randomly
         if (std::abs(p.velocity.x) > 0.1f) {
             if (p.velocity.x < 0) {
                 swapParticles(x, y, x - 1, y + 1);
@@ -181,65 +385,62 @@ void ParticleWorld::updateLiquidMovement(int x, int y, float dt, float horizonta
         return;
     }
     
-    // Horizontal flow with pressure simulation - MUCH faster spreading
+    // Horizontal flow with pressure simulation
     bool canFlowLeft = inBounds(x - 1, y) && isEmpty(x - 1, y);
     bool canFlowRight = inBounds(x + 1, y) && isEmpty(x + 1, y);
     
     if (canFlowLeft || canFlowRight) {
-        // Add pressure-based horizontal movement
-        p.velocity.x += Random::randFloat(-0.8f, 0.8f); // Increased randomness
+        p.velocity.x += Random::randFloat(-0.8f, 0.8f);
         
         if (canFlowLeft && (p.velocity.x < 0 || !canFlowRight)) {
-            if (Random::chance(2)) { // Much faster horizontal flow
+            if (Random::chance(2)) {
                 swapParticles(x, y, x - 1, y);
                 return;
             }
         }
         
         if (canFlowRight && (p.velocity.x > 0 || !canFlowLeft)) {
-            if (Random::chance(2)) { // Much faster horizontal flow
+            if (Random::chance(2)) {
                 swapParticles(x, y, x + 1, y);
                 return;
             }
         }
     }
     
-    // Reset velocity when blocked
+    // Apply damping when blocked
     p.velocity.y *= 0.7f;
     p.velocity.x *= 0.8f;
 }
 
-void ParticleWorld::updateSolidMovement(int x, int y, float dt, bool canDisplaceLiquids) {
+void ParticleWorld::updateSolidMovement(int x, int y, float dt, bool canDisplaceLiquids) 
+{
     auto& p = getParticleAt(x, y);
     
-    // Apply gravity acceleration (key fix!)
+    // Apply gravity acceleration
     p.velocity.y = std::clamp(p.velocity.y + (GRAVITY * dt), -15.0f, 15.0f);
     
-    // Add slight horizontal randomness when falling
+    // Add horizontal randomness when falling fast
     if (p.velocity.y > 2.0f) {
         p.velocity.x += Random::randFloat(-0.1f, 0.1f);
         p.velocity.x = std::clamp(p.velocity.x, -2.0f, 2.0f);
     }
     
-    // Calculate movement based on accumulated velocity - REMOVED the artificial limit of 3
+    // Calculate target movement based on velocity
     int moveY = static_cast<int>(std::round(p.velocity.y));
     int moveX = static_cast<int>(std::round(p.velocity.x));
-    
-    // Try to move with the full calculated velocity (not limited to 3 pixels)
     int targetY = y + moveY;
     int targetX = x + moveX;
     
-    // First try direct movement to target position
+    // Try direct movement to target position
     if (inBounds(targetX, targetY)) {
         auto& target = getParticleAt(targetX, targetY);
         if (target.id == MaterialID::Empty || 
             (canDisplaceLiquids && (target.id == MaterialID::Water || target.id == MaterialID::Oil) && !target.hasBeenUpdatedThisFrame)) {
             
             if (target.id == MaterialID::Water || target.id == MaterialID::Oil) {
-                // Reduced splash effect - less violent displacement
                 target.hasBeenUpdatedThisFrame = true;
                 
-                // Find a spot for displaced liquid
+                // Find nearby empty spot for displaced liquid
                 bool placed = false;
                 for (int searchRadius = 1; searchRadius <= 3 && !placed; searchRadius++) {
                     for (int dy = -searchRadius; dy <= 0 && !placed; dy++) {
@@ -258,7 +459,7 @@ void ParticleWorld::updateSolidMovement(int x, int y, float dt, bool canDisplace
         }
     }
     
-    // If direct movement failed, try step by step movement downward
+    // Step-by-step downward movement if direct movement failed
     for (int step = 1; step <= std::abs(moveY); step++) {
         int testY = y + step;
         if (inBounds(x, testY)) {
@@ -267,11 +468,11 @@ void ParticleWorld::updateSolidMovement(int x, int y, float dt, bool canDisplace
                 (canDisplaceLiquids && (below.id == MaterialID::Water || below.id == MaterialID::Oil) && !below.hasBeenUpdatedThisFrame)) {
                 
                 if (below.id == MaterialID::Water || below.id == MaterialID::Oil) {
-                    // Reduced splash effect - less violent displacement
+                    // Reduced splash displacement
                     below.velocity = {Random::randFloat(-1.5f, 1.5f), Random::randFloat(-0.5f, -1.5f)};
                     below.hasBeenUpdatedThisFrame = true;
                     
-                    // Find a spot for displaced liquid
+                    // Find spot for displaced liquid
                     bool placed = false;
                     for (int searchRadius = 1; searchRadius <= 3 && !placed; searchRadius++) {
                         for (int dy = -searchRadius; dy <= 0 && !placed; dy++) {
@@ -288,14 +489,14 @@ void ParticleWorld::updateSolidMovement(int x, int y, float dt, bool canDisplace
                 swapParticles(x, y, x, testY);
                 return;
             } else {
-                // Hit something - reduce velocity and try diagonal
+                // Hit obstacle - reduce velocity and try diagonal
                 p.velocity.y *= 0.3f;
                 break;
             }
         }
     }
     
-    // Try diagonal movement if vertical movement failed
+    // Try diagonal movement if vertical blocked
     if (moveY > 0) {
         int diagX = x + (moveX > 0 ? 1 : (moveX < 0 ? -1 : (Random::randBool() ? 1 : -1)));
         
@@ -322,27 +523,29 @@ void ParticleWorld::updateSolidMovement(int x, int y, float dt, bool canDisplace
     p.velocity.x *= 0.9f;
     if (std::abs(p.velocity.x) < 0.1f) p.velocity.x = 0.0f;
 }
-void ParticleWorld::updateGasMovement(int x, int y, float dt, float buoyancy, float chaosLevel) {
+
+void ParticleWorld::updateGasMovement(int x, int y, float dt, float buoyancy, float chaosLevel) 
+{
     auto& p = getParticleAt(x, y);
     
-    // Apply negative gravity (buoyancy) with chaos
+    // Apply buoyancy (negative gravity)
     p.velocity.y = std::clamp(p.velocity.y - (GRAVITY * dt * buoyancy), -5.0f, 2.0f);
     
     // Add chaotic horizontal movement
     p.velocity.x += Random::randFloat(-chaosLevel, chaosLevel);
     p.velocity.x = std::clamp(p.velocity.x, -3.0f, 3.0f);
     
-    // Apply random turbulence
+    // Random turbulence
     if (Random::chance(5)) {
         p.velocity.x += Random::randFloat(-1.0f, 1.0f);
         p.velocity.y += Random::randFloat(-0.5f, 0.5f);
     }
     
-    // Calculate intended movement
+    // Calculate target position
     int targetX = x + static_cast<int>(std::round(p.velocity.x));
     int targetY = y + static_cast<int>(std::round(p.velocity.y));
     
-    // Try direct movement first
+    // Try direct movement (gases can pass through liquids)
     if (inBounds(targetX, targetY) && 
         (isEmpty(targetX, targetY) || 
          getParticleAt(targetX, targetY).id == MaterialID::Water ||
@@ -351,7 +554,7 @@ void ParticleWorld::updateGasMovement(int x, int y, float dt, float buoyancy, fl
         return;
     }
     
-    // Try moving up (gases rise)
+    // Try upward movement
     if (inBounds(x, y - 1) && 
         (isEmpty(x, y - 1) || 
          getParticleAt(x, y - 1).id == MaterialID::Water ||
@@ -360,7 +563,7 @@ void ParticleWorld::updateGasMovement(int x, int y, float dt, float buoyancy, fl
         return;
     }
     
-    // Try horizontal movement with random direction preference
+    // Try horizontal movement
     int direction = (Random::randFloat(-1.0f, 1.0f) > 0) ? 1 : -1;
     if (inBounds(x + direction, y) && 
         (isEmpty(x + direction, y) || 
@@ -371,7 +574,7 @@ void ParticleWorld::updateGasMovement(int x, int y, float dt, float buoyancy, fl
         return;
     }
     
-    // Try the opposite direction
+    // Try opposite direction
     if (inBounds(x - direction, y) && 
         (isEmpty(x - direction, y) || 
          getParticleAt(x - direction, y).id == MaterialID::Water ||
@@ -381,7 +584,7 @@ void ParticleWorld::updateGasMovement(int x, int y, float dt, float buoyancy, fl
         return;
     }
     
-    // Try diagonal up movement
+    // Try diagonal upward movement
     for (int dx = -1; dx <= 1; dx += 2) {
         if (inBounds(x + dx, y - 1) && 
             (isEmpty(x + dx, y - 1) || 
@@ -397,31 +600,34 @@ void ParticleWorld::updateGasMovement(int x, int y, float dt, float buoyancy, fl
     p.velocity.y *= 0.9f;
 }
 
-void ParticleWorld::updateSand(int x, int y, float dt) {
+void ParticleWorld::updateSand(int x, int y, float dt) 
+{
     auto& p = getParticleAt(x, y);
     if (p.hasBeenUpdatedThisFrame) return;
     p.hasBeenUpdatedThisFrame = true;
     
-    // Apply gravity acceleration like liquids for more realistic falling
+    // Apply gravity acceleration for realistic falling
     p.velocity.y = std::clamp(p.velocity.y + (GRAVITY * dt), -10.0f, 10.0f);
     
     updateSolidMovement(x, y, dt, true);
 }
 
-void ParticleWorld::updateWater(int x, int y, float dt) {
+void ParticleWorld::updateWater(int x, int y, float dt) 
+{
     auto& p = getParticleAt(x, y);
     if (p.hasBeenUpdatedThisFrame) return;
     p.hasBeenUpdatedThisFrame = true;
     
-    updateLiquidMovement(x, y, dt, 2.0f, 2.0f); // Faster spreading
+    updateLiquidMovement(x, y, dt, 2.0f, 2.0f);
 }
 
-void ParticleWorld::updateSalt(int x, int y, float dt) {
+void ParticleWorld::updateSalt(int x, int y, float dt) 
+{
     auto& p = getParticleAt(x, y);
     if (p.hasBeenUpdatedThisFrame) return;
     p.hasBeenUpdatedThisFrame = true;
     
-    // Dissolve in liquid
+    // Dissolve in nearby liquid
     int lx, ly;
     if (isInLiquid(x, y, &lx, &ly) && Random::chance(800)) {
         setParticleAt(x, y, Particle::createEmpty());
@@ -431,14 +637,15 @@ void ParticleWorld::updateSalt(int x, int y, float dt) {
     updateSolidMovement(x, y, dt, false);
 }
 
-void ParticleWorld::updateFire(int x, int y, float dt) {
+void ParticleWorld::updateFire(int x, int y, float dt) 
+{
     auto& p = getParticleAt(x, y);
     if (p.hasBeenUpdatedThisFrame) return;
     p.hasBeenUpdatedThisFrame = true;
     
-    // Die after some time or randomly
+    // Fire dies after lifetime or randomly
     if (p.lifeTime > 1.5f || (p.lifeTime > 0.3f && Random::chance(150))) {
-        // Create embers when dying
+        // Create byproducts when dying
         if (Random::chance(5)) {
             setParticleAt(x, y, Particle::createEmber());
         } else if (Random::chance(3)) {
@@ -449,7 +656,7 @@ void ParticleWorld::updateFire(int x, int y, float dt) {
         return;
     }
     
-    // Update color BEFORE movement (fire stays in place)
+    // Update fire color randomly
     if (Random::chance(20)) {
         int colorVariant = Random::randInt(0, 3);
         switch (colorVariant) {
@@ -460,8 +667,7 @@ void ParticleWorld::updateFire(int x, int y, float dt) {
         }
     }
     
-    // Fire stays in place and spreads
-    // Ignite nearby materials
+    // Ignite nearby flammable materials
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
@@ -485,44 +691,45 @@ void ParticleWorld::updateFire(int x, int y, float dt) {
     }
 }
 
-void ParticleWorld::updateSmoke(int x, int y, float dt) {
+void ParticleWorld::updateSmoke(int x, int y, float dt) 
+{
     auto& p = getParticleAt(x, y);
     if (p.hasBeenUpdatedThisFrame) return;
     p.hasBeenUpdatedThisFrame = true;
     
-    // Die after some time
+    // Smoke dissipates over time
     if (p.lifeTime > 15.0f) {
         setParticleAt(x, y, Particle::createEmpty());
         return;
     }
     
-    // Update color BEFORE movement
+    // Fade color based on lifetime
     float lifeFactor = std::clamp((15.0f - p.lifeTime) / 15.0f, 0.1f, 1.0f);
     p.color.r = static_cast<uint8_t>(lifeFactor * 80);
     p.color.g = static_cast<uint8_t>(lifeFactor * 70);
     p.color.b = static_cast<uint8_t>(lifeFactor * 60);
     p.color.a = static_cast<uint8_t>(lifeFactor * 255);
     
-    // Use gas movement for chaotic behavior
     updateGasMovement(x, y, dt, 0.8f, 1.2f);
 }
 
-void ParticleWorld::updateEmber(int x, int y, float dt) {
+void ParticleWorld::updateEmber(int x, int y, float dt) 
+{
     auto& p = getParticleAt(x, y);
     if (p.hasBeenUpdatedThisFrame) return;
     p.hasBeenUpdatedThisFrame = true;
     
-    // Die after short time
+    // Embers die quickly
     if (p.lifeTime > 0.2f && Random::chance(100)) {
         setParticleAt(x, y, Particle::createEmpty());
         return;
     }
     
-    // Ember rises (using old fire movement logic)
+    // Embers rise with slight buoyancy
     p.velocity.y = std::clamp(p.velocity.y - (GRAVITY * dt) * 0.2f, -5.0f, 0.0f);
     p.velocity.x = std::clamp(p.velocity.x + Random::randFloat(-0.01f, 0.01f), -0.5f, 0.5f);
     
-    // Color variation for embers
+    // Random color variation
     if (Random::chance(static_cast<int>(p.lifeTime * 100.0f + 1)) && Random::chance(200)) {
         int colorVariant = Random::randInt(0, 3);
         switch (colorVariant) {
@@ -531,6 +738,7 @@ void ParticleWorld::updateEmber(int x, int y, float dt) {
             case 2: p.color = sf::Color(200, 150, 0, 255); break;
             case 3: p.color = sf::Color(100, 50, 2, 255); break;
         }
+        // Update pixel buffer directly for color changes
         int idx = computeIndex(x, y);
         int pixelIdx = idx * 4;
         pixelBuffer[pixelIdx] = p.color.r;
@@ -539,7 +747,7 @@ void ParticleWorld::updateEmber(int x, int y, float dt) {
         pixelBuffer[pixelIdx + 3] = p.color.a;
     }
     
-    // Ignite materials (embers can still ignite wood)
+    // Embers can still ignite wood
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
@@ -554,7 +762,7 @@ void ParticleWorld::updateEmber(int x, int y, float dt) {
     int lx, ly;
     if (isInWater(x, y, &lx, &ly)) {
         if (Random::randBool()) {
-            // Create steam
+            // Generate steam in area above
             for (int i = -5; i > -5; --i) {
                 for (int j = -5; j < 5; ++j) {
                     if (inBounds(x + j, y + i) && isEmpty(x + j, y + i)) {
@@ -563,13 +771,13 @@ void ParticleWorld::updateEmber(int x, int y, float dt) {
                     }
                 }
             }
-            setParticleAt(lx, ly, Particle::createEmpty()); // Remove water
-            setParticleAt(x, y, Particle::createEmpty()); // Remove ember
+            setParticleAt(lx, ly, Particle::createEmpty());
+            setParticleAt(x, y, Particle::createEmpty());
             return;
         }
     }
     
-    // Movement (ember rises)
+    // Simple upward movement
     int vx = static_cast<int>(p.velocity.x);
     int vy = static_cast<int>(p.velocity.y);
     
@@ -585,43 +793,44 @@ void ParticleWorld::updateEmber(int x, int y, float dt) {
     }
 }
 
-void ParticleWorld::updateSteam(int x, int y, float dt) {
+void ParticleWorld::updateSteam(int x, int y, float dt) 
+{
     auto& p = getParticleAt(x, y);
     if (p.hasBeenUpdatedThisFrame) return;
     p.hasBeenUpdatedThisFrame = true;
     
-    // Die after some time
+    // Steam dissipates over time
     if (p.lifeTime > 12.0f) {
         setParticleAt(x, y, Particle::createEmpty());
         return;
     }
     
-    // Update color BEFORE movement
+    // Fade transparency based on lifetime
     float lifeFactor = std::clamp((12.0f - p.lifeTime) / 12.0f, 0.1f, 1.0f);
     p.color.a = static_cast<uint8_t>(lifeFactor * 255 * 0.8f);
     
-    // Steam rises chaotically
     updateGasMovement(x, y, dt, 1.0f, 1.8f);
     
-    // Condense into water when cooled
+    // Condense back to water when cooled
     if (p.lifeTime > 8.0f && Random::chance(200)) {
         setParticleAt(x, y, Particle::createWater());
         return;
     }
 }
 
-void ParticleWorld::updateGunpowder(int x, int y, float dt) {
+void ParticleWorld::updateGunpowder(int x, int y, float dt) 
+{
     auto& p = getParticleAt(x, y);
     if (p.hasBeenUpdatedThisFrame) return;
     p.hasBeenUpdatedThisFrame = true;
     
-    // Check for fire first
+    // Check for nearby fire to trigger explosion
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
             int nx = x + dx, ny = y + dy;
             if (inBounds(nx, ny) && getParticleAt(nx, ny).id == MaterialID::Fire) {
-                // Explosion
+                // Create explosion in radius
                 for (int ey = -4; ey <= 4; ey++) {
                     for (int ex = -4; ex <= 4; ex++) {
                         int explosionX = x + ex, explosionY = y + ey;
@@ -641,12 +850,13 @@ void ParticleWorld::updateGunpowder(int x, int y, float dt) {
     updateSolidMovement(x, y, dt, true);
 }
 
-void ParticleWorld::updateOil(int x, int y, float dt) {
+void ParticleWorld::updateOil(int x, int y, float dt) 
+{
     auto& p = getParticleAt(x, y);
     if (p.hasBeenUpdatedThisFrame) return;
     p.hasBeenUpdatedThisFrame = true;
     
-    // Check for fire
+    // Check for fire ignition
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
@@ -658,29 +868,28 @@ void ParticleWorld::updateOil(int x, int y, float dt) {
         }
     }
     
-    // Oil flows like thick liquid but still spreads reasonably fast
-    updateLiquidMovement(x, y, dt, 4.0f, 1.5f); // Faster than before
+    // Oil flows like thick liquid
+    updateLiquidMovement(x, y, dt, 4.0f, 1.5f);
 }
 
-void ParticleWorld::updateLava(int x, int y, float dt) {
+void ParticleWorld::updateLava(int x, int y, float dt) 
+{
     auto& p = getParticleAt(x, y);
     if (p.hasBeenUpdatedThisFrame) return;
     p.hasBeenUpdatedThisFrame = true;
     
-    // Apply gravity acceleration like other liquids but slightly slower
+    // Apply gravity with slight reduction for viscosity
     p.velocity.y = std::clamp(p.velocity.y + (GRAVITY * dt * 0.85f), -8.0f, 8.0f);
-    
-    // Add slight friction
     p.velocity.x *= 0.95f;
     
-    // Ignite nearby materials
+    // Ignite nearby flammable materials
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
             int nx = x + dx, ny = y + dy;
             if (inBounds(nx, ny)) {
                 auto& neighbor = getParticleAt(nx, ny);
-                if ((neighbor.id == MaterialID::Wood || neighbor.id == MaterialID::Oil||neighbor.id==MaterialID::Gunpowder) && Random::chance(80)) {
+                if ((neighbor.id == MaterialID::Wood || neighbor.id == MaterialID::Oil || neighbor.id == MaterialID::Gunpowder) && Random::chance(80)) {
                     setParticleAt(nx, ny, Particle::createFire());
                 }
                 else if (neighbor.id == MaterialID::Water && Random::chance(15)) {
@@ -690,7 +899,7 @@ void ParticleWorld::updateLava(int x, int y, float dt) {
         }
     }
     
-    // Use floating point movement with accumulation like other liquids
+    // Movement with accumulated velocity
     int targetX = x + static_cast<int>(std::round(p.velocity.x));
     int targetY = y + static_cast<int>(std::round(p.velocity.y));
     
@@ -699,7 +908,7 @@ void ParticleWorld::updateLava(int x, int y, float dt) {
         return;
     }
     
-    // Fall down
+    // Direct downward fall
     if (inBounds(x, y + 1) && isEmpty(x, y + 1)) {
         swapParticles(x, y, x, y + 1);
         return;
@@ -742,7 +951,7 @@ void ParticleWorld::updateLava(int x, int y, float dt) {
         p.velocity.x += Random::randFloat(-0.3f, 0.3f);
         
         if (canFlowLeft && (p.velocity.x < 0 || !canFlowRight)) {
-            if (Random::chance(5)) { // Faster horizontal flow
+            if (Random::chance(5)) {
                 swapParticles(x, y, x - 1, y);
                 return;
             }
@@ -756,16 +965,18 @@ void ParticleWorld::updateLava(int x, int y, float dt) {
         }
     }
     
-    // Reset velocity when blocked
+    // Apply damping when blocked
     p.velocity.y *= 0.8f;
     p.velocity.x *= 0.85f;
 }
-void ParticleWorld::updateAcid(int x, int y, float dt) {
+
+void ParticleWorld::updateAcid(int x, int y, float dt) 
+{
     auto& p = getParticleAt(x, y);
     if (p.hasBeenUpdatedThisFrame) return;
     p.hasBeenUpdatedThisFrame = true;
     
-    // Dissolve nearby materials
+    // Dissolve nearby materials (except stone and acid)
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
