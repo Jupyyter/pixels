@@ -126,11 +126,12 @@ bool UI::handleClick(const sf::Vector2f& worldMousePos) {
     }
     return false; // Click not consumed by UI
 }
-bool UI::loadFont() {
+bool UI::loadFont()
+{
     // Try multiple font paths as fallbacks
     std::vector<std::string> fontPaths = {
         "assets/fonts/ARIAL.TTF",
-        "assets/fonts/arial.ttf", 
+        "assets/fonts/arial.ttf",
         "assets/fonts/Arial.ttf",
         "C:/Windows/Fonts/arial.ttf",
         "C:/Windows/Fonts/Arial.ttf",
@@ -139,25 +140,19 @@ bool UI::loadFont() {
         "/usr/share/fonts/TTF/arial.ttf",
         "/System/Library/Fonts/Helvetica.ttc",
         "font.ttf",
-        "arial.ttf"
-    };
-    
-    for (const auto& path : fontPaths) {
-        if (font.openFromFile(path)) {
-            std::cout << "Font loaded successfully from: " << path << std::endl;
+        "arial.ttf"};
+
+    for (const auto &path : fontPaths)
+    {
+        if (font.openFromFile(path))
+        {
             return true;
         }
     }
-    
+
     std::cerr << "Warning: Could not load any font. Text will not display properly." << std::endl;
-    std::cerr << "Please ensure you have a font file in one of these locations:" << std::endl;
-    for (const auto& path : fontPaths) {
-        std::cerr << "  - " << path << std::endl;
-    }
-    
     return false;
 }
-
 void UI::setupMaterialButtons() {
     materialButtons.clear();
     

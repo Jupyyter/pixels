@@ -136,8 +136,6 @@ void SandSimApp::returnToMenu() {
     levelMenu->resetSelection();
     levelMenu->refreshLevels();  // This will reload the levels from the worlds directory
     currentState = GameState::MENU;
-    
-    std::cout << "Returned to menu and refreshed level list" << std::endl;
 }
 
 void SandSimApp::handleKeyPress(sf::Keyboard::Key key) {

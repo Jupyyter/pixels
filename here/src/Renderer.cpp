@@ -104,7 +104,6 @@ void Renderer::setupShaders() {
         std::cerr << "Warning: Could not load bloom shader. Post-processing disabled." << std::endl;
         usePostProcessing = false;
     } else {
-        // Lower threshold (0.4 instead of 0.7) and higher intensity for more visible bloom
         bloomShader.setUniform("threshold", 0.4f);
         bloomShader.setUniform("intensity", 2.0f);
     }
@@ -143,8 +142,6 @@ void Renderer::setupShaders() {
     if (!blurShader.isAvailable() || !bloomShader.isAvailable()) {
         usePostProcessing = false;
     }
-    
-    std::cout << "Bloom effect " << (usePostProcessing ? "enabled" : "disabled") << std::endl;
 }
 
 void Renderer::updateTexture(const ParticleWorld& world) {
@@ -165,7 +162,6 @@ void Renderer::render(sf::RenderWindow& window, const ParticleWorld& world) {
 
 void Renderer::setUsePostProcessing(bool use) {
     usePostProcessing = use && blurShader.isAvailable() && bloomShader.isAvailable();
-    std::cout << "Bloom effect " << (usePostProcessing ? "ON" : "OFF") << std::endl;
 }
 
 bool Renderer::getUsePostProcessing() const {

@@ -118,7 +118,6 @@ bool ParticleWorld::loadWorld(const std::string& filename) {
         }
         
         file.close();
-        std::cout << "World loaded successfully from: " << filename << std::endl;
         return true;
         
     } catch (const std::exception& e) {
