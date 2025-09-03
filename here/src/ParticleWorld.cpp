@@ -18,7 +18,7 @@ std::string ParticleWorld::getNextAvailableFilename(const std::string& baseName)
 }
 
 bool ParticleWorld::saveWorld(const std::string& baseFilename) {
-    std::string filename = getNextAvailableFilename(baseFilename);
+    std::string filename = getNextAvailableFilename("worlds/" + baseFilename);
     
     std::ofstream file(filename, std::ios::binary);
     if (!file.is_open()) {

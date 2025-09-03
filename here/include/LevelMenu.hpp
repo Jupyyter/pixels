@@ -70,6 +70,8 @@ namespace SandSim {
         void handleMouseDrag(const sf::Vector2f& mousePos, bool pressed);
         void handleMouseWheel(float delta);
         void render(sf::RenderTarget& target);
+        // Add this method to LevelMenu class
+void refreshLevels();
         
         int getSelectedLevel() const { return selectedLevel; }
         std::string getSelectedLevelFile() const;

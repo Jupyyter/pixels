@@ -132,11 +132,12 @@ void SandSimApp::returnToMenu() {
     world.reset();
     ui.reset();
     
-    // Reset level menu selection and return to menu state
+    // Reset level menu selection and refresh levels to show any newly saved worlds
     levelMenu->resetSelection();
+    levelMenu->refreshLevels();  // This will reload the levels from the worlds directory
     currentState = GameState::MENU;
     
-    std::cout << "Returned to menu" << std::endl;
+    std::cout << "Returned to menu and refreshed level list" << std::endl;
 }
 
 void SandSimApp::handleKeyPress(sf::Keyboard::Key key) {

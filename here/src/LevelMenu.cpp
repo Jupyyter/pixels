@@ -139,8 +139,17 @@ bool LevelMenu::loadFont() {
 void LevelMenu::loadLevels() {
     levels.clear();
 
+    // Change from "." to "worlds" directory
+    std::string worldsDir = "worlds";
+    
     try {
-        for (const auto& entry : std::filesystem::directory_iterator(".")) {
+        // Check if worlds directory exists
+        if (!std::filesystem::exists(worldsDir)) {
+            std::cerr << "Worlds directory does not exist: " << worldsDir << std::endl;
+            return;
+        }
+        
+        for (const auto& entry : std::filesystem::directory_iterator(worldsDir)) {
             if (entry.path().extension() == ".rrr") {
                 LevelInfo level(fonttt);
                 level.filename = entry.path().string();
@@ -184,10 +193,16 @@ void LevelMenu::loadLevels() {
             }
         }
     } catch (const std::exception& e) {
-        std::cerr << "Error loading levels: " << e.what() << std::endl;
+        std::cerr << "Error loading levels from " << worldsDir << ": " << e.what() << std::endl;
     }
 
-    std::cout << "Loaded " << levels.size() << " levels" << std::endl;
+    std::cout << "Loaded " << levels.size() << " levels from " << worldsDir << " directory" << std::endl;
+}
+
+void LevelMenu::refreshLevels() {
+    loadLevels();
+    setupLayout();
+    std::cout << "Level menu refreshed with " << levels.size() << " levels" << std::endl;
 }
 
 void LevelMenu::generateThumbnail(const std::string& worldFile, sf::Texture& thumbnail) {
@@ -429,4 +444,4 @@ void LevelMenu::render(sf::RenderTarget& target) {
     target.draw(menuSprite);
 }
 
-} // namespace Sa
+} // namespace SandSim
