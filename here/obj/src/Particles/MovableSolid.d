@@ -82,7 +82,7 @@ obj/src/Particles/MovableSolid.o: src/Particles/MovableSolid.cpp \
  ../2dbox/include/box2d/box2d.h ../2dbox/include/box2d/base.h \
  ../2dbox/include/box2d/collision.h \
  ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
- ../2dbox/include/box2d/types.h
+ ../2dbox/include/box2d/types.h include/Particles/Explosion.hpp
 include/Particles/MovableSolid.hpp:
 include/Particles/Solid.hpp:
 include/Particles/Particle.hpp:
@@ -174,3 +174,4 @@ include/RigidBody.hpp:
 ../2dbox/include/box2d/math_functions.h:
 ../2dbox/include/box2d/id.h:
 ../2dbox/include/box2d/types.h:
+include/Particles/Explosion.hpp:

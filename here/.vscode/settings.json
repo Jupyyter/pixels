@@ -85,5 +85,13 @@
                 "fstream": "cpp",
                 "set": "cpp"
         },
-        "cmake.ignoreCMakeListsMissing": true
+        "cmake.ignoreCMakeListsMissing": true,
+        "editor.inlineSuggest.enabled": false,
+        "github.copilot.enable": {
+                "*": false
+        },
+        "cursor.cpp.enableGhostText": false,
+        "cursor.general.enableGhostText": false,
+        "editor.suggest.preview": true,
+        "editor.suggest.insertMode": "insert"
 }

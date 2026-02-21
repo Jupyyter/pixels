@@ -1,8 +1,14 @@
-obj/src/UI.o: src/UI.cpp include/UI.hpp \
+obj/src/Particles/Explosion.o: src/Particles/Explosion.cpp \
+ include/particles/Explosion.hpp \
+ ../SFML-3.0.0/include/SFML/System/Vector2.hpp \
+ ../SFML-3.0.0/include/SFML/System/Export.hpp \
+ ../SFML-3.0.0/include/SFML/Config.hpp \
+ ../SFML-3.0.0/include/SFML/System/Angle.hpp \
+ ../SFML-3.0.0/include/SFML/System/Angle.inl \
+ ../SFML-3.0.0/include/SFML/System/Vector2.inl include/ParticleWorld.hpp \
  ../SFML-3.0.0/include/SFML/Graphics.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/Export.hpp \
- ../SFML-3.0.0/include/SFML/Config.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/CircleShape.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/Shape.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/Color.hpp \
@@ -10,11 +16,6 @@ obj/src/UI.o: src/UI.cpp include/UI.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/Drawable.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/PrimitiveType.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/Rect.hpp \
- ../SFML-3.0.0/include/SFML/System/Vector2.hpp \
- ../SFML-3.0.0/include/SFML/System/Export.hpp \
- ../SFML-3.0.0/include/SFML/System/Angle.hpp \
- ../SFML-3.0.0/include/SFML/System/Angle.inl \
- ../SFML-3.0.0/include/SFML/System/Vector2.inl \
  ../SFML-3.0.0/include/SFML/Graphics/Rect.inl \
  ../SFML-3.0.0/include/SFML/Graphics/RenderStates.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/CoordinateType.hpp \
@@ -76,19 +77,23 @@ obj/src/UI.o: src/UI.cpp include/UI.hpp \
  ../SFML-3.0.0/include/SFML/System/FileInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
- ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
- include/ParticleWorld.hpp include/particles/Particle.hpp \
- include/Random.hpp include/RigidBody.hpp ../2dbox/include/box2d/box2d.h \
+ ../SFML-3.0.0/include/SFML/System/Sleep.hpp \
+ include/particles/Particle.hpp include/Constants.hpp include/Random.hpp \
+ include/RigidBody.hpp ../2dbox/include/box2d/box2d.h \
  ../2dbox/include/box2d/base.h ../2dbox/include/box2d/collision.h \
  ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
- ../2dbox/include/box2d/types.h include/Particles/Explosion.hpp \
- ../imgui-src/imgui.h ../imgui-src/imconfig.h ../imgui-src/imgui-SFML.h \
- ../imgui-src/imgui-SFML_export.h
-include/UI.hpp:
+ ../2dbox/include/box2d/types.h include/particles/ExplosiveContainer.hpp
+include/particles/Explosion.hpp:
+../SFML-3.0.0/include/SFML/System/Vector2.hpp:
+../SFML-3.0.0/include/SFML/System/Export.hpp:
+../SFML-3.0.0/include/SFML/Config.hpp:
+../SFML-3.0.0/include/SFML/System/Angle.hpp:
+../SFML-3.0.0/include/SFML/System/Angle.inl:
+../SFML-3.0.0/include/SFML/System/Vector2.inl:
+include/ParticleWorld.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/Export.hpp:
-../SFML-3.0.0/include/SFML/Config.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/CircleShape.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/Shape.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/Color.hpp:
@@ -96,11 +101,6 @@ include/UI.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/Drawable.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/PrimitiveType.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/Rect.hpp:
-../SFML-3.0.0/include/SFML/System/Vector2.hpp:
-../SFML-3.0.0/include/SFML/System/Export.hpp:
-../SFML-3.0.0/include/SFML/System/Angle.hpp:
-../SFML-3.0.0/include/SFML/System/Angle.inl:
-../SFML-3.0.0/include/SFML/System/Vector2.inl:
 ../SFML-3.0.0/include/SFML/Graphics/Rect.inl:
 ../SFML-3.0.0/include/SFML/Graphics/RenderStates.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/CoordinateType.hpp:
@@ -163,9 +163,8 @@ include/UI.hpp:
 ../SFML-3.0.0/include/SFML/System/InputStream.hpp:
 ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp:
 ../SFML-3.0.0/include/SFML/System/Sleep.hpp:
-include/Constants.hpp:
-include/ParticleWorld.hpp:
 include/particles/Particle.hpp:
+include/Constants.hpp:
 include/Random.hpp:
 include/RigidBody.hpp:
 ../2dbox/include/box2d/box2d.h:
@@ -174,8 +173,4 @@ include/RigidBody.hpp:
 ../2dbox/include/box2d/math_functions.h:
 ../2dbox/include/box2d/id.h:
 ../2dbox/include/box2d/types.h:
-include/Particles/Explosion.hpp:
-../imgui-src/imgui.h:
-../imgui-src/imconfig.h:
-../imgui-src/imgui-SFML.h:
-../imgui-src/imgui-SFML_export.h:
+include/particles/ExplosiveContainer.hpp:

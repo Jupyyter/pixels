@@ -234,7 +234,7 @@ void RigidBodySystem::renderToParticleWorld(ParticleWorld *particleWorld)
                 // Only clear if it's still a rigid body particle (lifetime == -1.0f)
                 if (currentParticle->id == rbData->materialType && currentParticle->lifeSpan == -1.0f)
                 {
-                    particleWorld->setParticleAt(pixel.x, pixel.y, std::make_unique<EmptyParticle>());
+                    particleWorld->setParticleAt(pixel.x, pixel.y, nullptr);
                 }
             }
         }

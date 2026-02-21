@@ -78,6 +78,6 @@ void Particle::dieAndReplace(MaterialID newType, ParticleWorld& world) {
         
         world.setParticleAt(myX, myY, std::move(newPart));
     } else {
-        world.setParticleAt(myX, myY, std::make_unique<EmptyParticle>());
+        world.setParticleAt(myX, myY, nullptr);
     }
 }

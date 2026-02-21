@@ -13,9 +13,10 @@ Gas::Gas(MaterialID id, float buoy, float chaos)
 }
 
 // --- CORE MOVEMENT ---
+// --- CORE MOVEMENT ---
 void Gas::update(int x, int y, float dt, ParticleWorld& world) 
 {
-    world.updateParticleColor(this,world);
+    world.updateParticleColor(this, world);
     if (hasBeenUpdatedThisFrame) return;
     hasBeenUpdatedThisFrame = true;
 
@@ -35,23 +36,56 @@ void Gas::update(int x, int y, float dt, ParticleWorld& world)
     int targetX = x + static_cast<int>(std::round(velocity.x));
     int targetY = y + static_cast<int>(std::round(velocity.y));
     
-    // Helper lambda using the new actOnNeighbor signature
+    // Helper: Tries to move to a specific spot
     auto tryMove = [&](int tx, int ty) -> bool {
-        // x and y are passed by reference as currentX and currentY
         return actOnNeighbor(tx, ty, x, y, world, true, true, 0);
     };
 
-    // --- Original 5-Step Movement Logic ---
+    // Helper: Raycast - Checks if the line between (x,y) and (tx,ty) contains a Solid
+    auto isPathBlocked = [&](int tx, int ty) -> bool {
+        int dX = std::abs(tx - x);
+        int dY = std::abs(ty - y);
+        int sX = (x < tx) ? 1 : -1;
+        int sY = (y < ty) ? 1 : -1;
+        int err = dX - dY;
+        
+        int currX = x;
+        int currY = y;
 
-    // 1. Try Direct Movement
-    if (tryMove(targetX, targetY)) {
-        // Moved
+        while (true) {
+            // Reached target (don't check target here, tryMove does that)
+            if (currX == tx && currY == ty) break;
+
+            // Don't check the starting pixel
+            if (currX != x || currY != y) {
+                Particle* p = world.getParticleAt(currX, currY);
+                // If we hit a Solid (Movable or Immovable), the path is blocked
+                if (p && (p->getGroup() == MaterialGroup::ImmovableSolid || 
+                          p->getGroup() == MaterialGroup::MovableSolid)) {
+                    return true;
+                }
+            }
+
+            int e2 = 2 * err;
+            if (e2 > -dY) { err -= dY; currX += sX; }
+            if (e2 < dX)  { err += dX; currY += sY; }
+        }
+        return false;
+    };
+
+    // --- Movement Logic ---
+
+    // 1. Try Direct Movement (High Velocity Jump)
+    // CRITICAL FIX: We added !isPathBlocked(...) check here
+    if (!isPathBlocked(targetX, targetY) && tryMove(targetX, targetY)) {
+        // Moved successfully via long jump
     }
-    // 2. Try Upward Movement
+    // 2. Fallback: Try 1-pixel Upward Movement (Standard Rising)
+    // If the long jump failed (hit a wall), this will naturally catch the gas next to the wall
     else if (tryMove(x, y - 1)) {
-        // Moved up
+        velocity.y *= 0.5f; // Damping on collision
     }
-    // 3. Try Horizontal Movement (Drift)
+    // 3. Fallback: Horizontal Movement (Drift/Dispersion)
     else {
         int direction = (velocity.x > 0) ? 1 : -1;
         if (std::abs(velocity.x) < 0.1f) direction = Random::randBool() ? 1 : -1;
@@ -62,12 +96,12 @@ void Gas::update(int x, int y, float dt, ParticleWorld& world)
         else if (tryMove(x - direction, y)) {
             velocity.x -= direction * 0.5f;
         }
-        // 4. Try Diagonal Upward
+        // 4. Fallback: Diagonal Upward (Slide along ceilings)
         else if (tryMove(x + 1, y - 1)) {
-            // Moved diagonal right-up
+             velocity.x += 0.1f;
         }
         else if (tryMove(x - 1, y - 1)) {
-            // Moved diagonal left-up
+             velocity.x -= 0.1f;
         }
     }
 

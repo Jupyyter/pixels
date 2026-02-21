@@ -6,9 +6,12 @@
 #include <filesystem>
 #include "RigidBody.hpp"
 #include <cstring>
+
 ParticleWorld::~ParticleWorld() = default;
+
 // A unique 4-byte header to identify your save files
 const char MAGIC_HEADER[4] = {'S', 'A', 'N', 'D'};
+
 ParticleWorld::ParticleWorld(unsigned int w, unsigned int h, const std::string& worldFile)
     : width(w), height(h), frameCounter(0) {
     particles.resize(width * height);
@@ -29,6 +32,7 @@ void ParticleWorld::clear() {
     std::fill(pixelBuffer.begin(), pixelBuffer.end(), 0); // Black/Transparent screen
     if (rigidBodySystem) rigidBodySystem->clear();
 }
+
 void ParticleWorld::setParticleAt(int x, int y, std::unique_ptr<Particle> particle) {
     if (!inBounds(x, y)) return;
 
@@ -73,6 +77,7 @@ void ParticleWorld::moveParticle(int oldX, int oldY, int newX, int newY) {
         pixelBuffer[pOld + i] = 0; 
     }
 }
+
 void ParticleWorld::swapParticles(int x1, int y1, int x2, int y2) {
     if (!inBounds(x1, y1) || !inBounds(x2, y2)) return;
 
@@ -93,6 +98,7 @@ void ParticleWorld::swapParticles(int x1, int y1, int x2, int y2) {
         std::swap(pixelBuffer[pIdx1 + i], pixelBuffer[pIdx2 + i]);
     }
 }
+
 void ParticleWorld::updatePixelColor(int x, int y, const sf::Color& color) {
     if (!inBounds(x, y)) return;
     int idx = computeIndex(x, y) * 4;
@@ -165,7 +171,8 @@ bool ParticleWorld::saveWorld(const std::string& baseFilename) {
 
     for (int i = 0; i < width * height; ++i) {
         Particle* p = particles[i].get();
-        MaterialID id = p ? p->id : MaterialID::EmptyParticle;
+        // Use static_cast<MaterialID>(0) to represent empty instead of named constant
+        MaterialID id = p ? p->id : static_cast<MaterialID>(0);
         file.write(reinterpret_cast<const char*>(&id), sizeof(id));
         if (p) {
             file.write(reinterpret_cast<const char*>(&p->velocity), sizeof(sf::Vector2f));
@@ -216,7 +223,8 @@ bool ParticleWorld::loadWorld(const std::string& filename) {
 
             if (file.eof() || file.fail()) break;
 
-            if (id == MaterialID::EmptyParticle) {
+            // Check if ID is 0 (representing empty)
+            if (static_cast<int>(id) == 0) {
                 // If it's an empty particle in the file, we skip the data bytes
                 file.seekg(dataSizePerParticle, std::ios::cur);
                 setParticleAt(x, y, nullptr);
@@ -228,7 +236,7 @@ bool ParticleWorld::loadWorld(const std::string& filename) {
                     file.read(reinterpret_cast<char*>(&p->color), sizeof(sf::Color));
                     setParticleAt(x, y, std::move(p));
                 } else {
-                    // Unknown ID (corrupted data in a renamed text file)
+                    // Unknown ID (corrupted data or valid ID but creation failed)
                     // Skip the bytes for this "ghost" particle
                     file.seekg(dataSizePerParticle, std::ios::cur);
                     setParticleAt(x, y, nullptr);
@@ -238,6 +246,7 @@ bool ParticleWorld::loadWorld(const std::string& filename) {
     }
     return true;
 }
+
 void ParticleWorld::updateParticleColor(Particle* particle, ParticleWorld& world) 
 {
     if (!particle) return;
@@ -285,6 +294,7 @@ void ParticleWorld::updateParticleColor(Particle* particle, ParticleWorld& world
         world.updatePixelColor(particle->position.x, particle->position.y, particle->color);
     }
 }
+
 void ParticleWorld::addRigidBody(int centerX, int centerY, float size, RigidBodyShape shape, MaterialID materialType)
 {
     if (!rigidBodySystem) return;
@@ -305,6 +315,7 @@ void ParticleWorld::addRigidBody(int centerX, int centerY, float size, RigidBody
             break;
     }
 }
+
 std::string ParticleWorld::getNextAvailableFilename(const std::string& baseName) 
 {
     std::string filename;
@@ -317,8 +328,9 @@ std::string ParticleWorld::getNextAvailableFilename(const std::string& baseName)
     
     return filename;
 }
+
 std::unique_ptr<Particle> ParticleWorld::createParticleByType(MaterialID type) {
-    if (type == MaterialID::EmptyParticle) return nullptr;
+    // Check removed here; loop implies failure if type is not found (e.g. type 0)
     for (const auto& props : ALL_MATERIALS) {
         if (props.id == type) return props.create();
     }

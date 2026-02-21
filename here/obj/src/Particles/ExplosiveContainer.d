@@ -1,4 +1,6 @@
-obj/src/UI.o: src/UI.cpp include/UI.hpp \
+obj/src/Particles/ExplosiveContainer.o: \
+ src/Particles/ExplosiveContainer.cpp \
+ include/particles/ExplosiveContainer.hpp include/particles/Particle.hpp \
  ../SFML-3.0.0/include/SFML/Graphics.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/Export.hpp \
@@ -77,14 +79,13 @@ obj/src/UI.o: src/UI.cpp include/UI.hpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
- include/ParticleWorld.hpp include/particles/Particle.hpp \
- include/Random.hpp include/RigidBody.hpp ../2dbox/include/box2d/box2d.h \
- ../2dbox/include/box2d/base.h ../2dbox/include/box2d/collision.h \
+ include/Random.hpp include/ParticleWorld.hpp include/RigidBody.hpp \
+ ../2dbox/include/box2d/box2d.h ../2dbox/include/box2d/base.h \
+ ../2dbox/include/box2d/collision.h \
  ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
- ../2dbox/include/box2d/types.h include/Particles/Explosion.hpp \
- ../imgui-src/imgui.h ../imgui-src/imconfig.h ../imgui-src/imgui-SFML.h \
- ../imgui-src/imgui-SFML_export.h
-include/UI.hpp:
+ ../2dbox/include/box2d/types.h include/Particles/Explosion.hpp
+include/particles/ExplosiveContainer.hpp:
+include/particles/Particle.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/Export.hpp:
@@ -164,9 +165,8 @@ include/UI.hpp:
 ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp:
 ../SFML-3.0.0/include/SFML/System/Sleep.hpp:
 include/Constants.hpp:
-include/ParticleWorld.hpp:
-include/particles/Particle.hpp:
 include/Random.hpp:
+include/ParticleWorld.hpp:
 include/RigidBody.hpp:
 ../2dbox/include/box2d/box2d.h:
 ../2dbox/include/box2d/base.h:
@@ -175,7 +175,3 @@ include/RigidBody.hpp:
 ../2dbox/include/box2d/id.h:
 ../2dbox/include/box2d/types.h:
 include/Particles/Explosion.hpp:
-../imgui-src/imgui.h:
-../imgui-src/imconfig.h:
-../imgui-src/imgui-SFML.h:
-../imgui-src/imgui-SFML_export.h:

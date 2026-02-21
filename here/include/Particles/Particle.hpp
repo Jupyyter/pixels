@@ -185,15 +185,3 @@ static sf::Color getRandomColor(MaterialID id) {
         return true;
     }
 };
-
-class EmptyParticle : public Particle {
-public:
-    EmptyParticle() : Particle(MaterialID::EmptyParticle) {}
-    static MaterialGroup getStaticGroup() { return MaterialGroup::Special; }
-    MaterialGroup getGroup() const override { return getStaticGroup(); }
-    bool receiveHeat(int heat) override {
-        return false; 
-    }
-    void update(int x, int y, float dt, ParticleWorld& world) override { hasBeenUpdatedThisFrame = false; }
-    std::unique_ptr<Particle> clone() const override { return std::make_unique<EmptyParticle>(*this); }
-};

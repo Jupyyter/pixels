@@ -81,7 +81,7 @@ obj/src/Particles/Particle.o: src/Particles/Particle.cpp \
  ../2dbox/include/box2d/box2d.h ../2dbox/include/box2d/base.h \
  ../2dbox/include/box2d/collision.h \
  ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
- ../2dbox/include/box2d/types.h
+ ../2dbox/include/box2d/types.h include/Particles/Explosion.hpp
 include/Particles/Particle.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp:
@@ -171,3 +171,4 @@ include/RigidBody.hpp:
 ../2dbox/include/box2d/math_functions.h:
 ../2dbox/include/box2d/id.h:
 ../2dbox/include/box2d/types.h:
+include/Particles/Explosion.hpp:

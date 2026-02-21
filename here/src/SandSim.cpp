@@ -22,7 +22,7 @@ SandSimApp::SandSimApp() :
     if (!ImGui::SFML::Init(window)) {
         std::cerr << "Failed to initialize ImGui-SFML" << std::endl;
     }
-
+ 
     levelMenu = std::make_unique<LevelMenu>();
     renderer = std::make_unique<Renderer>();
     
@@ -275,14 +275,49 @@ void SandSimApp::handleMouseHeld() {
 }
 
 void SandSimApp::addParticles(const sf::Vector2f& worldPos) {
-    if (world && ui) world->addParticleCircle(worldPos.x, worldPos.y, ui->getSelectionRadius(), ui->getCurrentMaterialID());
+    if (world && ui) {
+        MaterialID currentMat = ui->getCurrentMaterialID();
+
+        // CHECK IF EXPLOSION
+        if (currentMat == MaterialID::Explosion) {
+            // Determine strength based on radius or fixed value
+            int radius = static_cast<int>(ui->getSelectionRadius());
+            int strength = 20; // You could calculate this based on radius if you want
+            
+            world->triggerExplosion(static_cast<int>(worldPos.x), static_cast<int>(worldPos.y), radius, strength);
+        } 
+        else {
+            // Normal particle spawning
+            world->addParticleCircle(worldPos.x, worldPos.y, ui->getSelectionRadius(), currentMat);
+        }
+    }
 }
+
 
 void SandSimApp::eraseParticles(const sf::Vector2f& worldPos) {
     if (world && ui) world->eraseCircle(worldPos.x, worldPos.y, ui->getSelectionRadius());
 }
 
 void SandSimApp::addParticlesLine(const sf::Vector2f& start, const sf::Vector2f& end) {
+    MaterialID currentMat = ui->getCurrentMaterialID();
+
+    // If Explosion, we might want to reduce density so it doesn't lag too much
+    if (currentMat == MaterialID::Explosion) {
+         float dx = end.x - start.x, dy = end.y - start.y;
+         float dist = std::sqrt(dx*dx + dy*dy);
+         // Explode every 'radius' pixels to prevent extreme overlap lag
+         float stepSize = std::max(1.0f, ui->getSelectionRadius()); 
+         int steps = static_cast<int>(std::ceil(dist / stepSize));
+         
+         for(int i=0; i<=steps; ++i) {
+             float t = (steps > 0) ? (float)i/steps : 0.f;
+             sf::Vector2f pos = {start.x + t*dx, start.y + t*dy};
+             world->triggerExplosion((int)pos.x, (int)pos.y, (int)ui->getSelectionRadius(), 20);
+         }
+         return;
+    }
+
+    // Normal Line Logic
     float dx = end.x - start.x, dy = end.y - start.y;
     float dist = std::sqrt(dx*dx + dy*dy);
     float stepSize = std::max(1.0f, ui->getSelectionRadius() * 0.5f);

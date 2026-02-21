@@ -8,6 +8,7 @@
 #include "Random.hpp"
 #include "RigidBody.hpp"
 #include <iostream>
+#include "Particles/Explosion.hpp"
 enum class RigidBodyShape; 
 class RigidBodySystem; 
 
@@ -49,7 +50,11 @@ public:
         if (!inBounds(x, y)) return nullptr;
         return particles[computeIndex(x, y)].get(); 
     }
-
+void triggerExplosion(int x, int y, int radius, int strength) {
+        // Create the explosion object on the stack and enact it immediately
+        Explosion boom(*this, x, y, radius, strength);
+        boom.enact();
+    }
     void setParticleAt(int x, int y, std::unique_ptr<Particle> particle);
     void swapParticles(int x1, int y1, int x2, int y2);
     // Move logic: Handles transferring pointers and updating pixel buffers
