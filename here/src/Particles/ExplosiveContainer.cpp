@@ -1,53 +1,73 @@
-#include "particles/ExplosiveContainer.hpp"
-#include "ParticleWorld.hpp" // <--- This provides the full definition of 'world'
+#include "Particles/ExplosiveContainer.hpp"
+#include "ParticleWorld.hpp"
+#include "Particles/Particle.hpp" // For MaterialRegistry access
 #include <cmath>
 #include <algorithm>
 
-ExplosiveContainer::ExplosiveContainer(MaterialID contained, sf::Vector2f initialVelocity) 
-    : Particle(MaterialID::ExplosiveContainer) 
-{
-    this->containedElementType = contained;
-    this->velocity = initialVelocity;
-    this->color = Particle::getRandomColor(contained);
-    this->isFreeFalling = true; 
-    this->frictionFactor = 0.0f;
+// --- SPAWN LOGIC ---
+
+void ExplosiveContainer::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+    Particle::onSpawn(index, x, y, world);
+    
+    // Add Kinematics for projectile movement
+    KinematicsComponent kin;
+    kin.velocity = {0, 0}; 
+    kin.xThreshold = 0;
+    kin.yThreshold = 0;
+    kin.isFreeFalling = true;
+    kin.stoppedMovingCount = 0;
+    world.kinematicsManager.add(index, kin);
+
+    // Ensure we track payload (Default to Sand if not already set by spawnWithPayload)
+    if (world.containerPayloads.find(index) == world.containerPayloads.end()) {
+        world.containerPayloads[index] = MaterialID::Sand;
+    }
 }
 
-MaterialGroup ExplosiveContainer::getGroup() const {
-    return MaterialGroup::Gas;
+// Static Helper to spawn fully configured container projectile
+void ExplosiveContainer::spawnWithPayload(int x, int y, MaterialID payload, sf::Vector2f velocity, sf::Color color, bool ignited, ParticleWorld& world) {
+    // 1. Spawn base particle
+    world.spawnParticle(MaterialID::ExplosiveContainer, x, y);
+    uint32_t index = world.getIndex(x, y);
+
+    // 2. Configure State
+    if (auto* base = world.baseManager.get(index)) {
+        base->color = color;
+        base->flags.isIgnited = ignited;
+    }
+    if (auto* kin = world.kinematicsManager.get(index)) {
+        kin->velocity = velocity;
+    }
+
+    // 3. Store the unique payload in the world map
+    world.containerPayloads[index] = payload;
 }
 
-std::unique_ptr<Particle> ExplosiveContainer::clone() const {
-    return std::make_unique<ExplosiveContainer>(this->containedElementType, this->velocity);
-}
+// --- UPDATE LOGIC ---
 
-void ExplosiveContainer::update(int x, int y, float dt, ParticleWorld& world) {
-    if (hasBeenUpdatedThisFrame) return;
-    hasBeenUpdatedThisFrame = true;
+void ExplosiveContainer::update(int x, int y, uint32_t index, float dt, ParticleWorld& world) {
+    auto* kin = world.kinematicsManager.get(index);
+    if (!kin) return;
 
     // Gravity
-    velocity.y += 9.81f * 20.0f * dt; 
+    kin->velocity.y += 9.81f * 20.0f * dt; 
     
     float maxVel = 500.0f;
-    if (velocity.y < -maxVel) velocity.y = -maxVel;
-    if (velocity.y > maxVel) velocity.y = maxVel;
+    kin->velocity.y = std::clamp(kin->velocity.y, -maxVel, maxVel);
 
-    float deltaX = velocity.x * dt;
-    float deltaY = velocity.y * dt;
+    // Movement Logic (Raycasting)
+    float deltaX = kin->velocity.x * dt;
+    float deltaY = kin->velocity.y * dt;
 
     int steps = static_cast<int>(std::max(std::abs(deltaX), std::abs(deltaY)));
     
     if (steps == 0) {
-        xThreshold += deltaX;
-        yThreshold += deltaY;
-        if (std::abs(xThreshold) >= 1.0f) {
-            deltaX = xThreshold;
-            xThreshold = 0;
-            steps = 1;
-        } else if (std::abs(yThreshold) >= 1.0f) {
-            deltaY = yThreshold;
-            yThreshold = 0;
-            steps = 1;
+        kin->xThreshold += deltaX;
+        kin->yThreshold += deltaY;
+        if (std::abs(kin->xThreshold) >= 1.0f) {
+            deltaX = kin->xThreshold; kin->xThreshold = 0; steps = 1;
+        } else if (std::abs(kin->yThreshold) >= 1.0f) {
+            deltaY = kin->yThreshold; kin->yThreshold = 0; steps = 1;
         } else {
             return; 
         }
@@ -55,7 +75,6 @@ void ExplosiveContainer::update(int x, int y, float dt, ParticleWorld& world) {
 
     float stepX = deltaX / steps;
     float stepY = deltaY / steps;
-
     float currX = static_cast<float>(x);
     float currY = static_cast<float>(y);
 
@@ -71,25 +90,33 @@ void ExplosiveContainer::update(int x, int y, float dt, ParticleWorld& world) {
         int nextY = static_cast<int>(std::round(currY));
 
         if (!world.inBounds(nextX, nextY)) {
-            die(world); 
-            return;
-        }
+    // Detonate at the last valid position before leaving the screen
+    detonate(index, lastValidX, lastValidY, world);
+    return;
+}
 
         if (nextX == x && nextY == y) continue;
 
-        Particle* neighbor = world.getParticleAt(nextX, nextY);
-
-        if (neighbor == nullptr) {
+        if (world.isEmpty(nextX, nextY)) {
             lastValidX = nextX;
             lastValidY = nextY;
         } else {
-            MaterialGroup nGroup = neighbor->getGroup();
-            if (nGroup == MaterialGroup::MovableSolid ||nGroup == MaterialGroup::ImmovableSolid || nGroup == MaterialGroup::Liquid) {
+            // Collision with Solid or Liquid
+            uint32_t neighborIdx = world.getIndex(nextX, nextY);
+            BaseComponent* nb = world.baseManager.get(neighborIdx);
+            
+            // Look up logic for group check
+            Particle* logic = MaterialRegistry[static_cast<int>(nb->id)];
+            MaterialGroup nGroup = logic ? logic->getGroup() : MaterialGroup::ImmovableSolid;
+
+            if (nGroup == MaterialGroup::MovableSolid || nGroup == MaterialGroup::ImmovableSolid || nGroup == MaterialGroup::Liquid) {
                 collided = true;
                 if (lastValidX != x || lastValidY != y) {
                     world.moveParticle(x, y, lastValidX, lastValidY);
                 }
-                detonate(lastValidX, lastValidY, world);
+                // Recalculate index after potential move
+                uint32_t finalIdx = world.getIndex(lastValidX, lastValidY);
+                detonate(finalIdx, lastValidX, lastValidY, world);
                 return; 
             }
         }
@@ -100,38 +127,66 @@ void ExplosiveContainer::update(int x, int y, float dt, ParticleWorld& world) {
     }
 }
 
-void ExplosiveContainer::detonate(int x, int y, ParticleWorld& world) {
-    die(world); 
+void ExplosiveContainer::detonate(uint32_t index, int x, int y, ParticleWorld& world) {
+    // 1. Retrieve and CACHE data BEFORE deleting the container
+    MaterialID content = MaterialID::Sand;
+    auto it = world.containerPayloads.find(index);
+    if (it != world.containerPayloads.end()) {
+        content = it->second;
+    }
+    
+    sf::Color oldColor = sf::Color::White;
+    bool oldIgnited = false;
+    sf::Vector2f oldVel = {0,0};
+    
+    if (auto* b = world.baseManager.get(index)) { 
+        oldColor = b->color; 
+        oldIgnited = b->flags.isIgnited; 
+    }
+    if (auto* k = world.kinematicsManager.get(index)) {
+        oldVel = k->velocity;
+    }
+
+    // 2. Remove Container from world and Payload map
+    world.containerPayloads.erase(index);
+    world.removeParticle(index); 
+
+    // 3. Find a spot to spawn the content (Payload)
+    int spawnX = x;
+    int spawnY = y;
+    bool foundSpot = false;
 
     if (world.isEmpty(x, y)) {
-        spawnPayload(x, y, world);
+        foundSpot = true;
     } else {
-        int yIndex = 0;
-        while (true) {
-            int checkY = y + yIndex; 
-            
-            if (!world.inBounds(x, checkY) || std::abs(yIndex) > 10) break;
-
-            if (world.isEmpty(x, checkY)) {
-                spawnPayload(x, checkY, world);
+        // Spiral/Y search for empty space
+        int yOffset = 0;
+        for (int i = 0; i < 20; i++) {
+            int checkY = y + yOffset;
+            if (world.inBounds(x, checkY) && world.isEmpty(x, checkY)) {
+                spawnY = checkY;
+                foundSpot = true;
                 break;
             }
-            
-            if (yIndex <= 0) yIndex = -yIndex + 1;
-            else yIndex = -yIndex;
+            yOffset = (yOffset <= 0) ? -yOffset + 1 : -yOffset;
+        }
+    }
+
+    // 4. Spawn the content and restore the state
+    if (foundSpot) {
+        world.spawnParticle(content, spawnX, spawnY);
+        uint32_t newIdx = world.getIndex(spawnX, spawnY);
+        
+        if (auto* b = world.baseManager.get(newIdx)) {
+            b->color = oldColor;
+            b->flags.isIgnited = oldIgnited;
+        }
+        if (auto* k = world.kinematicsManager.get(newIdx)) {
+            // Apply impact velocity reduction
+            k->velocity = oldVel * 0.3f;
         }
     }
 }
 
-void ExplosiveContainer::spawnPayload(int x, int y, ParticleWorld& world) {
-    auto newPart = world.createParticleByType(containedElementType);
-    if (newPart) {
-        newPart->color = this->color;
-        newPart->isIgnited = this->isIgnited;
-        newPart->velocity = this->velocity; 
-        newPart->velocity.x *= 0.3f; 
-        newPart->velocity.y *= 0.3f;
-
-        world.setParticleAt(x, y, std::move(newPart));
-    }
-}
+// Register the class instance for logic handling
+static ExplosiveContainer container_instance;

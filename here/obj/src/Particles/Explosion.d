@@ -1,5 +1,5 @@
 obj/src/Particles/Explosion.o: src/Particles/Explosion.cpp \
- include/particles/Explosion.hpp \
+ include/Particles/Explosion.hpp \
  ../SFML-3.0.0/include/SFML/System/Vector2.hpp \
  ../SFML-3.0.0/include/SFML/System/Export.hpp \
  ../SFML-3.0.0/include/SFML/Config.hpp \
@@ -77,13 +77,10 @@ obj/src/Particles/Explosion.o: src/Particles/Explosion.cpp \
  ../SFML-3.0.0/include/SFML/System/FileInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
- ../SFML-3.0.0/include/SFML/System/Sleep.hpp \
- include/particles/Particle.hpp include/Constants.hpp include/Random.hpp \
- include/RigidBody.hpp ../2dbox/include/box2d/box2d.h \
- ../2dbox/include/box2d/base.h ../2dbox/include/box2d/collision.h \
- ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
- ../2dbox/include/box2d/types.h include/particles/ExplosiveContainer.hpp
-include/particles/Explosion.hpp:
+ ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
+ include/Random.hpp include/Particles/ExplosiveContainer.hpp \
+ include/Particles/Particle.hpp
+include/Particles/Explosion.hpp:
 ../SFML-3.0.0/include/SFML/System/Vector2.hpp:
 ../SFML-3.0.0/include/SFML/System/Export.hpp:
 ../SFML-3.0.0/include/SFML/Config.hpp:
@@ -163,14 +160,7 @@ include/ParticleWorld.hpp:
 ../SFML-3.0.0/include/SFML/System/InputStream.hpp:
 ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp:
 ../SFML-3.0.0/include/SFML/System/Sleep.hpp:
-include/particles/Particle.hpp:
 include/Constants.hpp:
 include/Random.hpp:
-include/RigidBody.hpp:
-../2dbox/include/box2d/box2d.h:
-../2dbox/include/box2d/base.h:
-../2dbox/include/box2d/collision.h:
-../2dbox/include/box2d/math_functions.h:
-../2dbox/include/box2d/id.h:
-../2dbox/include/box2d/types.h:
-include/particles/ExplosiveContainer.hpp:
+include/Particles/ExplosiveContainer.hpp:
+include/Particles/Particle.hpp:

@@ -78,12 +78,7 @@ obj/src/Particles/Liquid.o: src/Particles/Liquid.cpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
- include/Random.hpp include/ParticleWorld.hpp include/RigidBody.hpp \
- ../2dbox/include/box2d/box2d.h ../2dbox/include/box2d/base.h \
- ../2dbox/include/box2d/collision.h \
- ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
- ../2dbox/include/box2d/types.h include/Particles/Explosion.hpp \
- include/Particles/Solid.hpp
+ include/Random.hpp include/ParticleWorld.hpp
 include/Particles/Liquid.hpp:
 include/Particles/Particle.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
@@ -167,12 +162,3 @@ include/Particles/Particle.hpp:
 include/Constants.hpp:
 include/Random.hpp:
 include/ParticleWorld.hpp:
-include/RigidBody.hpp:
-../2dbox/include/box2d/box2d.h:
-../2dbox/include/box2d/base.h:
-../2dbox/include/box2d/collision.h:
-../2dbox/include/box2d/math_functions.h:
-../2dbox/include/box2d/id.h:
-../2dbox/include/box2d/types.h:
-include/Particles/Explosion.hpp:
-include/Particles/Solid.hpp:

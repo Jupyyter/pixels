@@ -1,100 +1,59 @@
 #include "RigidBody.hpp"
 #include "ParticleWorld.hpp"
+#include "Particles/Particle.hpp"
 #include "Random.hpp"
 #include <cmath>
+
 RigidBodySystem::RigidBodySystem(int width, int height)
     : worldWidth(width), worldHeight(height)
 {
-    // Create Box2D world with gravity
     b2WorldDef worldDef = b2DefaultWorldDef();
-    worldDef.gravity = {0.0f, 9.8f}; // Gravity pointing down
+    worldDef.gravity = {0.0f, 9.8f}; 
     worldId = b2CreateWorld(&worldDef);
-
-    // Create world boundaries
     createWorldBoundaries();
 }
 
-RigidBodySystem::~RigidBodySystem()
-{
+RigidBodySystem::~RigidBodySystem() {
     clear();
-    // Destroy the world
-    if (B2_IS_NON_NULL(worldId))
-    {
+    if (b2World_IsValid(worldId)) {
         b2DestroyWorld(worldId);
     }
 }
 
-void RigidBodySystem::createWorldBoundaries()
-{
-    // Create static body definition for boundaries
+void RigidBodySystem::createWorldBoundaries() {
     b2BodyDef groundBodyDef = b2DefaultBodyDef();
-    groundBodyDef.position = {0.0f, 0.0f};
     groundBodyDef.type = b2_staticBody;
 
-    // Create bottom boundary
-    {
-        b2BodyId groundBodyId = b2CreateBody(worldId, &groundBodyDef);
-        boundaryBodies.push_back(groundBodyId);
+    b2BodyId groundId = b2CreateBody(worldId, &groundBodyDef);
+    boundaryBodies.push_back(groundId);
 
-        b2Segment segment = {{0.0f, worldHeight * PHYSICS_SCALE},
-                             {worldWidth * PHYSICS_SCALE, worldHeight * PHYSICS_SCALE}};
-
-        b2ShapeDef shapeDef = b2DefaultShapeDef();
-        b2CreateSegmentShape(groundBodyId, &shapeDef, &segment);
-    }
-
-    // Create left boundary
-    {
-        b2BodyId leftBodyId = b2CreateBody(worldId, &groundBodyDef);
-        boundaryBodies.push_back(leftBodyId);
-
-        b2Segment segment = {{0.0f, 0.0f}, {0.0f, worldHeight * PHYSICS_SCALE}};
-
-        b2ShapeDef shapeDef = b2DefaultShapeDef();
-        b2CreateSegmentShape(leftBodyId, &shapeDef, &segment);
-    }
-
-    // Create right boundary
-    {
-        b2BodyId rightBodyId = b2CreateBody(worldId, &groundBodyDef);
-        boundaryBodies.push_back(rightBodyId);
-
-        b2Segment segment = {{worldWidth * PHYSICS_SCALE, 0.0f},
-                             {worldWidth * PHYSICS_SCALE, worldHeight * PHYSICS_SCALE}};
-
-        b2ShapeDef shapeDef = b2DefaultShapeDef();
-        b2CreateSegmentShape(rightBodyId, &shapeDef, &segment);
-    }
-
-    // Create top boundary (optional, for containment)
-    {
-        b2BodyId topBodyId = b2CreateBody(worldId, &groundBodyDef);
-        boundaryBodies.push_back(topBodyId);
-
-        b2Segment segment = {{0.0f, 0.0f}, {worldWidth * PHYSICS_SCALE, 0.0f}};
-
-        b2ShapeDef shapeDef = b2DefaultShapeDef();
-        b2CreateSegmentShape(topBodyId, &shapeDef, &segment);
-    }
+    b2ShapeDef shapeDef = b2DefaultShapeDef();
+    
+    // Bottom
+    b2Segment groundSegment = {{0.0f, worldHeight * PHYSICS_SCALE}, {worldWidth * PHYSICS_SCALE, worldHeight * PHYSICS_SCALE}};
+    b2CreateSegmentShape(groundId, &shapeDef, &groundSegment);
+    
+    // Walls
+    b2Segment leftWall = {{0.0f, 0.0f}, {0.0f, worldHeight * PHYSICS_SCALE}};
+    b2CreateSegmentShape(groundId, &shapeDef, &leftWall);
+    
+    b2Segment rightWall = {{worldWidth * PHYSICS_SCALE, 0.0f}, {worldWidth * PHYSICS_SCALE, worldHeight * PHYSICS_SCALE}};
+    b2CreateSegmentShape(groundId, &shapeDef, &rightWall);
 }
 
-RigidBodyData *RigidBodySystem::createCircle(float x, float y, float radius, MaterialID material)
-{
+RigidBodyData* RigidBodySystem::createCircle(float x, float y, float radius, MaterialID material) {
     auto rbData = std::make_unique<RigidBodyData>();
     rbData->shape = RigidBodyShape::Circle;
     rbData->radius = radius;
     rbData->materialType = material;
-    rbData->color = getMaterialColor(material);
+    rbData->color = Particle::getRandomColor(material);
 
-    // Create Box2D body
     b2BodyDef bodyDef = b2DefaultBodyDef();
     bodyDef.type = b2_dynamicBody;
     bodyDef.position = {x * PHYSICS_SCALE, y * PHYSICS_SCALE};
     rbData->bodyId = b2CreateBody(worldId, &bodyDef);
 
-    // Create circle shape
     b2Circle circle = {{0.0f, 0.0f}, radius * PHYSICS_SCALE};
-
     b2ShapeDef shapeDef = b2DefaultShapeDef();
     shapeDef.density = getMaterialDensity(material);
     shapeDef.material.friction = getMaterialFriction(material);
@@ -102,373 +61,195 @@ RigidBodyData *RigidBodySystem::createCircle(float x, float y, float radius, Mat
 
     b2CreateCircleShape(rbData->bodyId, &shapeDef, &circle);
 
-    RigidBodyData *result = rbData.get();
+    RigidBodyData* result = rbData.get();
     rigidBodies.push_back(std::move(rbData));
     return result;
 }
 
-RigidBodyData *RigidBodySystem::createSquare(float x, float y, float size, MaterialID material)
-{
+RigidBodyData* RigidBodySystem::createSquare(float x, float y, float size, MaterialID material) {
     auto rbData = std::make_unique<RigidBodyData>();
     rbData->shape = RigidBodyShape::Square;
     rbData->size = size;
     rbData->materialType = material;
-    rbData->color = getMaterialColor(material);
+    rbData->color = Particle::getRandomColor(material);
 
-    // Create Box2D body
     b2BodyDef bodyDef = b2DefaultBodyDef();
     bodyDef.type = b2_dynamicBody;
     bodyDef.position = {x * PHYSICS_SCALE, y * PHYSICS_SCALE};
     rbData->bodyId = b2CreateBody(worldId, &bodyDef);
 
-    // Create box shape
-    float halfSize = size * 0.5f * PHYSICS_SCALE;
-    b2Polygon box = b2MakeBox(halfSize, halfSize);
-
+    float h = size * 0.5f * PHYSICS_SCALE;
+    b2Polygon box = b2MakeBox(h, h);
     b2ShapeDef shapeDef = b2DefaultShapeDef();
     shapeDef.density = getMaterialDensity(material);
-    shapeDef.material.friction = getMaterialFriction(material);
-    shapeDef.material.restitution = getMaterialRestitution(material);
-
     b2CreatePolygonShape(rbData->bodyId, &shapeDef, &box);
 
-    // Setup vertices for rendering
     setupRigidBodyVertices(rbData.get());
-
-    RigidBodyData *result = rbData.get();
+    RigidBodyData* result = rbData.get();
     rigidBodies.push_back(std::move(rbData));
     return result;
 }
 
-RigidBodyData *RigidBodySystem::createTriangle(float x, float y, float size, MaterialID material)
-{
+RigidBodyData* RigidBodySystem::createTriangle(float x, float y, float size, MaterialID material) {
     auto rbData = std::make_unique<RigidBodyData>();
     rbData->shape = RigidBodyShape::Triangle;
     rbData->size = size;
     rbData->materialType = material;
-    rbData->color = getMaterialColor(material);
+    rbData->color = Particle::getRandomColor(material);
 
-    // Create Box2D body
     b2BodyDef bodyDef = b2DefaultBodyDef();
     bodyDef.type = b2_dynamicBody;
     bodyDef.position = {x * PHYSICS_SCALE, y * PHYSICS_SCALE};
     rbData->bodyId = b2CreateBody(worldId, &bodyDef);
 
-    // Create triangle shape
-    b2Vec2 vertices[3];
-    float halfSize = size * 0.5f * PHYSICS_SCALE;
-
-    // Equilateral triangle vertices
-    vertices[0] = {0.0f, -halfSize};     // Top vertex
-    vertices[1] = {-halfSize, halfSize}; // Bottom left
-    vertices[2] = {halfSize, halfSize};  // Bottom right
-
-    b2Hull hull = b2ComputeHull(vertices, 3);
-    b2Polygon triangle = b2MakePolygon(&hull, 0.0f);
-
+    float h = size * 0.5f * PHYSICS_SCALE;
+    b2Vec2 verts[3] = {{0.0f, -h}, {-h, h}, {h, h}};
+    b2Hull hull = b2ComputeHull(verts, 3);
+    b2Polygon tri = b2MakePolygon(&hull, 0.0f);
+    
     b2ShapeDef shapeDef = b2DefaultShapeDef();
     shapeDef.density = getMaterialDensity(material);
-    shapeDef.material.friction = getMaterialFriction(material);
-    shapeDef.material.restitution = getMaterialRestitution(material);
+    b2CreatePolygonShape(rbData->bodyId, &shapeDef, &tri);
 
-    b2CreatePolygonShape(rbData->bodyId, &shapeDef, &triangle);
-
-    // Setup vertices for rendering
     setupRigidBodyVertices(rbData.get());
-
-    RigidBodyData *result = rbData.get();
+    RigidBodyData* result = rbData.get();
     rigidBodies.push_back(std::move(rbData));
     return result;
 }
 
-void RigidBodySystem::setupRigidBodyVertices(RigidBodyData *rbData)
-{
+void RigidBodySystem::setupRigidBodyVertices(RigidBodyData* rbData) {
     rbData->vertices.clear();
-
-    float halfSize = rbData->size * 0.5f;
-
-    switch (rbData->shape)
-    {
-    case RigidBodyShape::Square:
-        rbData->vertices.push_back(sf::Vector2f(-halfSize, -halfSize));
-        rbData->vertices.push_back(sf::Vector2f(halfSize, -halfSize));
-        rbData->vertices.push_back(sf::Vector2f(halfSize, halfSize));
-        rbData->vertices.push_back(sf::Vector2f(-halfSize, halfSize));
-        break;
-
-    case RigidBodyShape::Triangle:
-        rbData->vertices.push_back(sf::Vector2f(0.0f, -halfSize));     // Top
-        rbData->vertices.push_back(sf::Vector2f(-halfSize, halfSize)); // Bottom left
-        rbData->vertices.push_back(sf::Vector2f(halfSize, halfSize));  // Bottom right
-        break;
-
-    default:
-        break; // Circle doesn't need vertices
+    float h = rbData->size * 0.5f;
+    if (rbData->shape == RigidBodyShape::Square) {
+        rbData->vertices = {{-h, -h}, {h, -h}, {h, h}, {-h, h}};
+    } else if (rbData->shape == RigidBodyShape::Triangle) {
+        rbData->vertices = {{0.0f, -h}, {-h, h}, {h, h}};
     }
 }
 
-void RigidBodySystem::update(float deltaTime)
-{
-    // Step the physics simulation
-    b2World_Step(worldId, deltaTime, 4); // Using 4 sub-steps as default
-
+void RigidBodySystem::update(float deltaTime) {
+    b2World_Step(worldId, deltaTime, 4);
     removeInactiveBodies();
 }
 
-void RigidBodySystem::renderToParticleWorld(ParticleWorld *particleWorld)
-{
-    if (!particleWorld)
-        return;
+void RigidBodySystem::renderToParticleWorld(ParticleWorld* world) {
+    if (!world) return;
 
-    for (const auto &rbData : rigidBodies)
-    {
-        if (!rbData->isActive || B2_IS_NULL(rbData->bodyId))
-            continue;
+    for (auto& rb : rigidBodies) {
+        if (!rb->isActive || B2_IS_NULL(rb->bodyId)) continue;
 
-        // Clear previous pixels first
-        for (const auto &pixel : rbData->previousPixels)
-        {
-            if (particleWorld->inBounds(pixel.x, pixel.y))
-            {
-                const Particle*currentParticle = particleWorld->getParticleAt(pixel.x, pixel.y);
-                // Only clear if it's still a rigid body particle (lifetime == -1.0f)
-                if (currentParticle->id == rbData->materialType && currentParticle->lifeSpan == -1.0f)
-                {
-                    particleWorld->setParticleAt(pixel.x, pixel.y, nullptr);
+        // 1. Clear old pixels
+        for (const auto& pix : rb->previousPixels) {
+            if (world->inBounds(pix.x, pix.y)) {
+                BaseComponent* base = world->baseManager.get(world->getIndex(pix.x, pix.y));
+                // Only clear if it's a rigid body pixel
+                if (base && base->flags.isRigidBodyPart) {
+                    world->removeParticle(pix.x, pix.y);
                 }
             }
         }
-        rbData->previousPixels.clear();
+        rb->previousPixels.clear();
 
-        b2Vec2 position = b2Body_GetPosition(rbData->bodyId);
-        b2Rot rotation = b2Body_GetRotation(rbData->bodyId);
-        float angle = b2Rot_GetAngle(rotation);
-        sf::Vector2f sfmlPosition = box2DToSFML(position);
+        // 2. Draw new pixels
+        b2Vec2 pos = b2Body_GetPosition(rb->bodyId);
+        float angle = b2Rot_GetAngle(b2Body_GetRotation(rb->bodyId));
+        sf::Vector2f center = box2DToSFML(pos);
 
-        switch (rbData->shape)
-        {
-        case RigidBodyShape::Circle:
-        {
-            // Render circle using particle circle method
-            int centerX = static_cast<int>(sfmlPosition.x);
-            int centerY = static_cast<int>(sfmlPosition.y);
+        // This is a simplified rasterizer. 
+        // For performance, you'd calculate the bounding box first.
+        float range = (rb->shape == RigidBodyShape::Circle) ? rb->radius : rb->size;
+        int minX = (int)(center.x - range - 1);
+        int maxX = (int)(center.x + range + 1);
+        int minY = (int)(center.y - range - 1);
+        int maxY = (int)(center.y + range + 1);
 
-            // Draw filled circle and track pixels
-            for (int dy = -static_cast<int>(rbData->radius); dy <= static_cast<int>(rbData->radius); ++dy)
-            {
-                for (int dx = -static_cast<int>(rbData->radius); dx <= static_cast<int>(rbData->radius); ++dx)
-                {
-                    int x = centerX + dx;
-                    int y = centerY + dy;
+        for (int py = minY; py <= maxY; py++) {
+            for (int px = minX; px <= maxX; px++) {
+                if (!world->inBounds(px, py)) continue;
 
-                    float distance = std::sqrt(static_cast<float>(dx * dx + dy * dy));
-                    if (distance <= rbData->radius && particleWorld->inBounds(x, y))
-                    {
-                        // Only draw on empty spaces
-                        if (particleWorld->isEmpty(x, y))
-                        {
-                            auto p = particleWorld->createParticleByType(rbData->materialType);
-                            p->color = rbData->color;
-                            p->lifeSpan = -1.0f; // Mark as rigid body particle
-                            particleWorld->setParticleAt(x, y, std::move(p));
-                            rbData->previousPixels.push_back(sf::Vector2i(x, y));
-                        }
+                bool inside = false;
+                if (rb->shape == RigidBodyShape::Circle) {
+                    float dx = px - center.x;
+                    float dy = py - center.y;
+                    inside = (dx*dx + dy*dy) <= (rb->radius * rb->radius);
+                } else {
+                    // Polygon test
+                    sf::Vector2f p((float)px, (float)py);
+                    // (Rotate point into local space for easier check)
+                    float s = std::sin(-angle);
+                    float c = std::cos(-angle);
+                    sf::Vector2f lp = { (p.x-center.x)*c - (p.y-center.y)*s, (p.x-center.x)*s + (p.y-center.y)*c };
+                    
+                    if (rb->shape == RigidBodyShape::Square) {
+                        float h = rb->size * 0.5f;
+                        inside = (lp.x >= -h && lp.x <= h && lp.y >= -h && lp.y <= h);
+                    } else {
+                        // Triangle check
+                        float h = rb->size * 0.5f;
+                        // Local triangle points: (0, -h), (-h, h), (h, h)
+                        auto sign = [](sf::Vector2f p1, sf::Vector2f p2, sf::Vector2f p3) {
+                            return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+                        };
+                        bool b1 = sign(lp, {0, -h}, {-h, h}) < 0.0f;
+                        bool b2 = sign(lp, {-h, h}, {h, h}) < 0.0f;
+                        bool b3 = sign(lp, {h, h}, {0, -h}) < 0.0f;
+                        inside = ((b1 == b2) && (b2 == b3));
                     }
                 }
-            }
-            break;
-        }
 
-        case RigidBodyShape::Square:
-        case RigidBodyShape::Triangle:
-        {
-            // Transform vertices to world coordinates
-            std::vector<sf::Vector2f> worldVertices;
-            for (const auto &vertex : rbData->vertices)
-            {
-                // Rotate and translate vertex
-                float cosA = std::cos(angle);
-                float sinA = std::sin(angle);
-
-                float rotatedX = vertex.x * cosA - vertex.y * sinA;
-                float rotatedY = vertex.x * sinA + vertex.y * cosA;
-
-                worldVertices.push_back(sf::Vector2f(
-                    sfmlPosition.x + rotatedX,
-                    sfmlPosition.y + rotatedY));
-            }
-
-            // Simple rasterization using bounding box and point-in-polygon test
-            // Find bounding box
-            float minX = worldVertices[0].x, maxX = worldVertices[0].x;
-            float minY = worldVertices[0].y, maxY = worldVertices[0].y;
-
-            for (const auto &v : worldVertices)
-            {
-                minX = std::min(minX, v.x);
-                maxX = std::max(maxX, v.x);
-                minY = std::min(minY, v.y);
-                maxY = std::max(maxY, v.y);
-            }
-
-            // Rasterize within bounding box and track pixels
-            for (int y = static_cast<int>(minY); y <= static_cast<int>(maxY); ++y)
-            {
-                for (int x = static_cast<int>(minX); x <= static_cast<int>(maxX); ++x)
-                {
-                    if (!particleWorld->inBounds(x, y))
-                        continue;
-
-                    // Point-in-polygon test using ray casting
-                    bool inside = false;
-                    for (size_t i = 0, j = worldVertices.size() - 1; i < worldVertices.size(); j = i++)
-                    {
-                        if (((worldVertices[i].y > y) != (worldVertices[j].y > y)) &&
-                            (x < (worldVertices[j].x - worldVertices[i].x) * (y - worldVertices[i].y) /
-                                         (worldVertices[j].y - worldVertices[i].y) +
-                                     worldVertices[i].x))
-                        {
-                            inside = !inside;
-                        }
+                if (inside && world->isEmpty(px, py)) {
+                    world->spawnParticle(rb->materialType, px, py);
+                    uint32_t idx = world->getIndex(px, py);
+                    if (auto* base = world->baseManager.get(idx)) {
+                        base->color = rb->color;
+                        base->flags.isRigidBodyPart = true; // Mark as owned by physics
                     }
-
-                    if (inside && particleWorld->isEmpty(x, y))
-                    {
-                        auto p = particleWorld->createParticleByType(rbData->materialType);
-
-                        if (p)
-                        {
-                            p->color = rbData->color;
-                            p->lifeSpan = -1.0f;
-
-                            particleWorld->setParticleAt(x, y, std::move(p));
-
-                            rbData->previousPixels.push_back(sf::Vector2i(x, y));
-                        }
-                    }
+                    rb->previousPixels.push_back({px, py});
                 }
             }
-            break;
-        }
         }
     }
 }
 
-sf::Vector2f RigidBodySystem::box2DToSFML(const b2Vec2 &vec) const
-{
-    return sf::Vector2f(vec.x * INV_PHYSICS_SCALE, vec.y * INV_PHYSICS_SCALE);
+sf::Vector2f RigidBodySystem::box2DToSFML(const b2Vec2& vec) const {
+    return {vec.x * INV_PHYSICS_SCALE, vec.y * INV_PHYSICS_SCALE};
 }
 
-b2Vec2 RigidBodySystem::sfmlToBox2D(const sf::Vector2f &vec) const
-{
-    return b2Vec2{vec.x * PHYSICS_SCALE, vec.y * PHYSICS_SCALE};
+b2Vec2 RigidBodySystem::sfmlToBox2D(const sf::Vector2f& vec) const {
+    return {vec.x * PHYSICS_SCALE, vec.y * PHYSICS_SCALE};
 }
 
-void RigidBodySystem::removeInactiveBodies()
-{
-    rigidBodies.erase(
-        std::remove_if(rigidBodies.begin(), rigidBodies.end(),
-                       [this](const std::unique_ptr<RigidBodyData> &rb)
-                       {
-                           if (!rb->isActive)
-                           {
-                               if (B2_IS_NON_NULL(rb->bodyId))
-                               {
-                                   b2DestroyBody(rb->bodyId);
-                               }
-                               return true;
-                           }
-                           return false;
-                       }),
-        rigidBodies.end());
-}
-
-void RigidBodySystem::clear()
-{
-    for (auto &rb : rigidBodies)
-    {
-        if (B2_IS_NON_NULL(rb->bodyId))
-        {
+void RigidBodySystem::removeInactiveBodies() {
+    auto it = std::remove_if(rigidBodies.begin(), rigidBodies.end(), [this](auto& rb) {
+        if (!rb->isActive) {
             b2DestroyBody(rb->bodyId);
+            return true;
         }
-    }
-    rigidBodies.clear();
+        return false;
+    });
+    rigidBodies.erase(it, rigidBodies.end());
+}
 
-    // Clear boundary bodies
-    for (auto &bodyId : boundaryBodies)
-    {
-        if (B2_IS_NON_NULL(bodyId))
-        {
-            b2DestroyBody(bodyId);
-        }
-    }
+void RigidBodySystem::clear() {
+    for (auto& rb : rigidBodies) b2DestroyBody(rb->bodyId);
+    rigidBodies.clear();
+    for (auto& b : boundaryBodies) b2DestroyBody(b);
     boundaryBodies.clear();
     createWorldBoundaries();
 }
 
-sf::Color RigidBodySystem::getMaterialColor(MaterialID material) const
-{
-    switch (material)
-    {
-    case MaterialID::Stone:
-        return getMaterialColor(MaterialID::Stone);
-    case MaterialID::Wood:
-        return getMaterialColor(MaterialID::Wood);
-    case MaterialID::Sand:
-        return getMaterialColor(MaterialID::Sand);
-    default:
-        return sf::Color::White;
+float RigidBodySystem::getMaterialDensity(MaterialID material) const {
+    switch (material) {
+        case MaterialID::Stone: return 2.5f;
+        case MaterialID::Wood:  return 0.8f;
+        default:               return 1.0f;
     }
 }
 
-float RigidBodySystem::getMaterialDensity(MaterialID material) const
-{
-    switch (material)
-    {
-    case MaterialID::Stone:
-        return 2.5f;
-    case MaterialID::Wood:
-        return 0.8f;
-    case MaterialID::Sand:
-        return 1.5f;
-    default:
-        return 1.0f;
-    }
+float RigidBodySystem::getMaterialFriction(MaterialID material) const {
+    return 0.5f;
 }
 
-float RigidBodySystem::getMaterialFriction(MaterialID material) const
-{
-    switch (material)
-    {
-    case MaterialID::Stone:
-        return 0.7f;
-    case MaterialID::Wood:
-        return 0.5f;
-    case MaterialID::Sand:
-        return 0.6f;
-    default:
-        return 0.3f;
-    }
-}
-
-float RigidBodySystem::getMaterialRestitution(MaterialID material) const
-{
-    switch (material)
-    {
-    case MaterialID::Stone:
-        return 0.3f;
-    case MaterialID::Wood:
-        return 0.1f;
-    case MaterialID::Sand:
-        return 0.05f;
-    default:
-        return 0.2f;
-    }
-}
-
-void RigidBodySystem::applyParticleForces(ParticleWorld *particleWorld)
-{
-
-    if (!particleWorld)
-        return;
+float RigidBodySystem::getMaterialRestitution(MaterialID material) const {
+    return 0.2f;
 }

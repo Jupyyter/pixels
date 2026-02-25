@@ -80,8 +80,8 @@ obj/src/RigidBody.o: src/RigidBody.cpp include/RigidBody.hpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
- include/particles/Particle.hpp include/Random.hpp \
- include/ParticleWorld.hpp include/Particles/Explosion.hpp
+ include/ParticleWorld.hpp include/Random.hpp \
+ include/Particles/Particle.hpp
 include/RigidBody.hpp:
 ../2dbox/include/box2d/box2d.h:
 ../2dbox/include/box2d/base.h:
@@ -168,7 +168,6 @@ include/RigidBody.hpp:
 ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp:
 ../SFML-3.0.0/include/SFML/System/Sleep.hpp:
 include/Constants.hpp:
-include/particles/Particle.hpp:
-include/Random.hpp:
 include/ParticleWorld.hpp:
-include/Particles/Explosion.hpp:
+include/Random.hpp:
+include/Particles/Particle.hpp:

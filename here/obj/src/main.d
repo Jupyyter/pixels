@@ -77,12 +77,8 @@ obj/src/main.o: src/main.cpp include/SandSim.hpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
- include/ParticleWorld.hpp include/particles/Particle.hpp \
- include/Random.hpp include/RigidBody.hpp ../2dbox/include/box2d/box2d.h \
- ../2dbox/include/box2d/base.h ../2dbox/include/box2d/collision.h \
- ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
- ../2dbox/include/box2d/types.h include/Particles/Explosion.hpp \
- include/Renderer.hpp include/UI.hpp include/LevelMenu.hpp
+ include/ParticleWorld.hpp include/Random.hpp include/Renderer.hpp \
+ include/UI.hpp include/LevelMenu.hpp
 include/SandSim.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp:
@@ -164,16 +160,7 @@ include/SandSim.hpp:
 ../SFML-3.0.0/include/SFML/System/Sleep.hpp:
 include/Constants.hpp:
 include/ParticleWorld.hpp:
-include/particles/Particle.hpp:
 include/Random.hpp:
-include/RigidBody.hpp:
-../2dbox/include/box2d/box2d.h:
-../2dbox/include/box2d/base.h:
-../2dbox/include/box2d/collision.h:
-../2dbox/include/box2d/math_functions.h:
-../2dbox/include/box2d/id.h:
-../2dbox/include/box2d/types.h:
-include/Particles/Explosion.hpp:
 include/Renderer.hpp:
 include/UI.hpp:
 include/LevelMenu.hpp:

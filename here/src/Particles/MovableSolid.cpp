@@ -6,39 +6,58 @@
 // Terminal velocity (Positive for Down)
 static const float MAX_VEL_Y = 124.0f;
 
-void MovableSolid::update(int x, int y, float dt, ParticleWorld& world) {
-    if (hasBeenUpdatedThisFrame) return;
-    hasBeenUpdatedThisFrame = true;
-    // 1. Gravity (SFML: Add to Y to go Down)
-    velocity.y += (GRAVITY * dt);
+// --- MOVABLE SOLID BASE IMPLEMENTATION ---
+
+void MovableSolid::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+    Particle::onSpawn(index, x, y, world);
+
+    // 1. Default Kinematics
+    KinematicsComponent kin;
+    kin.velocity = {0.0f, 124.0f}; // Default falling speed
+    kin.xThreshold = 0.0f;
+    kin.yThreshold = 0.0f;
+    kin.isFreeFalling = true;
+    kin.stoppedMovingCount = 0;
+    world.kinematicsManager.add(index, kin);
+
+    // 2. Default Durability (From old Particle.hpp base: health = 500)
+    DurabilityComponent dur;
+    dur.health = 500;
+    dur.explosionResistance = 1; // Default resistance
+    world.durabilityManager.add(index, dur);
+}
+
+void MovableSolid::update(int x, int y, uint32_t index, float dt, ParticleWorld& world) {
+    auto* kin = world.kinematicsManager.get(index);
+    if (!kin) return;
+
+    // 1. Gravity
+    kin->velocity.y += (GRAVITY * dt);
     
     // Cap falling speed
-    if (velocity.y > MAX_VEL_Y) velocity.y = MAX_VEL_Y;
+    if (kin->velocity.y > MAX_VEL_Y) kin->velocity.y = MAX_VEL_Y;
     
-    if (isFreeFalling) velocity.x *= 0.9f;
+    if (kin->isFreeFalling) kin->velocity.x *= 0.9f;
 
-    // 2. Thresholds (FIXED: Proper accumulation)
-    xThreshold += std::abs(velocity.x * dt);
-    yThreshold += std::abs(velocity.y * dt);
+    // 2. Thresholds
+    kin->xThreshold += std::abs(kin->velocity.x * dt);
+    kin->yThreshold += std::abs(kin->velocity.y * dt);
 
-    int velXInt = static_cast<int>(xThreshold);
-    int velYInt = static_cast<int>(yThreshold);
+    int velXInt = static_cast<int>(kin->xThreshold);
+    int velYInt = static_cast<int>(kin->yThreshold);
 
-    // Subtract only the whole pixels we move this frame
-    xThreshold -= static_cast<float>(velXInt);
-    yThreshold -= static_cast<float>(velYInt);
+    kin->xThreshold -= static_cast<float>(velXInt);
+    kin->yThreshold -= static_cast<float>(velYInt);
 
-    int xMod = (velocity.x < 0) ? -1 : 1;
-    int yMod = (velocity.y < 0) ? -1 : 1;
+    int xMod = (kin->velocity.x < 0) ? -1 : 1;
+    int yMod = (kin->velocity.y < 0) ? -1 : 1;
 
     // 3. Bresenham Vector Pathing
     int upperBound = std::max(velXInt, velYInt);
     
-    // FIXED: Hanging Logic
-    // If we aren't moving enough to trigger the loop, check if we are in the air.
     if (upperBound == 0) {
-        if (world.inBounds(x, y + 1) && !world.getParticleAt(x, y + 1)) {
-            isFreeFalling = true; // Build up gravity to fall next frame
+        if (world.isEmpty(x, y + 1)) {
+            kin->isFreeFalling = true; 
         }
     }
     
@@ -48,7 +67,8 @@ void MovableSolid::update(int x, int y, float dt, ParticleWorld& world) {
     int minBound = std::min(velXInt, velYInt);
     float slope = (upperBound == 0) ? 0.0f : ((float)(minBound) / (upperBound));
     bool xDiffIsLarger = velXInt > velYInt;
-sf::Vector2i formerLocation = {x, y};
+    sf::Vector2i formerLocation = {x, y};
+
     for (int i = 1; i <= upperBound; i++) {
         int smallerCount = (int)std::floor(i * slope);
         int xInc = xDiffIsLarger ? i : smallerCount;
@@ -63,112 +83,122 @@ sf::Vector2i formerLocation = {x, y};
             bool isFinal = (i == upperBound);
             bool isFirst = (i == 1);
             
-            if (actOnNeighbor(targetX, targetY, currentX, currentY, world, isFinal, isFirst, 0)) {
-                break; 
-            }
-        } else {
-            // Out of bounds -> Kill particle
+            uint32_t targetIdx = world.getIndex(targetX, targetY);
+            bool stopped = actOnNeighbor(targetX, targetY, index, targetIdx, world, isFinal, isFirst, 0);
             
+            if (stopped) break; 
+            
+            currentX = targetX;
+            currentY = targetY;
+        } else {
+            if (kin) kin->velocity = {0, 0}; 
+            break; 
         }
     }
-    // Post-movement updates
-    applyHeatToNeighborsIfIgnited(world);
-    world.updateParticleColor(this,world);
-    takeEffectsDamage(world);
-    spawnSparkIfIgnited(world);
-    //checkLifeSpan(world);
-    // Update Stopped Moving Count
-    if (didNotMove(formerLocation) && !isIgnited) {
-        stoppedMovingCount++;
-    } else {
-        stoppedMovingCount = 0;
-    }
+
+    uint32_t newIndex = world.getIndex(currentX, currentY); 
     
-    if (stoppedMovingCount > stoppedMovingThreshold) {
-        stoppedMovingCount = stoppedMovingThreshold;
+    applyHeatToNeighborsIfIgnited(newIndex, currentX, currentY, world);
+    world.updateParticleColor(newIndex, currentX, currentY);
+    takeEffectsDamage(newIndex, world);
+    spawnSparkIfIgnited(newIndex, currentX, currentY, world);
+
+    auto* finalKin = world.kinematicsManager.get(newIndex);
+    if (finalKin) {
+        if (currentX == formerLocation.x && currentY == formerLocation.y) {
+            finalKin->stoppedMovingCount++;
+            if (finalKin->stoppedMovingCount > 5) finalKin->stoppedMovingCount = 5;
+        } else {
+            finalKin->stoppedMovingCount = 0;
+        }
     }
 }
 
-bool MovableSolid::actOnNeighbor(int targetX, int targetY, int& currentX, int& currentY, ParticleWorld& world, bool isFinal, bool isFirst, int depth) {
-    
-    Particle* neighbor = world.getParticleAt(targetX, targetY);
+bool MovableSolid::actOnNeighbor(int targetX, int targetY, uint32_t myIndex, uint32_t targetIndex, 
+                                 ParticleWorld& world, bool isFinal, bool isFirst, int depth) 
+{
+    auto* myKin = world.kinematicsManager.get(myIndex);
 
-    // --- Interaction ---
-    if (this->actOnOther(neighbor, world)) return true;
+    if (!world.isEmpty(targetX, targetY)) {
+        if (this->actOnOther(myIndex, targetIndex, world)) return true;
+    }
 
-    // Case 1: Empty
-    if (!neighbor) {
-        setAdjacentNeighborsFreeFalling(currentX, currentY, world, depth);
+    if (world.isEmpty(targetX, targetY)) {
+        int curX = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] % world.getWidth();
+        int curY = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] / world.getWidth();
+        
+        setAdjacentNeighborsFreeFalling(curX, curY, world, depth);
+        
         if (isFinal) {
-            isFreeFalling = true;
-            world.moveParticle(currentX, currentY, targetX, targetY);
-            currentX = targetX;
-            currentY = targetY;
+            myKin->isFreeFalling = true;
+            world.moveParticle(curX, curY, targetX, targetY);
         }
         return false; 
     }
 
-    // Case 2: Liquid Displacement
-    bool isLiquid = (neighbor->getGroup()==MaterialGroup::Liquid);
-    if (isLiquid) {
-        isFreeFalling = true;
-        world.swapParticles(currentX, currentY, targetX, targetY);
-        currentX = targetX;
-        currentY = targetY;
-        return true; 
-    }
-
-    // Case 3: Solid Collision & Sliding
-    if (depth > 0) return true;
-    if (isFinal) return true;
-
-    if (isFreeFalling) {
-        float absY = std::max(std::abs(velocity.y) / 31.0f, 105.0f);
-        velocity.x = (velocity.x < 0) ? -absY : absY;
-    }
-
-    sf::Vector2f normVel = velocity;
-    float len = std::sqrt(normVel.x*normVel.x + normVel.y*normVel.y);
-    if (len != 0) normVel /= len;
-
-    int addX = getAdditional(normVel.x);
-    int addY = getAdditional(normVel.y);
-
-    if (isFirst) {
-        velocity.y = getAverageVelOrGravity(velocity.y, neighbor->velocity.y);
-    } else {
-        velocity.y = 124.0f; // SFML: Positive push down
-    }
-
-    neighbor->velocity.y = velocity.y;
-    velocity.x *= frictionFactor * neighbor->frictionFactor;
-
-    // A. Diagonal Sliding (e.g., forming a pile)
-    int diagX = currentX + addX;
-    int diagY = currentY + addY;
-    if (world.inBounds(diagX, diagY)) {
-        Particle* diagNeighbor = world.getParticleAt(diagX, diagY);
-        bool stoppedDiag = actOnNeighbor(diagX, diagY, currentX, currentY, world, true, false, depth + 1);
-        if (!stoppedDiag) {
-            isFreeFalling = true;
+    BaseComponent* targetBase = world.baseManager.get(targetIndex);
+    if (targetBase) {
+        Particle* logic = Particle::GetRegistry()[static_cast<int>(targetBase->id)];
+        if (logic && logic->getGroup() == MaterialGroup::Liquid) {
+            myKin->isFreeFalling = true;
+            int curX = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] % world.getWidth();
+            int curY = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] / world.getWidth();
+            world.swapParticles(curX, curY, targetX, targetY);
             return true; 
         }
     }
 
-    // B. Adjacent Sliding (Horizontal shift)
-    int adjX = currentX + addX;
-    if (world.inBounds(adjX, currentY)) {
-        Particle* adjNeighbor = world.getParticleAt(adjX, currentY);
-        bool stoppedAdj = actOnNeighbor(adjX, currentY, currentX, currentY, world, true, false, depth + 1);
-        if (stoppedAdj) {
-            velocity.x *= -1; 
+    if (depth > 0 || isFinal) return true;
+
+    if (myKin->isFreeFalling) {
+        float absY = std::max(std::abs(myKin->velocity.y) / 31.0f, 105.0f);
+        myKin->velocity.x = (myKin->velocity.x < 0) ? -absY : absY;
+    }
+
+    sf::Vector2f normVel = myKin->velocity;
+    float len = std::sqrt(normVel.x*normVel.x + normVel.y*normVel.y);
+    if (len != 0) normVel /= len;
+
+    int addX = getAdditional(normVel.x);
+
+    auto* targetKin = world.kinematicsManager.get(targetIndex);
+    if (targetKin) {
+        if (isFirst) {
+            myKin->velocity.y = getAverageVelOrGravity(myKin->velocity.y, targetKin->velocity.y);
         } else {
-            isFreeFalling = false;
+            myKin->velocity.y = 124.0f; 
+        }
+        targetKin->velocity.y = myKin->velocity.y;
+        myKin->velocity.x *= 0.25f; // Combined friction approximation
+    }
+
+    int curX = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] % world.getWidth();
+    int curY = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] / world.getWidth();
+
+    int diagX = curX + addX;
+    int diagY = curY + 1; 
+    if (world.inBounds(diagX, diagY)) {
+        uint32_t diagIdx = world.getIndex(diagX, diagY);
+        bool stoppedDiag = actOnNeighbor(diagX, diagY, myIndex, diagIdx, world, true, false, depth + 1);
+        if (!stoppedDiag) {
+            myKin->isFreeFalling = true;
+            return true; 
+        }
+    }
+
+    int adjX = curX + addX;
+    if (world.inBounds(adjX, curY)) {
+        uint32_t adjIdx = world.getIndex(adjX, curY);
+        bool stoppedAdj = actOnNeighbor(adjX, curY, myIndex, adjIdx, world, true, false, depth + 1);
+        if (stoppedAdj) {
+            myKin->velocity.x *= -1; 
+        } else {
+            myKin->isFreeFalling = false;
             return true;
         }
     }
 
-    isFreeFalling = false;
+    myKin->isFreeFalling = false;
     return true; 
 }
 
@@ -177,12 +207,10 @@ void MovableSolid::setAdjacentNeighborsFreeFalling(int x, int y, ParticleWorld& 
     int checks[2] = {1, -1};
     for (int dx : checks) {
         if (world.inBounds(x + dx, y)) {
-            Particle* p = world.getParticleAt(x + dx, y);
-            if (p) {
-                // Java: Math.random() > element.inertialResistance
-                if (Random::randFloat(0, 1) > p->inertialResistance) {
-                    p->isFreeFalling = true;
-                }
+            uint32_t nIdx = world.getIndex(x + dx, y);
+            auto* kin = world.kinematicsManager.get(nIdx);
+            if (kin && Random::randFloat(0, 1) > 0.1f) { 
+                kin->isFreeFalling = true;
             }
         }
     }
@@ -195,58 +223,118 @@ int MovableSolid::getAdditional(float val) {
 }
 
 float MovableSolid::getAverageVelOrGravity(float myVel, float otherVel) {
-    // SFML logic: if neighbor is falling slower than max (124), use 124
     if (otherVel < 125.0f) return 124.0f;
     float avg = (myVel + otherVel) / 2.0f;
-    // Cap to terminal velocity
     return (avg < 0) ? avg : std::min(avg, 124.0f);
 }
-// --- Specific Implementations ---
 
-void Coal::spawnSparkIfIgnited(ParticleWorld& world) {
-    if (Random::randInt(0, 20) > 2) return;
-    // Call base (assuming Particle has a base implementation, otherwise implement here)
-    Particle::spawnSparkIfIgnited(world); 
+// --- SUBCLASS IMPLEMENTATIONS ---
+
+void Sand::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+    MovableSolid::onSpawn(index, x, y, world);
+    auto* kin = world.kinematicsManager.get(index);
+    if(kin) kin->velocity.x = (Random::randBool()) ? -1.0f : 1.0f;
 }
 
-void Gunpowder::update(int x, int y, float dt, ParticleWorld& world) {
-    MovableSolid::update(x, y, dt, world);
-    if (isIgnited) {
-        ignitedCount++;
+void Dirt::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+    MovableSolid::onSpawn(index, x, y, world);
+}
+
+void Coal::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+    MovableSolid::onSpawn(index, x, y, world);
+    ThermalComponent therm;
+    therm.flammabilityResistance = 100;
+    therm.heatFactor = 10;
+    therm.fireDamage = 1;
+    world.thermalManager.add(index, therm);
+}
+
+void Coal::spawnSparkIfIgnited(uint32_t index, int x, int y, ParticleWorld& world) {
+    if (Random::randInt(0, 20) > 2) return;
+    Particle::spawnSparkIfIgnited(index, x, y, world); 
+}
+
+void Gunpowder::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+    MovableSolid::onSpawn(index, x, y, world);
+    
+    ThermalComponent therm;
+    therm.flammabilityResistance = 10;
+    therm.heatFactor = 10;
+    world.thermalManager.add(index, therm);
+    
+    // Overwrite default health to act as ignited timer (starts at 0)
+    if (auto* dur = world.durabilityManager.get(index)) {
+        dur->health = 0;
     }
-    if (ignitedCount >= ignitedThreshold) {
-        // Java: matrix.addExplosion(15, 10, this)
-        // Check explosion resistance of self?
-        if (explode(world, 100)) { // Force explosion
-             // Assuming ParticleWorld has an explosion handler
-             // world.createExplosion(x, y, 15, 10); 
+}
+
+void Gunpowder::update(int x, int y, uint32_t index, float dt, ParticleWorld& world) {
+    MovableSolid::update(x, y, index, dt, world);
+    auto* base = world.baseManager.get(index);
+    auto* dur = world.durabilityManager.get(index); 
+
+    if (base && base->flags.isIgnited && dur) {
+        dur->health++; 
+        if (dur->health >= 7) { 
+             world.triggerExplosion(x, y, 15, 10);
+             die(index, world);
         }
     }
 }
 
-void Snow::update(int x, int y, float dt, ParticleWorld& world) {
-    MovableSolid::update(x, y, dt, world);
-    // Java: Check if falling fast, random chance to speed up
-    if (velocity.y > 62.0f) { // SFML: Positive is down
-        velocity.y = (Random::randFloat(0,1) > 0.3f) ? 62.0f : 124.0f;
+void Snow::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+    MovableSolid::onSpawn(index, x, y, world);
+    auto* kin = world.kinematicsManager.get(index);
+    if(kin) kin->velocity.y = 62.0f; 
+    
+    ThermalComponent therm;
+    therm.flammabilityResistance = 100; 
+    world.thermalManager.add(index, therm);
+}
+
+void Snow::update(int x, int y, uint32_t index, float dt, ParticleWorld& world) {
+    MovableSolid::update(x, y, index, dt, world);
+    auto* kin = world.kinematicsManager.get(index);
+    if (kin && kin->velocity.y > 62.0f) { 
+        kin->velocity.y = (Random::randFloat(0,1) > 0.3f) ? 62.0f : 124.0f;
     }
 }
 
-bool Snow::receiveHeat(int heat) {
+bool Snow::receiveHeat(uint32_t index, int heat, ParticleWorld& world) {
     if (heat > 0) {
-        // Die and replace with Water
-        // Since we don't have the instance 'world' here in the args for receiveHeat 
-        // (based on Particle.hpp signature), we might need to flag it dead 
-        // or rely on a different update cycle. 
-        // *Correction*: Particle.hpp receiveHeat(int heat) doesn't have 'world'.
-        // You might need to add a flag 'shouldMelt' and handle in update, 
-        // or change the Particle.hpp signature to include world.
-        
-        // Assuming we return true to indicate heat was used:
-        health = 0; // Kill it
-        isDead = true; 
-        // In a real engine, you'd trigger a "replaceWith(MaterialID::Water)" flag here
+        int curX = world.baseManager.denseToGrid[world.baseManager.sparse[index]] % world.getWidth();
+        int curY = world.baseManager.denseToGrid[world.baseManager.sparse[index]] / world.getWidth();
+        dieAndReplace(index, curX, curY, MaterialID::Water, world);
         return true;
     }
     return false;
 }
+
+void Ember::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+    MovableSolid::onSpawn(index, x, y, world);
+    auto* base = world.baseManager.get(index);
+    if (base) base->flags.isIgnited = true;
+
+    // Overwrite default health with random lifespan (250-350 frames)
+    if (auto* dur = world.durabilityManager.get(index)) {
+        dur->health = Random::randInt(250, 350); 
+    }
+    
+    ThermalComponent therm;
+    therm.temperature = 5;
+    therm.heatFactor = 10;
+    world.thermalManager.add(index, therm);
+}
+
+void Salt::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+    MovableSolid::onSpawn(index, x, y, world);
+}
+
+// --- AUTO REGISTRATION ---
+static Sand sand_instance;
+static Dirt dirt_instance;
+static Coal coal_instance;
+static Gunpowder gunpowder_instance;
+static Snow snow_instance;
+static Ember ember_instance;
+static Salt salt_instance;
