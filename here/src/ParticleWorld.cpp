@@ -1,237 +1,532 @@
 #include "ParticleWorld.hpp"
-#include "Particles/Particle.hpp" // For MaterialRegistry
+#include "Particles/Particle.hpp"
 #include <algorithm>
 #include <cmath>
-#include <string>
 #include <fstream>
 #include <filesystem>
+#include <cstring>
+#include <iostream>
 #include "RigidBody.hpp"
 #include "Particles/Explosion.hpp"
-#include <cstring>
 
-ParticleWorld::~ParticleWorld() = default;
-
-// A unique 4-byte header to identify your save files
 const char MAGIC_HEADER[4] = {'S', 'A', 'N', 'D'};
 
-ParticleWorld::ParticleWorld(unsigned int w, unsigned int h, const std::string& worldFile)
-    : width(w), height(h), frameCounter(0) {
-    
-    // Resize pixel buffer
-    pixelBuffer.resize(width * height * 4);
-    
-    // Initialize Managers
-    size_t area = width * height;
-    baseManager.init(area);
-    kinematicsManager.init(area);
-    durabilityManager.init(area);
-    thermalManager.init(area);
-    fluidManager.init(area);
-
-    rigidBodySystem = std::make_unique<RigidBodySystem>(width, height);
-
-    if (!worldFile.empty() && std::filesystem::exists(worldFile)) {
-        loadWorld(worldFile); 
-    } else {
-        clear();
+// --- ANONYMOUS NAMESPACE: COMPONENT MOVEMENT HELPERS ---
+namespace {
+    inline void moveSameChunkFast(Chunk* c, uint32_t oldIdx, uint32_t newIdx, uint8_t mask) {
+        if (mask & COMP_KINEMATICS) c->kinematics[newIdx] = c->kinematics[oldIdx];
+        if (mask & COMP_DURABILITY) c->durability[newIdx] = c->durability[oldIdx];
+        if (mask & COMP_THERMAL)    c->thermal[newIdx]    = c->thermal[oldIdx];
+        if (mask & COMP_FLUID)      c->fluid[newIdx]      = c->fluid[oldIdx];
     }
-}
 
-void ParticleWorld::clear() {
-    baseManager.clear();
-    kinematicsManager.clear();
-    durabilityManager.clear();
-    thermalManager.clear();
-    fluidManager.clear();
+    inline void swapSameChunkFast(Chunk* c, uint32_t i1, uint32_t i2, uint8_t combinedMask) {
+        if (combinedMask & COMP_KINEMATICS) std::swap(c->kinematics[i1], c->kinematics[i2]);
+        if (combinedMask & COMP_DURABILITY) std::swap(c->durability[i1], c->durability[i2]);
+        if (combinedMask & COMP_THERMAL)    std::swap(c->thermal[i1],    c->thermal[i2]);
+        if (combinedMask & COMP_FLUID)      std::swap(c->fluid[i1],      c->fluid[i2]);
+    }
 
-    std::fill(pixelBuffer.begin(), pixelBuffer.end(), 0); // Black/Transparent screen
-    if (rigidBodySystem) rigidBodySystem->clear();
-}
+    inline void moveOptionalCrossChunk(Chunk* oldC, uint32_t oldIdx, Chunk* newC, uint32_t newIdx, uint32_t mask) {
+        if (mask & COMP_KINEMATICS) {
+            if (!newC->kinematics) newC->kinematics = std::make_unique<KinematicsComponent[]>(CHUNK_AREA);
+            newC->kinematics[newIdx] = oldC->kinematics[oldIdx];
+        }
+        if (mask & COMP_DURABILITY) {
+            if (!newC->durability) newC->durability = std::make_unique<DurabilityComponent[]>(CHUNK_AREA);
+            newC->durability[newIdx] = oldC->durability[oldIdx];
+        }
+        if (mask & COMP_THERMAL) {
+            if (!newC->thermal) newC->thermal = std::make_unique<ThermalComponent[]>(CHUNK_AREA);
+            newC->thermal[newIdx] = oldC->thermal[oldIdx];
+        }
+        if (mask & COMP_FLUID) {
+            if (!newC->fluid) newC->fluid = std::make_unique<FluidComponent[]>(CHUNK_AREA);
+            newC->fluid[newIdx] = oldC->fluid[oldIdx];
+        }
+    }
 
-void ParticleWorld::spawnParticle(MaterialID id, int x, int y) {
-    if (!inBounds(x, y)) return;
-
-    uint32_t index = computeIndex(x, y);
-
-    // Remove existing if any
-    removeParticle(index);
-
-    // Look up the Logic Singleton
-    Particle* pLogic = MaterialRegistry[static_cast<int>(id)];
-    if (pLogic) {
-        // Let the singleton populate the managers
-        pLogic->onSpawn(index, x, y, *this);
-        
-        // Update pixel buffer immediately
-        BaseComponent* base = baseManager.get(index);
-        if (base) {
-            updatePixelColor(x, y, base->color);
+    inline void swapOptionalCrossChunk(Chunk* c1, uint32_t i1, Chunk* c2, uint32_t i2, uint8_t m1, uint8_t m2) {
+        uint8_t combinedMask = m1 | m2;
+        if (combinedMask & COMP_KINEMATICS) {
+            if (!c1->kinematics) c1->kinematics = std::make_unique<KinematicsComponent[]>(CHUNK_AREA);
+            if (!c2->kinematics) c2->kinematics = std::make_unique<KinematicsComponent[]>(CHUNK_AREA);
+            std::swap(c1->kinematics[i1], c2->kinematics[i2]);
+        }
+        if (combinedMask & COMP_DURABILITY) {
+            if (!c1->durability) c1->durability = std::make_unique<DurabilityComponent[]>(CHUNK_AREA);
+            if (!c2->durability) c2->durability = std::make_unique<DurabilityComponent[]>(CHUNK_AREA);
+            std::swap(c1->durability[i1], c2->durability[i2]);
+        }
+        if (combinedMask & COMP_THERMAL) {
+            if (!c1->thermal) c1->thermal = std::make_unique<ThermalComponent[]>(CHUNK_AREA);
+            if (!c2->thermal) c2->thermal = std::make_unique<ThermalComponent[]>(CHUNK_AREA);
+            std::swap(c1->thermal[i1], c2->thermal[i2]);
+        }
+        if (combinedMask & COMP_FLUID) {
+            if (!c1->fluid) c1->fluid = std::make_unique<FluidComponent[]>(CHUNK_AREA);
+            if (!c2->fluid) c2->fluid = std::make_unique<FluidComponent[]>(CHUNK_AREA);
+            std::swap(c1->fluid[i1], c2->fluid[i2]);
         }
     }
 }
 
-void ParticleWorld::removeParticle(int x, int y) {
-    if (inBounds(x, y)) {
-        removeParticle(computeIndex(x, y));
+// --- CONSTRUCTOR / DESTRUCTOR ---
+
+ParticleWorld::~ParticleWorld() = default;
+
+ParticleWorld::ParticleWorld(unsigned int w, unsigned int h, const std::string &worldFile)
+    : viewWidth(w), viewHeight(h), frameCounter(0), cameraPos({0, 0})
+{
+    std::fill(std::begin(cacheCx), std::end(cacheCx), -999999);
+    std::fill(std::begin(cacheCy), std::end(cacheCy), -999999);
+
+    rigidBodySystem = std::make_unique<RigidBodySystem>();
+    pixelBuffer.resize(viewWidth * viewHeight * 4);
+    if (!worldFile.empty() && std::filesystem::exists(worldFile)) {
+        loadWorld(worldFile);
     }
 }
 
-void ParticleWorld::removeParticle(uint32_t index) {
-    // Only remove if it exists (check base)
-    if (baseManager.get(index) == nullptr) return;
+void ParticleWorld::clear() { 
+    chunks.clear(); 
+    std::fill(std::begin(cacheChunk), std::end(cacheChunk), nullptr);
+    std::fill(std::begin(cacheCx), std::end(cacheCx), -999999);
+    std::fill(std::begin(cacheCy), std::end(cacheCy), -999999);
+}
 
-    // Remove from all managers
-    baseManager.remove(index);
-    kinematicsManager.remove(index);
-    durabilityManager.remove(index);
-    thermalManager.remove(index);
-    fluidManager.remove(index);
+// --- CHUNK MANAGEMENT (OPTIMIZED) ---
 
-    // Clear pixel (Convert index back to X/Y for pixel buffer)
-    int pIdx = index * 4;
-    pixelBuffer[pIdx] = 0; pixelBuffer[pIdx+1] = 0; 
-    pixelBuffer[pIdx+2] = 0; pixelBuffer[pIdx+3] = 0;
+Chunk* ParticleWorld::getChunk(int x, int y) const {
+    int cx = x >> 6;
+    int cy = y >> 6;
+
+    int cacheIdx = (cx ^ (cy * 73856093)) & 63; 
+    if (cacheCx[cacheIdx] == cx && cacheCy[cacheIdx] == cy) {
+        return cacheChunk[cacheIdx];
+    }
+
+    auto it = chunks.find({cx, cy});
+    if (it != chunks.end()) {
+        cacheCx[cacheIdx] = cx;
+        cacheCy[cacheIdx] = cy;
+        cacheChunk[cacheIdx] = it->second.get();
+        return it->second.get();
+    }
+    return nullptr;
+}
+
+Chunk* ParticleWorld::getOrCreateChunk(int x, int y) {
+    int cx = x >> 6;
+    int cy = y >> 6;
+
+    int cacheIdx = (cx ^ (cy * 73856093)) & 63; 
+    if (cacheCx[cacheIdx] == cx && cacheCy[cacheIdx] == cy && cacheChunk[cacheIdx]) {
+        return cacheChunk[cacheIdx];
+    }
+
+    ChunkCoord coord{cx, cy};
+    auto it = chunks.find(coord);
+    if (it == chunks.end()) {
+        chunks[coord] = std::make_unique<Chunk>();
+        
+        cacheCx[cacheIdx] = cx;
+        cacheCy[cacheIdx] = cy;
+        cacheChunk[cacheIdx] = chunks[coord].get();
+        return chunks[coord].get();
+    }
+    
+    cacheCx[cacheIdx] = cx;
+    cacheCy[cacheIdx] = cy;
+    cacheChunk[cacheIdx] = it->second.get();
+    return it->second.get();
+}
+
+void ParticleWorld::updateChunkPixel(Chunk *c, uint32_t localIdx, sf::Color color) {
+    if (!c) return;
+    std::memcpy(&c->pixelData[localIdx * 4], &color, sizeof(sf::Color));
+    c->visualDirty = true;
+}
+
+bool ParticleWorld::inBounds(int x, int y) {
+    return true; 
+}
+
+// --- PARTICLE LOGIC (CRUD) ---
+
+void ParticleWorld::spawnParticle(MaterialID id, int x, int y) {
+    Chunk *c = getOrCreateChunk(x, y);
+    uint32_t idx = computeLocalIndex(x, y);
+
+    removeParticleInternal(c, idx); 
+    
+    Particle *pLogic = MaterialRegistry[static_cast<int>(id)];
+    if (pLogic) {
+        BaseComponent base(id, sf::Color::Transparent, ParticleFlags());
+        add<BaseComponent>(x, y, base); 
+
+        pLogic->onSpawn(idx, x, y, *this);
+        
+        BaseComponent* finalBase = &c->base[idx];
+        updateChunkPixel(c, idx, finalBase->color);
+    }
+    wakeParticle(x, y);
+}
+
+void ParticleWorld::removeParticle(int x, int y) {
+    Chunk *c = getChunk(x, y);
+    if (c) {
+        removeParticleInternal(c, computeLocalIndex(x, y));
+        wakeParticle(x, y);
+    }
+}
+
+void ParticleWorld::removeParticleInternal(Chunk *chunk, uint32_t localIndex) {
+    if (!chunk || chunk->base[localIndex].compMask == 0) return;
+    
+    chunk->base[localIndex].compMask = 0; 
+    chunk->base[localIndex].id = (MaterialID)0; 
+    
+    updateChunkPixel(chunk, localIndex, sf::Color::Transparent);
 }
 
 void ParticleWorld::moveParticle(int oldX, int oldY, int newX, int newY) {
-    if (!inBounds(oldX, oldY) || !inBounds(newX, newY)) return;
     if (oldX == newX && oldY == newY) return;
 
-    uint32_t oldIdx = computeIndex(oldX, oldY);
-    uint32_t newIdx = computeIndex(newX, newY);
+    int cx1 = oldX >> 6;
+    int cy1 = oldY >> 6;
+    int cx2 = newX >> 6;
+    int cy2 = newY >> 6;
 
-    if (baseManager.get(oldIdx) == nullptr) return; // Source empty
+    uint32_t oldIdx = computeLocalIndex(oldX, oldY);
+    uint32_t newIdx = computeLocalIndex(newX, newY);
 
-    // Move logic: Update indices in all managers
-    baseManager.move(oldIdx, newIdx);
-    kinematicsManager.move(oldIdx, newIdx);
-    durabilityManager.move(oldIdx, newIdx);
-    thermalManager.move(oldIdx, newIdx);
-    fluidManager.move(oldIdx, newIdx);
-
-    // Update Pixel Buffer
-    int pOld = oldIdx * 4;
-    int pNew = newIdx * 4;
+    Chunk* oldC = getChunk(oldX, oldY);
+    if (!oldC) return;
     
-    // Copy color to new spot
-    std::memcpy(&pixelBuffer[pNew], &pixelBuffer[pOld], 4);
-    // Clear old spot
-    std::memset(&pixelBuffer[pOld], 0, 4);
+    uint8_t mask = oldC->base[oldIdx].compMask;
+    if (mask == 0) return;
+
+    if (cx1 == cx2 && cy1 == cy2) {
+        oldC->base[newIdx] = oldC->base[oldIdx];
+        oldC->base[oldIdx].compMask = 0;
+
+        if (mask > 1) moveSameChunkFast(oldC, oldIdx, newIdx, mask);
+        
+        updateChunkPixel(oldC, newIdx, oldC->base[newIdx].color);
+        updateChunkPixel(oldC, oldIdx, sf::Color::Transparent);
+        
+        // Wake the new position AND the old position's immediate neighbors
+        wakeParticle(newX, newY);
+        wakeParticle(oldX, oldY - 1); // Wake neighbor above
+        wakeParticle(oldX - 1, oldY); // Wake neighbor left
+        wakeParticle(oldX + 1, oldY); // Wake neighbor right
+        return;
+    }
+
+    Chunk* newC = getOrCreateChunk(newX, newY);
+    newC->base[newIdx] = oldC->base[oldIdx];
+    oldC->base[oldIdx].compMask = 0;
+
+    if (mask > 1) moveOptionalCrossChunk(oldC, oldIdx, newC, newIdx, mask);
+
+    updateChunkPixel(newC, newIdx, newC->base[newIdx].color);
+    updateChunkPixel(oldC, oldIdx, sf::Color::Transparent);
+    
+    wakeParticle(newX, newY);
+    wakeParticle(oldX, oldY - 1);
+    wakeParticle(oldX - 1, oldY);
+    wakeParticle(oldX + 1, oldY);
 }
 
 void ParticleWorld::swapParticles(int x1, int y1, int x2, int y2) {
-    if (!inBounds(x1, y1) || !inBounds(x2, y2)) return;
+    int cx1 = x1 >> 6;
+    int cy1 = y1 >> 6;
+    int cx2 = x2 >> 6;
+    int cy2 = y2 >> 6;
 
-    // This is expensive in ECS, but necessary for fluids.
-    // 1. Copy particle 1 to temp buffers
-    // 2. Move particle 2 to 1
-    // 3. Re-spawn temp at 2
-    // Since we don't have deep copy helpers yet, a naive swap is messy.
-    // Optimization: Use a temporary holding variables.
+    uint32_t i1 = computeLocalIndex(x1, y1);
+    uint32_t i2 = computeLocalIndex(x2, y2);
+
+    Chunk* c1 = getChunk(x1, y1);
     
-    uint32_t idx1 = computeIndex(x1, y1);
-    uint32_t idx2 = computeIndex(x2, y2);
+    if (c1 && cx1 == cx2 && cy1 == cy2) {
+        uint8_t m1 = c1->base[i1].compMask;
+        uint8_t m2 = c1->base[i2].compMask;
+        uint8_t combined = m1 | m2;
+        if (combined == 0) return;
 
-    BaseComponent* b1 = baseManager.get(idx1);
-    BaseComponent* b2 = baseManager.get(idx2);
+        std::swap(c1->base[i1], c1->base[i2]);
+        if (combined > 1) swapSameChunkFast(c1, i1, i2, combined);
 
-    // If both empty, do nothing
+        updateChunkPixel(c1, i1, c1->base[i1].color);
+        updateChunkPixel(c1, i2, c1->base[i2].color);
+        
+        wakeParticle(x1, y1); wakeParticle(x1, y1 - 1);
+        wakeParticle(x2, y2); wakeParticle(x2, y2 - 1);
+        return;
+    }
+
+    Chunk* c2 = getChunk(x2, y2);
+    if (!c1 && !c2) return;
+
+    BaseComponent* b1 = (c1 && c1->base[i1].compMask) ? &c1->base[i1] : nullptr;
+    BaseComponent* b2 = (c2 && c2->base[i2].compMask) ? &c2->base[i2] : nullptr;
+
     if (!b1 && !b2) return;
-
-    // If one empty, just move
     if (b1 && !b2) { moveParticle(x1, y1, x2, y2); return; }
     if (!b1 && b2) { moveParticle(x2, y2, x1, y1); return; }
 
-    // If both exist, we need to swap data. 
-    // In strict ECS, we might remove and respawn, or manually swap every component pointer.
-    // For now, let's implement a simplified "Respawn Swap" to ensure data integrity
+    uint8_t m1 = b1->compMask;
+    uint8_t m2 = b2->compMask;
+    uint8_t combined = m1 | m2;
+
+    std::swap(*b1, *b2);
+    if (combined > 1) swapOptionalCrossChunk(c1, i1, c2, i2, m1, m2);
+
+    updateChunkPixel(c1, i1, b1->color);
+    updateChunkPixel(c2, i2, b2->color);
     
-    // 1. Capture Data 1
-    MaterialID id1 = b1->id;
-    // (We lose custom velocity/heat here unless we write a full Copy helper. 
-    // For a simple swap, preserving ID is often enough, but let's try to preserve Velocity)
-    sf::Vector2f vel1 = {0,0};
-    if (auto* k = kinematicsManager.get(idx1)) vel1 = k->velocity;
-    
-    // 2. Capture Data 2
-    MaterialID id2 = b2->id;
-    sf::Vector2f vel2 = {0,0};
-    if (auto* k = kinematicsManager.get(idx2)) vel2 = k->velocity;
-
-    // 3. Perform Swap by respawning (safest way without complex move logic)
-    spawnParticle(id1, x2, y2);
-    if(auto* k = kinematicsManager.get(idx2)) k->velocity = vel1;
-
-    spawnParticle(id2, x1, y1);
-    if(auto* k = kinematicsManager.get(idx1)) k->velocity = vel2;
+    wakeParticle(x1, y1); wakeParticle(x1, y1 - 1);
+    wakeParticle(x2, y2); wakeParticle(x2, y2 - 1);
 }
+// --- UPDATE LOOP ---
 
-void ParticleWorld::updatePixelColor(int x, int y, const sf::Color& color) {
-    if (!inBounds(x, y)) return;
-    int idx = computeIndex(x, y) * 4;
-    pixelBuffer[idx]     = color.r;
-    pixelBuffer[idx + 1] = color.g;
-    pixelBuffer[idx + 2] = color.b;
-    pixelBuffer[idx + 3] = color.a;
-}
+void ParticleWorld::update(float deltaTime)
+{
+    // --- 1. RIGID BODY PRE-UPDATE ---
+    if (rigidBodySystem) {
+        // SYNC FIRST: Catch pixels deleted by the player's eraser brush!
+        rigidBodySystem->syncFromWorld(*this);
+        
+        rigidBodySystem->clearFromWorld(*this);         
+        rigidBodySystem->stepPhysics(deltaTime, *this); 
+        rigidBodySystem->rasterizeToWorld(*this);       
+    }
 
-void ParticleWorld::update(float deltaTime) {
+    // --- 2. FALLING SAND SIMULATION ---
     frameCounter++;
     bool dir = (frameCounter % 2) == 0;
 
-    if (rigidBodySystem) {
-        rigidBodySystem->update(deltaTime);
-        rigidBodySystem->renderToParticleWorld(this);
+    static std::vector<std::pair<ChunkCoord, Chunk *>> safeUpdateList;
+    safeUpdateList.clear();
+    safeUpdateList.reserve(chunks.size());
+
+    for (auto &[coord, chunk] : chunks) {
+        if (chunk->isActive) safeUpdateList.push_back({coord, chunk.get()});
     }
 
-    for (int y = height - 1; y >= 0; --y) {
-        for (int x = dir ? 0 : width - 1; dir ? x < width : x >= 0; dir ? ++x : --x) {
-            uint32_t idx = computeIndex(x, y);
-            
-            // 1. Get Base Component
-            BaseComponent* base = baseManager.get(idx);
-            
-            // 2. Skip if empty or already updated
-            if (!base || base->flags.hasBeenUpdatedThisFrame) continue;
+    for (auto &[coord, chunk] : safeUpdateList) {
+        if (chunk->nextMinX > chunk->nextMaxX) {
+            chunk->isSleeping = true;
+            continue;
+        }
+        chunk->isSleeping = false;
+        chunk->activeMinX = std::max(0, chunk->nextMinX - 1);
+        chunk->activeMinY = std::max(0, chunk->nextMinY - 1);
+        chunk->activeMaxX = std::min(CHUNK_SIZE - 1, chunk->nextMaxX + 1);
+        chunk->activeMaxY = std::min(CHUNK_SIZE - 1, chunk->nextMaxY + 1);
+        chunk->nextMinX = CHUNK_SIZE; chunk->nextMinY = CHUNK_SIZE;
+        chunk->nextMaxX = -1; chunk->nextMaxY = -1;
+    }
 
-            // 3. Mark updated
-            base->flags.hasBeenUpdatedThisFrame = true;
+    for (auto &[coord, chunk] : safeUpdateList)
+    {
+        if (!chunk->isActive || chunk->isSleeping) continue;
 
-            // 4. Update Logic via Singleton
-            if (MaterialRegistry[static_cast<int>(base->id)]) {
-                MaterialRegistry[static_cast<int>(base->id)]->update(x, y, idx, deltaTime, *this);
+        int chunkOriginX = coord.x * CHUNK_SIZE;
+        int chunkOriginY = coord.y * CHUNK_SIZE;
+        sf::FloatRect chunkRect(
+            {static_cast<float>(chunkOriginX), static_cast<float>(chunkOriginY)},
+            {static_cast<float>(CHUNK_SIZE), static_cast<float>(CHUNK_SIZE)}
+        );
+
+        if (!simulationBounds.findIntersection(chunkRect)) continue;
+        
+        BaseComponent* baseArr = chunk->base;
+        auto* kinArr   = chunk->kinematics.get();
+        auto* fluidArr = chunk->fluid.get();
+        auto* thermArr = chunk->thermal.get();
+        auto* durArr   = chunk->durability.get();
+
+        auto processParticle = [&](int lx, int ly) {
+            uint32_t i = (ly << 6) | lx;
+
+            if (baseArr[i].compMask == 0 || baseArr[i].flags.hasBeenUpdatedThisFrame) return;
+
+            baseArr[i].flags.hasBeenUpdatedThisFrame = true;
+
+            ParticleContext ctx { chunk, i, chunkOriginX + lx, chunkOriginY + ly, baseArr, kinArr, fluidArr, thermArr, durArr };
+
+            if (MaterialRegistry[static_cast<int>(baseArr[i].id)]) {
+                MaterialRegistry[static_cast<int>(baseArr[i].id)]->update(ctx, deltaTime, *this);
+            }
+        };
+
+        if (dir) {
+            for (int ly = chunk->activeMaxY; ly >= chunk->activeMinY; --ly) {
+                for (int lx = chunk->activeMinX; lx <= chunk->activeMaxX; ++lx) {
+                    processParticle(lx, ly);
+                }
+            }
+        } else {
+            for (int ly = chunk->activeMaxY; ly >= chunk->activeMinY; --ly) {
+                for (int lx = chunk->activeMaxX; lx >= chunk->activeMinX; --lx) {
+                    processParticle(lx, ly);
+                }
             }
         }
     }
 
-    // Reset flags (Iterate dense vector for speed!)
-    for (auto& base : baseManager.dense) {
-        base.flags.hasBeenUpdatedThisFrame = false;
+    for (auto &[coord, chunk] : safeUpdateList) {
+        if (chunk->isSleeping) continue; 
+        for (int i=0; i<CHUNK_AREA; ++i) {
+            if (chunk->base[i].compMask)
+                chunk->base[i].flags.hasBeenUpdatedThisFrame = false;
+        }
+    }
+
+    // --- 3. RIGID BODY POST-SYNC ---
+    if (rigidBodySystem) {
+        // Did the world burn or destroy some rigid body particles? Sync & Recalculate!
+        rigidBodySystem->syncFromWorld(*this);
+    }
+}
+void ParticleWorld::wakeParticle(int x, int y) {
+    Chunk* c = getChunk(x, y);
+    if (!c) return;
+    
+    int lx = x & 63; 
+    int ly = y & 63;
+
+    // 2. Update the "Active Rect" of the current chunk
+    if (lx < c->nextMinX) c->nextMinX = lx;
+    if (lx > c->nextMaxX) c->nextMaxX = lx;
+    if (ly < c->nextMinY) c->nextMinY = ly;
+    if (ly > c->nextMaxY) c->nextMaxY = ly;
+
+    // 3. Wake neighbors correctly by updating both Min and Max checks
+    auto wakeNeighbor = [&](int nx, int ny) {
+        if (Chunk* nc = getChunk(nx, ny)) {
+            int nlx = nx & 63;
+            int nly = ny & 63;
+            if (nlx < nc->nextMinX) nc->nextMinX = nlx;
+            if (nlx > nc->nextMaxX) nc->nextMaxX = nlx;
+            if (nly < nc->nextMinY) nc->nextMinY = nly;
+            if (nly > nc->nextMaxY) nc->nextMaxY = nly;
+        }
+    };
+
+    bool left = (lx == 0);
+    bool right = (lx == 63);
+    bool top = (ly == 0);
+    bool bottom = (ly == 63);
+
+    // Adjacent
+    if (left) wakeNeighbor(x - 1, y);
+    if (right) wakeNeighbor(x + 1, y);
+    if (top) wakeNeighbor(x, y - 1);
+    if (bottom) wakeNeighbor(x, y + 1);
+
+    // Diagonals (Corners)
+    if (left && top) wakeNeighbor(x - 1, y - 1);
+    if (right && top) wakeNeighbor(x + 1, y - 1);
+    if (left && bottom) wakeNeighbor(x - 1, y + 1);
+    if (right && bottom) wakeNeighbor(x + 1, y + 1);
+}
+
+void ParticleWorld::setParticleColor(int x, int y, const sf::Color& newColor) {
+    Chunk* c = getChunk(x, y);
+    if (!c) return;
+
+    uint32_t localIdx = computeLocalIndex(x, y);
+    if (c->base[localIdx].compMask == 0) return;
+    
+    c->base[localIdx].color = newColor;
+    updateChunkPixel(c, localIdx, newColor);
+    wakeParticle(x, y);
+}
+
+void ParticleWorld::updateParticleColor(uint32_t localIndex, int x, int y, Chunk* c) {
+    if (!c) c = getChunk(x, y);
+    if (!c) return;
+    
+    BaseComponent& base = c->base[localIndex];
+    if (base.compMask == 0) return;
+
+    if (base.flags.isIgnited) {
+        if (Random::randInt(0, 100) < 20) {
+            sf::Color newColor = base.color; 
+            int roll = Random::randInt(0, 100);
+            if (roll < 10) newColor = sf::Color(255, 255, 150);
+            else if (roll < 60) newColor = sf::Color(255, Random::randInt(120, 180), 20);
+            else newColor = sf::Color(Random::randInt(180, 220), 40, 10);
+            
+            setParticleColor(x, y, newColor);
+        }
     }
 }
 
-void ParticleWorld::addParticleCircle(int centerX, int centerY, float radius, MaterialID materialType) {
-    for (int dy = -radius; dy <= radius; ++dy) {
-        for (int dx = -radius; dx <= radius; ++dx) {
-            int x = centerX + dx, y = centerY + dy;
-            if (inBounds(x, y) && isEmpty(x, y)) {
-                if (std::sqrt(dx*dx + dy*dy) <= radius) {
-                    spawnParticle(materialType, x, y);
-                    // Add random velocity if needed via kinematicsManager.get(...)
+// --- CAMERA & RENDERING ---
+
+void ParticleWorld::setCameraPos(int x, int y) {
+    cameraPos = {x, y};
+}
+
+void ParticleWorld::renderToBuffer() {
+    std::fill(pixelBuffer.begin(), pixelBuffer.end(), 0); 
+
+    int startCX = cameraPos.x >> 6;
+    int startCY = cameraPos.y >> 6;
+    int endCX = startCX + (viewWidth / CHUNK_SIZE) + 1;
+    int endCY = startCY + (viewHeight / CHUNK_SIZE) + 1;
+
+    uint32_t* dest32 = reinterpret_cast<uint32_t*>(pixelBuffer.data());
+    int viewW = viewWidth;
+    int viewH = viewHeight;
+
+    for (int cy = startCY; cy <= endCY; ++cy) {
+        for (int cx = startCX; cx <= endCX; ++cx) {
+            auto it = chunks.find({cx, cy});
+            if (it == chunks.end()) continue;
+
+            Chunk* chunk = it->second.get();
+            int chunkWorldX = cx * CHUNK_SIZE;
+            int chunkWorldY = cy * CHUNK_SIZE;
+            const uint32_t* src32 = reinterpret_cast<const uint32_t*>(chunk->pixelData.data());
+
+            for (int ly = 0; ly < CHUNK_SIZE; ++ly) {
+                int screenY = chunkWorldY + ly - cameraPos.y;
+                if (screenY < 0 || screenY >= viewH) continue;
+
+                for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
+                    int screenX = chunkWorldX + lx - cameraPos.x;
+                    if (screenX < 0 || screenX >= viewW) continue;
+
+                    uint32_t pixel = src32[ly * CHUNK_SIZE + lx];
+                    if (pixel != 0) { 
+                        dest32[screenY * viewW + screenX] = pixel;
+                    }
                 }
             }
         }
     }
 }
 
-void ParticleWorld::eraseCircle(int centerX, int centerY, float radius) {
-    for (int dy = -radius; dy <= radius; ++dy) {
-        for (int dx = -radius; dx <= radius; ++dx) {
-            if (std::sqrt(dx*dx + dy*dy) <= radius) {
-                removeParticle(centerX + dx, centerY + dy);
-            }
-        }
-    }
+void ParticleWorld::updatePixelColor(int x, int y, const sf::Color &color) {}
+
+// --- UTILITIES ---
+
+void ParticleWorld::updateCameraBounds(float centerX, float centerY, float viewWidth, float viewHeight) {
+    renderBounds = sf::FloatRect(
+        {centerX - viewWidth / 2.0f, centerY - viewHeight / 2.0f},
+        {viewWidth, viewHeight}
+    );
+    float margin = CHUNK_SIZE * 2.0f;
+    simulationBounds = sf::FloatRect(
+        {renderBounds.position.x - margin, renderBounds.position.y - margin}, 
+        {renderBounds.size.x + (margin * 2.0f), renderBounds.size.y + (margin * 2.0f)} 
+    );
 }
 
 void ParticleWorld::triggerExplosion(int x, int y, int radius, int strength) {
@@ -239,159 +534,185 @@ void ParticleWorld::triggerExplosion(int x, int y, int radius, int strength) {
     boom.enact();
 }
 
-bool ParticleWorld::saveWorld(const std::string& baseFilename) {
+void ParticleWorld::addParticleCircle(int centerX, int centerY, float radius, MaterialID materialType) {
+    int r = (int)std::ceil(radius);
+    for (int dy = -r; dy <= r; ++dy) {
+        for (int dx = -r; dx <= r; ++dx) {
+            if (dx * dx + dy * dy <= radius * radius) {
+                spawnParticle(materialType, centerX + dx, centerY + dy);
+            }
+        }
+    }
+}
+
+void ParticleWorld::eraseCircle(int centerX, int centerY, float radius) {
+    int r = (int)std::ceil(radius);
+    for (int dy = -r; dy <= r; ++dy) {
+        for (int dx = -r; dx <= r; ++dx) {
+            if (dx * dx + dy * dy <= radius * radius) {
+                removeParticle(centerX + dx, centerY + dy);
+            }
+        }
+    }
+}
+// --- FILE IO ---
+void ParticleWorld::renderDebugColliders(sf::RenderTarget& target) const {
+    if (rigidBodySystem) {
+        rigidBodySystem->renderDebug(target);
+    }
+}
+bool ParticleWorld::saveWorld(const std::string &baseFilename) {
     std::string filename = getNextAvailableFilename("worlds/" + baseFilename);
     std::ofstream file(filename, std::ios::binary);
     if (!file.is_open()) return false;
 
-    // Write Magic Number & Header
     file.write(MAGIC_HEADER, 4);
-    file.write(reinterpret_cast<const char*>(&width), sizeof(width));
-    file.write(reinterpret_cast<const char*>(&height), sizeof(height));
+    size_t chunkCount = chunks.size();
+    file.write((char *)&chunkCount, sizeof(chunkCount));
 
-    // Save Logic: We loop through the grid. 
-    // If empty, write Empty ID. If exists, write ID + essential state.
-    
-    for (int i = 0; i < width * height; ++i) {
-        BaseComponent* base = baseManager.get(i);
-        MaterialID id = base ? base->id : static_cast<MaterialID>(0);
-        
-        file.write(reinterpret_cast<const char*>(&id), sizeof(id));
-        
-        if (base) {
-            // Retrieve optional data
-            KinematicsComponent* kin = kinematicsManager.get(i);
-            sf::Vector2f vel = kin ? kin->velocity : sf::Vector2f(0,0);
-            
-            // Write core data needed to reconstruct
-            file.write(reinterpret_cast<const char*>(&vel), sizeof(sf::Vector2f));
-            file.write(reinterpret_cast<const char*>(&base->color), sizeof(sf::Color));
-            
-            // Flags
-            uint8_t flags = 0;
-            if(base->flags.isIgnited) flags |= 1;
-            file.write(reinterpret_cast<const char*>(&flags), sizeof(uint8_t));
-        } else {
-            // Padding
-            sf::Vector2f zero(0,0); sf::Color czero(0,0,0,0); uint8_t fzero = 0;
-            file.write(reinterpret_cast<const char*>(&zero), sizeof(sf::Vector2f));
-            file.write(reinterpret_cast<const char*>(&czero), sizeof(sf::Color));
-            file.write(reinterpret_cast<const char*>(&fzero), sizeof(uint8_t));
+    for (const auto &[coord, chunk] : chunks) {
+        file.write((char *)&coord.x, sizeof(coord.x));
+        file.write((char *)&coord.y, sizeof(coord.y));
+
+        for (int i = 0; i < CHUNK_AREA; ++i) {
+            MaterialID id = chunk->base[i].compMask ? chunk->base[i].id : (MaterialID)0;
+            file.write((char *)&id, sizeof(id));
+
+            if ((int)id != 0) {
+                sf::Vector2f v(0, 0);
+                uint8_t flags = 0;
+
+                // Correctly save velocity and flags if the component exists
+                if ((chunk->base[i].compMask & COMP_KINEMATICS) && chunk->kinematics) {
+                    v = chunk->kinematics[i].velocity;
+                    if (chunk->kinematics[i].isFreeFalling) {
+                        flags |= 2; // Use bit 1 for isFreeFalling
+                    }
+                }
+                
+                if (chunk->base[i].flags.isIgnited) {
+                    flags |= 1; // Use bit 0 for isIgnited
+                }
+                
+                file.write((char *)&v, sizeof(v));
+                file.write((char *)&chunk->base[i].color, sizeof(sf::Color));
+                file.write((char *)&flags, 1);
+            }
         }
     }
     return true;
 }
-
-bool ParticleWorld::loadWorld(const std::string& filename) {
+bool ParticleWorld::loadWorld(const std::string &filename) {
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) return false;
 
-    char header[4];
-    file.read(header, 4);
-    if (std::memcmp(header, MAGIC_HEADER, 4) != 0) return false;
+    char h[4];
+    file.read(h, 4);
+    if (std::memcmp(h, MAGIC_HEADER, 4) != 0) return false;
 
-    int fW, fH;
-    file.read(reinterpret_cast<char*>(&fW), sizeof(fW));
-    file.read(reinterpret_cast<char*>(&fH), sizeof(fH));
-    if (fW != width || fH != height) return false;
+    clear();
 
-    file.read(reinterpret_cast<char*>(&frameCounter), sizeof(frameCounter));
+    size_t chunkCount;
+    file.read((char *)&chunkCount, sizeof(chunkCount));
 
-    clear(); // Reset managers
+    for (size_t i = 0; i < chunkCount; ++i) {
+        int cx, cy;
+        file.read((char *)&cx, sizeof(cx));
+        file.read((char *)&cy, sizeof(cy));
 
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
+        Chunk *c = getOrCreateChunk(cx * CHUNK_SIZE, cy * CHUNK_SIZE);
+
+        for (int idx = 0; idx < CHUNK_AREA; ++idx) {
             MaterialID id;
-            file.read(reinterpret_cast<char*>(&id), sizeof(id));
-            
-            // Data buffers
-            sf::Vector2f vel;
-            sf::Color col;
-            uint8_t flags;
+            file.read((char *)&id, sizeof(id));
 
-            file.read(reinterpret_cast<char*>(&vel), sizeof(vel));
-            file.read(reinterpret_cast<char*>(&col), sizeof(col));
-            file.read(reinterpret_cast<char*>(&flags), sizeof(flags));
+            if ((int)id != 0) {
+                sf::Vector2f v;
+                sf::Color col;
+                uint8_t f;
+                file.read((char *)&v, sizeof(v));
+                file.read((char *)&col, sizeof(col));
+                file.read((char *)&f, 1);
 
-            if (static_cast<int>(id) != 0) {
-                spawnParticle(id, x, y);
-                uint32_t idx = computeIndex(x, y);
-                
-                // Restore state
-                if (auto* base = baseManager.get(idx)) {
+                int lx = idx % CHUNK_SIZE;
+                int ly = idx / CHUNK_SIZE;
+                int gx = cx * CHUNK_SIZE + lx;
+                int gy = cy * CHUNK_SIZE + ly;
+
+                // Spawn particle with its default state
+                spawnParticle(id, gx, gy);
+
+                // Now get pointers and overwrite with loaded state
+                BaseComponent* base = getByLocalIndex<BaseComponent>(c, idx);
+                if (base) {
                     base->color = col;
-                    base->flags.isIgnited = (flags & 1);
+                    base->flags.isIgnited = (f & 1);
                 }
-                if (auto* kin = kinematicsManager.get(idx)) {
-                    kin->velocity = vel;
+                
+                if (auto* k = getByLocalIndex<KinematicsComponent>(c, idx)) {
+                    k->velocity = v;
+                    k->isFreeFalling = (f & 2);
                 }
+
+                // *** THE CRUCIAL FIX ***
+                // Update the visual pixel with the correct loaded color
+                updateChunkPixel(c, idx, col);
             }
         }
     }
     return true;
 }
 
-void ParticleWorld::updateParticleColor(uint32_t index, int x, int y) 
-{
-    BaseComponent* base = baseManager.get(index);
-    if (!base) return;
-
-    bool visualChanged = false;
-
-    if (base->flags.isIgnited) 
-    {
-        if (Random::randInt(0, 100) < 20) 
-        {
-            int roll = Random::randInt(0, 100);
-            int r, g, b;
-            if (roll < 10) { r = 255; g = 255; b = 150; } 
-            else if (roll < 60) { r = 255; g = Random::randInt(120, 180); b = 20; } 
-            else { r = Random::randInt(180, 220); g = 40; b = 10; }
-
-            base->color = sf::Color(r, g, b, 255);
-            visualChanged = true;
-        }
+std::string ParticleWorld::getNextAvailableFilename(const std::string &baseName) {
+    std::filesystem::path path(baseName);
+    if (path.has_parent_path()) {
+        std::filesystem::create_directories(path.parent_path());
     }
-    else if (base->flags.didColorChange) 
-    {
-        if(!base->flags.discolored){
-            // Restore default (would require props lookup, leaving as current color for now)
-        }
-        base->flags.didColorChange = false;
-        visualChanged = true;
-    }
-
-    if (visualChanged) 
-    {
-        updatePixelColor(x, y, base->color);
-    }
-}
-
-void ParticleWorld::addRigidBody(int centerX, int centerY, float size, RigidBodyShape shape, MaterialID materialType)
-{
-    if (!rigidBodySystem) return;
-    
-    switch (shape)
-    {
-        case RigidBodyShape::Circle:
-            rigidBodySystem->createCircle(static_cast<float>(centerX), static_cast<float>(centerY), size, materialType);
-            break;
-        case RigidBodyShape::Square:
-            rigidBodySystem->createSquare(static_cast<float>(centerX), static_cast<float>(centerY), size, materialType);
-            break;
-        case RigidBodyShape::Triangle:
-            rigidBodySystem->createTriangle(static_cast<float>(centerX), static_cast<float>(centerY), size, materialType);
-            break;
-    }
-}
-
-std::string ParticleWorld::getNextAvailableFilename(const std::string& baseName) 
-{
-    std::string filename;
-    int counter = 0;
+    std::string f;
+    int c = 0;
     do {
-        filename = baseName + std::to_string(counter) + ".rrr";
-        counter++;
-    } while (std::filesystem::exists(filename));
-    return filename;
+        f = baseName + std::to_string(c++) + ".rrr";
+    } while (std::filesystem::exists(f));
+    return f;
+}
+void ParticleWorld::addRigidBodyFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat) {
+    if (rigidBodySystem) {
+        rigidBodySystem->addRigidBodyFromSprite(img, startX, startY, mat);
+    }
+}
+
+void ParticleWorld::addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, MaterialID mat) {
+    if (!rigidBodySystem) return;
+
+    int s = static_cast<int>(sz);
+    if (s <= 0) return;
+
+    sf::Image img;
+    // Fix: SFML 3 uses resize() and sf::Vector2u
+    img.resize(sf::Vector2u(static_cast<unsigned int>(s), static_cast<unsigned int>(s)), sf::Color::Transparent);
+    
+    sf::Color matColor = Particle::getRandomColor(mat); 
+
+    if (sh == RigidBodyShape::Box) {
+        for (int y = 0; y < s; ++y) {
+            for (int x = 0; x < s; ++x) {
+                // Fix: SFML 3 setPixel requires sf::Vector2u
+                img.setPixel(sf::Vector2u(static_cast<unsigned int>(x), static_cast<unsigned int>(y)), matColor);
+            }
+        }
+    } else if (sh == RigidBodyShape::Circle) {
+        int r = s / 2;
+        for (int y = 0; y < s; ++y) {
+            for (int x = 0; x < s; ++x) {
+                int dx = x - r;
+                int dy = y - r;
+                if (dx * dx + dy * dy <= r * r) {
+                    // Fix: SFML 3 setPixel requires sf::Vector2u
+                    img.setPixel(sf::Vector2u(static_cast<unsigned int>(x), static_cast<unsigned int>(y)), matColor);
+                }
+            }
+        }
+    }
+    
+    addRigidBodyFromSprite(img, cx, cy, mat);
 }

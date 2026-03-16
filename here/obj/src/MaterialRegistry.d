@@ -77,9 +77,9 @@ obj/src/MaterialRegistry.o: src/MaterialRegistry.cpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Random.hpp \
- include/ParticleWorld.hpp include/particles/MovableSolid.hpp \
- include/Particles/Solid.hpp include/particles/Gas.hpp \
- include/particles/Liquid.hpp include/particles/ImmovableSolid.hpp \
+ include/particles/MovableSolid.hpp include/particles/Gas.hpp \
+ include/ParticleWorld.hpp include/particles/Liquid.hpp \
+ include/particles/ImmovableSolid.hpp \
  include/particles/ExplosiveContainer.hpp include/particles/Explosion.hpp
 include/Constants.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/Color.hpp:
@@ -162,10 +162,9 @@ include/particles/Particle.hpp:
 ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp:
 ../SFML-3.0.0/include/SFML/System/Sleep.hpp:
 include/Random.hpp:
-include/ParticleWorld.hpp:
 include/particles/MovableSolid.hpp:
-include/Particles/Solid.hpp:
 include/particles/Gas.hpp:
+include/ParticleWorld.hpp:
 include/particles/Liquid.hpp:
 include/particles/ImmovableSolid.hpp:
 include/particles/ExplosiveContainer.hpp:

@@ -1,6 +1,7 @@
 #pragma once
 #include <SFML/Graphics.hpp>
 #include "Constants.hpp"
+#include "RigidBody.hpp" // <-- Add this to access RigidBodyShape
 
 class ParticleWorld;
 
@@ -16,13 +17,21 @@ public:
     float getSelectionRadius() const { return selectionRadius; }
     bool isMouseOverUI() const; 
 
-    // Logic for rigid bodies (simplified for this example)
-    bool isCurrentSelectionRigidBody() const { return false; } 
-
+    // --- NEW RIGID BODY GETTERS ---
+    bool isCurrentSelectionRigidBody() const { return spawnAsRigidBody; } 
+    RigidBodyShape getRigidBodyShape() const { return currentShape; }
+bool getShowChunkBounds() const { return showChunkBounds; }
+    bool getShowColliders() const { return showColliders; }
 private:
+bool showChunkBounds = false;
+    bool showColliders = false;
     ParticleWorld* world;
     MaterialID currentMaterial = MaterialID::Sand;
     float selectionRadius = DEFAULT_SELECTION_RADIUS;
+    
+    // --- NEW RIGID BODY STATE ---
+    bool spawnAsRigidBody = false;
+    RigidBodyShape currentShape = RigidBodyShape::Box;
     
     // Internal helper to draw material tabs
     void drawMaterialTabs();

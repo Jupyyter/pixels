@@ -1,6 +1,6 @@
 obj/src/Particles/ImmovableSolid.o: src/Particles/ImmovableSolid.cpp \
- include/Particles/ImmovableSolid.hpp include/Particles/Solid.hpp \
- include/Particles/Particle.hpp ../SFML-3.0.0/include/SFML/Graphics.hpp \
+ include/Particles/ImmovableSolid.hpp include/Particles/Particle.hpp \
+ ../SFML-3.0.0/include/SFML/Graphics.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/Export.hpp \
  ../SFML-3.0.0/include/SFML/Config.hpp \
@@ -80,7 +80,6 @@ obj/src/Particles/ImmovableSolid.o: src/Particles/ImmovableSolid.cpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
  include/Random.hpp include/ParticleWorld.hpp
 include/Particles/ImmovableSolid.hpp:
-include/Particles/Solid.hpp:
 include/Particles/Particle.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp:

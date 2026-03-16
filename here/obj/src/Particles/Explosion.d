@@ -78,8 +78,8 @@ obj/src/Particles/Explosion.o: src/Particles/Explosion.cpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
- include/Random.hpp include/Particles/ExplosiveContainer.hpp \
- include/Particles/Particle.hpp
+ include/Random.hpp include/Particles/Particle.hpp \
+ include/Particles/ExplosiveContainer.hpp
 include/Particles/Explosion.hpp:
 ../SFML-3.0.0/include/SFML/System/Vector2.hpp:
 ../SFML-3.0.0/include/SFML/System/Export.hpp:
@@ -162,5 +162,5 @@ include/ParticleWorld.hpp:
 ../SFML-3.0.0/include/SFML/System/Sleep.hpp:
 include/Constants.hpp:
 include/Random.hpp:
-include/Particles/ExplosiveContainer.hpp:
 include/Particles/Particle.hpp:
+include/Particles/ExplosiveContainer.hpp:

@@ -11,7 +11,7 @@
         : scrollOffset(0), maxScrollOffset(0), isDragging(false),
           selectedLevel(-1), fontLoaded(false),
           levelsPerRow(levelsPerRow), paddingPercent(paddingPercent),
-          menuTexture(sf::Vector2u(TEXTURE_WIDTH, TEXTURE_HEIGHT)),
+          menuTexture(sf::Vector2u(WINDOW_WIDTH, WINDOW_HEIGHT)),
           menuSprite(menuTexture.getTexture()), titleText(fonttt), instructionsText(fonttt)
     {
 
@@ -23,11 +23,11 @@
         calculateLayout(); // Calculate dimensions based on parameters
 
         // Setup background using TEXTURE dimensions
-        background.setSize(sf::Vector2f(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+        background.setSize(sf::Vector2f(WINDOW_WIDTH, WINDOW_HEIGHT));
         background.setFillColor(sf::Color(30, 30, 40));
 
         // Setup header background
-        headerBackground.setSize(sf::Vector2f(TEXTURE_WIDTH, MENU_HEADER_HEIGHT));
+        headerBackground.setSize(sf::Vector2f(WINDOW_WIDTH, MENU_HEADER_HEIGHT));
         headerBackground.setPosition(sf::Vector2f(0, 0));
         headerBackground.setFillColor(sf::Color(0, 0, 0, 200));
 
@@ -40,7 +40,7 @@
             titleText.setString("Select Level");
 
             sf::FloatRect titleBounds = titleText.getLocalBounds();
-            titleText.setPosition(sf::Vector2f((TEXTURE_WIDTH - titleBounds.size.x) / 2.0f, 8));
+            titleText.setPosition(sf::Vector2f((WINDOW_WIDTH - titleBounds.size.x) / 2.0f, 8));
 
             // Setup instructions - smaller size
             instructionsText.setFont(fonttt);
@@ -49,7 +49,7 @@
             instructionsText.setString(":)");
 
             sf::FloatRect instrBounds = instructionsText.getLocalBounds();
-            instructionsText.setPosition(sf::Vector2f((TEXTURE_WIDTH - instrBounds.size.x) / 2.0f, 38));
+            instructionsText.setPosition(sf::Vector2f((WINDOW_WIDTH - instrBounds.size.x) / 2.0f, 38));
         }
 
         loadLevels();
@@ -59,8 +59,8 @@
     void LevelMenu::calculateLayout()
     {
         // Calculate available width (total width minus padding on both sides)
-        float totalPadding = TEXTURE_WIDTH * paddingPercent;
-        float availableWidth = TEXTURE_WIDTH - totalPadding;
+        float totalPadding = WINDOW_WIDTH * paddingPercent;
+        float availableWidth = WINDOW_WIDTH - totalPadding;
 
         // Calculate thumbnail width with fixed 20px margins between thumbnails
         float marginsWidth = (levelsPerRow - 1) * 20.0f;
@@ -80,7 +80,7 @@
         // Background rectangles are thumbnailWidth + 10 pixels wide
         float backgroundWidth = thumbnailWidth + 10;
         float totalContentWidth = levelsPerRow * backgroundWidth + (levelsPerRow - 1) * thumbnailMargin;
-        edgePadding = static_cast<int>((TEXTURE_WIDTH - totalContentWidth) / 2.0f);
+        edgePadding = static_cast<int>((WINDOW_WIDTH - totalContentWidth) / 2.0f);
     }
 
     void LevelMenu::setLevelsPerRow(int count)
@@ -214,7 +214,7 @@
     {
         try
         {
-            ParticleWorld tempWorld(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            ParticleWorld tempWorld(WORLD_WIDTH, WORLD_HEIGHT);
 
             if (tempWorld.loadWorld(worldFile))
             {
@@ -274,7 +274,7 @@
             float backgroundRight = x + backgroundWidth;
             if (col == levelsPerRow - 1)
             {
-                float rightSpace = TEXTURE_WIDTH - backgroundRight;
+                float rightSpace = WINDOW_WIDTH - backgroundRight;
             }
         }
 
@@ -319,7 +319,7 @@
 
         int totalRows = (static_cast<int>(levels.size()) + levelsPerRow - 1) / levelsPerRow;
         float totalHeight = totalRows * (thumbnailHeight + TEXT_AREA_HEIGHT + 20);
-        float visibleHeight = TEXTURE_HEIGHT - MENU_HEADER_HEIGHT - 20;
+        float visibleHeight = WINDOW_HEIGHT - MENU_HEADER_HEIGHT - 20;
 
         maxScrollOffset = std::max(0.0f, totalHeight - visibleHeight);
     }
@@ -328,12 +328,12 @@
     {
         sf::Vector2u windowSize = window.getSize();
 
-        float scaleX = static_cast<float>(windowSize.x) / TEXTURE_WIDTH;
-        float scaleY = static_cast<float>(windowSize.y) / TEXTURE_HEIGHT;
+        float scaleX = static_cast<float>(windowSize.x) / WINDOW_WIDTH;
+        float scaleY = static_cast<float>(windowSize.y) / WINDOW_HEIGHT;
         float scale = std::min(scaleX, scaleY);
 
-        float offsetX = (windowSize.x - TEXTURE_WIDTH * scale) / 2.0f;
-        float offsetY = (windowSize.y - TEXTURE_HEIGHT * scale) / 2.0f;
+        float offsetX = (windowSize.x - WINDOW_WIDTH * scale) / 2.0f;
+        float offsetY = (windowSize.y - WINDOW_HEIGHT * scale) / 2.0f;
 
         float menuX = (windowPos.x - offsetX) / scale;
         float menuY = (windowPos.y - offsetY) / scale;
@@ -419,7 +419,7 @@
         // Draw levels
         for (const auto &level : levels)
         {
-            if (level.position.y + thumbnailHeight > 0 && level.position.y < TEXTURE_HEIGHT)
+            if (level.position.y + thumbnailHeight > 0 && level.position.y < WINDOW_HEIGHT)
             {
                 menuTexture.draw(level.background);
 
@@ -481,15 +481,15 @@
 
         // Render to target with proper scaling
         sf::Vector2u windowSize = static_cast<sf::RenderWindow &>(target).getSize();
-        float scaleX = static_cast<float>(windowSize.x) / TEXTURE_WIDTH;
-        float scaleY = static_cast<float>(windowSize.y) / TEXTURE_HEIGHT;
+        float scaleX = static_cast<float>(windowSize.x) / WINDOW_WIDTH;
+        float scaleY = static_cast<float>(windowSize.y) / WINDOW_HEIGHT;
         float scale = std::min(scaleX, scaleY);
 
         menuSprite.setScale({scale, scale});
-        float offsetX = (windowSize.x - TEXTURE_WIDTH * scale) / 2.0f;
-        float offsetY = (windowSize.y - TEXTURE_HEIGHT * scale) / 2.0f;
+        float offsetX = (windowSize.x - WINDOW_WIDTH * scale) / 2.0f;
+        float offsetY = (windowSize.y - WINDOW_HEIGHT * scale) / 2.0f;
         menuSprite.setPosition({offsetX, offsetY});
-        menuSprite.setTextureRect(sf::IntRect({0, 0}, {static_cast<int>(TEXTURE_WIDTH), static_cast<int>(TEXTURE_HEIGHT)}));
+        menuSprite.setTextureRect(sf::IntRect({0, 0}, {static_cast<int>(WINDOW_WIDTH), static_cast<int>(WINDOW_HEIGHT)}));
 
         target.draw(menuSprite);
     }

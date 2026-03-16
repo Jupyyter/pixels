@@ -8,7 +8,6 @@ UI::UI(sf::RenderWindow& window, ParticleWorld* worldPtr) : world(worldPtr) {
 }
 
 void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, float frameTime) {
-    ImGui::SFML::Update(window, deltaTime);
 
     // Create a Window that can be moved and resized
     ImGui::Begin("Simulation Control");
@@ -19,7 +18,14 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
     ImGui::Separator();
     
     ImGui::SliderFloat("Brush Radius", &selectionRadius, MIN_SELECTION_RADIUS, MAX_SELECTION_RADIUS);
-
+ImGui::Separator();
+    ImGui::Checkbox("Spawn as Rigid Body", &spawnAsRigidBody);
+    if (spawnAsRigidBody) {
+        int shape = static_cast<int>(currentShape);
+        ImGui::RadioButton("Box", &shape, static_cast<int>(RigidBodyShape::Box)); ImGui::SameLine();
+        ImGui::RadioButton("Circle", &shape, static_cast<int>(RigidBodyShape::Circle));
+        currentShape = static_cast<RigidBodyShape>(shape);
+    }
     if (ImGui::Button("Clear Canvas", ImVec2(-1, 0))) {
         world->clear();
     }
@@ -27,7 +33,12 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
     if (ImGui::Button("Save World", ImVec2(-1, 0))) {
         world->saveWorld("world");
     }
-
+ImGui::Separator();
+    ImGui::Text("Debug Overlays");
+    ImGui::Checkbox("Show Chunk Bounds", &showChunkBounds);
+    ImGui::Checkbox("Show Colliders", &showColliders);
+    ImGui::Separator();
+    
     ImGui::Spacing();
     ImGui::Text("Elements");
     
@@ -89,7 +100,6 @@ void UI::drawMaterialTabs() {
 }
 
 void UI::render(sf::RenderWindow& window) {
-    ImGui::SFML::Render(window);
 }
 
 bool UI::isMouseOverUI() const {

@@ -77,7 +77,11 @@ obj/src/UI.o: src/UI.cpp include/UI.hpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
- include/ParticleWorld.hpp include/Random.hpp ../imgui-src/imgui.h \
+ include/RigidBody.hpp ../2dbox/include/box2d/box2d.h \
+ ../2dbox/include/box2d/base.h ../2dbox/include/box2d/collision.h \
+ ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
+ ../2dbox/include/box2d/types.h include/ParticleWorld.hpp \
+ include/Random.hpp include/Particles/Particle.hpp ../imgui-src/imgui.h \
  ../imgui-src/imconfig.h ../imgui-src/imgui-SFML.h \
  ../imgui-src/imgui-SFML_export.h
 include/UI.hpp:
@@ -160,8 +164,16 @@ include/UI.hpp:
 ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp:
 ../SFML-3.0.0/include/SFML/System/Sleep.hpp:
 include/Constants.hpp:
+include/RigidBody.hpp:
+../2dbox/include/box2d/box2d.h:
+../2dbox/include/box2d/base.h:
+../2dbox/include/box2d/collision.h:
+../2dbox/include/box2d/math_functions.h:
+../2dbox/include/box2d/id.h:
+../2dbox/include/box2d/types.h:
 include/ParticleWorld.hpp:
 include/Random.hpp:
+include/Particles/Particle.hpp:
 ../imgui-src/imgui.h:
 ../imgui-src/imconfig.h:
 ../imgui-src/imgui-SFML.h:

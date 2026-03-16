@@ -1,67 +1,71 @@
 #pragma once
+
 #include <box2d/box2d.h>
-#include <SFML/Graphics.hpp>
 #include <vector>
 #include <memory>
-#include "Constants.hpp"
-#include <algorithm>
+#include <unordered_map>
+#include <SFML/Graphics.hpp>
+#include "ParticleWorld.hpp"
+#include "Particles/Particle.hpp"
 
-class ParticleWorld;
+// Box2D Scale Factors (10 pixels = 1 meter)
+constexpr float P2M = 1.0f / 10.0f; 
+constexpr float M2P = 10.0f;        
 
 enum class RigidBodyShape {
+    Box,
     Circle,
-    Square,
-    Triangle
+    FromSprite
 };
 
-struct RigidBodyData {
+struct LocalParticle {
+    BaseComponent base;
+    DurabilityComponent dur;
+    ThermalComponent therm;
+    bool active;
+    int localX;
+    int localY;
+    int lastWorldX;
+    int lastWorldY;
+};
+struct DrawnPixel {
+    int wx, wy;
+    int localIdx;
+};
+class RigidBody {
+public:
     b2BodyId bodyId;
-    RigidBodyShape shape;
-    MaterialID materialType;
-    float radius; 
-    float size;   
-    sf::Color color;
-    std::vector<sf::Vector2f> vertices; 
-    std::vector<sf::Vector2i> previousPixels; 
-    bool isActive;
-    
-    RigidBodyData() : bodyId(b2_nullBodyId), shape(RigidBodyShape::Circle), 
-                     materialType(MaterialID::Stone), radius(10.0f), 
-                     size(20.0f), color(sf::Color::White), isActive(true) {}
+    b2WorldId worldId;
+    std::vector<DrawnPixel> drawnPixels;
+    std::vector<LocalParticle> particles;
+    int width, height;
+    bool needsFixtureRebuild;
+
+    RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int startY, MaterialID mat);
+    RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalParticle>& parts, b2Vec2 pos, float angle, b2Vec2 linVel, float angVel);
+    void rebuildFixtures();
+    std::vector<std::vector<LocalParticle>> findIslands();
 };
 
 class RigidBodySystem {
 private:
+std::vector<DrawnPixel> orphanedPixels; 
     b2WorldId worldId;
-    std::vector<std::unique_ptr<RigidBodyData>> rigidBodies;
-    std::vector<b2BodyId> boundaryBodies; 
-    
-    static constexpr float PHYSICS_SCALE = 0.01f; 
-    static constexpr float INV_PHYSICS_SCALE = 100.0f; 
-    
-    int worldWidth, worldHeight;
-    
+    std::vector<std::unique_ptr<RigidBody>> bodies;
+    std::unordered_map<ChunkCoord, b2BodyId, ChunkCoordHash> chunkBodies;
+
 public:
-    RigidBodySystem(int width, int height);
+    RigidBodySystem();
     ~RigidBodySystem();
+
+    void renderDebug(sf::RenderTarget& target) const;
+    void addRigidBodyFromSprite(const sf::Image& img, int x, int y, MaterialID mat);
     
-    RigidBodyData* createCircle(float x, float y, float radius, MaterialID material);
-    RigidBodyData* createSquare(float x, float y, float size, MaterialID material);
-    RigidBodyData* createTriangle(float x, float y, float size, MaterialID material);
+    // Core Pipeline
+    void clearFromWorld(ParticleWorld& world);
+    void stepPhysics(float dt, ParticleWorld& world);
+    void rasterizeToWorld(ParticleWorld& world);
+    void syncFromWorld(ParticleWorld& world);
     
-    void update(float deltaTime);
-    void renderToParticleWorld(ParticleWorld* particleWorld);
-    
-    sf::Vector2f box2DToSFML(const b2Vec2& vec) const;
-    b2Vec2 sfmlToBox2D(const sf::Vector2f& vec) const;
-    
-    void removeInactiveBodies();
-    void clear();
-    
-private:
-    void createWorldBoundaries();
-    void setupRigidBodyVertices(RigidBodyData* rbData);
-    float getMaterialDensity(MaterialID material) const;
-    float getMaterialFriction(MaterialID material) const;
-    float getMaterialRestitution(MaterialID material) const;
+    void rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk);
 };

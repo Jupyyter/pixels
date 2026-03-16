@@ -2,7 +2,7 @@
 #include "ParticleWorld.hpp"
 #include "Particles/ExplosiveContainer.hpp"
 #include "Constants.hpp"
-#include "Particles/Particle.hpp" // Needed for MaterialRegistry
+#include "Particles/Particle.hpp" 
 #include <cmath>
 #include <algorithm>
 
@@ -12,13 +12,11 @@ Explosion::Explosion(ParticleWorld &worldRef, int x, int y, int r, int s)
 void Explosion::enact()
 {
     int boxSize = (radius * 2) + 1;
-    std::vector<uint8_t> cache(boxSize * boxSize, CacheState::UNVISITED);
+    std::vector<uint8_t> cache(boxSize * boxSize, (uint8_t)CacheState::UNVISITED);
 
-    int rayCount = static_cast<int>(radius * 2.0f * 3.14159f * 1.5f); // Slightly more rays for detail
-    if (rayCount < 16)
-        rayCount = 16;
+    int rayCount = static_cast<int>(radius * 2.0f * 3.14159f * 1.5f); 
+    if (rayCount < 16) rayCount = 16;
 
-    // These variables create a "DNA" for this specific explosion's shape
     float seed1 = Random::randFloat(0, 100);
     float seed2 = Random::randFloat(0, 100);
 
@@ -26,7 +24,6 @@ void Explosion::enact()
     {
         float angle = (static_cast<float>(i) / rayCount) * 2.0f * 3.14159f;
 
-        // --- NOISY RADIUS CALCULATION ---
         float noise = std::sin(angle * 3.0f + seed1) * 0.15f;
         noise += std::sin(angle * 7.0f + seed2) * 0.10f;
         noise += Random::randFloat(-0.05f, 0.05f); 
@@ -42,26 +39,18 @@ void Explosion::enact()
 
 void Explosion::castRay(int destX, int destY, std::vector<uint8_t> &cache, int boxSize)
 {
-    int x1 = centerX;
-    int y1 = centerY;
-
-    int dx = destX - x1;
-    int dy = destY - y1;
+    int x1 = centerX, y1 = centerY;
+    int dx = destX - x1, dy = destY - y1;
 
     int steps = std::max(std::abs(dx), std::abs(dy));
     if (steps == 0) return;
 
     float xInc = dx / (float)steps;
     float yInc = dy / (float)steps;
+    float currX = (float)x1, currY = (float)y1;
 
-    float currX = (float)x1;
-    float currY = (float)y1;
-
-    // --- RANDOMNESS FACTOR ---
     float noise = Random::randFloat(0.8f, 1.2f);
-    if (Random::randFloat(0.0f, 1.0f) > 0.97f) {
-        noise = 1.5f; // Super Shrapnel
-    }
+    if (Random::randFloat(0.0f, 1.0f) > 0.97f) noise = 1.5f; 
 
     float destructionLimit = (radius * 0.75f) * noise;
     float blastLimit = radius * noise;
@@ -74,17 +63,17 @@ void Explosion::castRay(int destX, int destY, std::vector<uint8_t> &cache, int b
         int x = (int)std::round(currX);
         int y = (int)std::round(currY);
 
+        // Infinite world check
+        if (!world.inBounds(x, y)) break;
+
+        // Local cache bounds check
         int localX = x - (centerX - radius);
         int localY = y - (centerY - radius);
-
-        // Bounds check
-        if (!world.inBounds(x, y)) break;
         if (localX < 0 || localX >= boxSize || localY < 0 || localY >= boxSize) break;
 
         int cacheIndex = localY * boxSize + localX;
         uint8_t state = cache[cacheIndex];
 
-        // Optimized Cache Skipping
         if (state == CacheState::PROCESSED_UNSTOPPED) {
             currX += xInc; currY += yInc; continue;
         }
@@ -93,64 +82,56 @@ void Explosion::castRay(int destX, int destY, std::vector<uint8_t> &cache, int b
         }
 
         float dist = std::hypot(x - centerX, y - centerY);
-        uint32_t index = world.getIndex(x, y);
         
-        // Retrieve the base component to check existence
-        BaseComponent* base = world.baseManager.get(index);
+        // --- FETCH COMPONENTS ONCE ---
+        BaseComponent* base = world.get<BaseComponent>(x, y);
 
         // --- ZONE 1: DESTRUCTION ---
         if (dist < destructionLimit)
         {
             if (onlyDarken)
             {
-                applyDarken(x, y, dist / radius);
+                if (base) applyDarken(x, y, base, dist / radius);
                 cache[cacheIndex] = CacheState::PROCESSED_STOPPED;
                 if (Random::randFloat(0, 1) > 0.85f) break;
             }
             else
             {
-                // EMPTY SPOT
                 if (base == nullptr)
                 {
-                    if (Random::randFloat(0, 1) > 0.5f) {
-                        world.spawnParticle(MaterialID::ExplosionSpark, x, y);
-                    }
+                    if (Random::randFloat(0, 1) > 0.5f) world.spawnParticle(MaterialID::ExplosionSpark, x, y);
                     cache[cacheIndex] = CacheState::PROCESSED_UNSTOPPED;
                 }
-                // PARTICLE HIT
                 else
                 {
-                    // Retrieve Logic and Durability
                     Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
-                    DurabilityComponent* dur = world.durabilityManager.get(index);
+                    if (!logic) { currX += xInc; currY += yInc; continue; }
+
+                    DurabilityComponent* dur = world.get<DurabilityComponent>(x, y);
                     int resistance = dur ? dur->explosionResistance : 0;
 
-                    // STOCHASTIC CHANCE
                     float proximityToEdge = dist / destructionLimit;
                     float survivalChance = std::pow(proximityToEdge, 3);
 
                     if (Random::randFloat(0, 1) < survivalChance && resistance > 2) {
-                        // Survived
-                        applyDarken(x, y, 0.2f); 
+                        applyDarken(x, y, base, 0.2f); 
                         currentRayStrength *= 0.5f; 
                         onlyDarken = true;
                     }
                     else {
-                        // Attempt Explode
-                        bool blewUp = false;
-                        if (logic) {
-                            blewUp = logic->explode(index, (int)currentRayStrength, world);
-                        }
+                        // Pass direct pointers to explode
+                        bool blewUp = logic->explode(base, dur, x, y, (int)currentRayStrength, world);
 
                         if (blewUp) {
-                            currentRayStrength -= resistance;
+                            currentRayStrength -= (float)resistance;
                             cache[cacheIndex] = CacheState::PROCESSED_UNSTOPPED;
                             if (currentRayStrength <= 0) onlyDarken = true;
                         }
                         else {
-                            // Resisted
-                            if (logic) logic->receiveHeat(index, 500, world);
-                            applyDarken(x, y, 0.1f);
+                            // Didn't die, so apply heat and stop the ray
+                            ThermalComponent* therm = world.get<ThermalComponent>(x, y);
+                            logic->receiveHeat(base, therm, x, y, 500, world);
+                            applyDarken(x, y, base, 0.1f);
                             cache[cacheIndex] = CacheState::PROCESSED_STOPPED;
                             onlyDarken = true;
                             currentRayStrength = 0;
@@ -164,7 +145,7 @@ void Explosion::castRay(int destX, int destY, std::vector<uint8_t> &cache, int b
         {
             if (onlyDarken)
             {
-                applyDarken(x, y, dist / radius);
+                if (base) applyDarken(x, y, base, dist / radius);
                 cache[cacheIndex] = CacheState::PROCESSED_STOPPED;
                 if (Random::randFloat(0, 1) > 0.7f) break;
             }
@@ -172,17 +153,18 @@ void Explosion::castRay(int destX, int destY, std::vector<uint8_t> &cache, int b
             {
                 if (base == nullptr)
                 {
-                    if (Random::randFloat(0, 1) > 0.5f) {
-                        world.spawnParticle(MaterialID::Smoke, x, y);
-                    }
+                    if (Random::randFloat(0, 1) > 0.5f) world.spawnParticle(MaterialID::Smoke, x, y);
                     cache[cacheIndex] = CacheState::PROCESSED_UNSTOPPED;
                 }
                 else
                 {
-                    applyDarken(x, y, (dist / radius) * 1.5f);
+                    applyDarken(x, y, base, (dist / radius) * 1.5f);
                     
                     Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
-                    if (logic) logic->receiveHeat(index, 300, world);
+                    if (logic) {
+                        ThermalComponent* therm = world.get<ThermalComponent>(x, y);
+                        logic->receiveHeat(base, therm, x, y, 300, world);
+                    }
 
                     sf::Vector2f dir((float)(x - centerX), (float)(y - centerY));
                     float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
@@ -191,7 +173,8 @@ void Explosion::castRay(int destX, int destY, std::vector<uint8_t> &cache, int b
                     float velMult = Random::randFloat(3.5f, 5.0f);
                     sf::Vector2f velocity = dir * (float)radius * velMult;
                     
-                    particalize(x, y, velocity);
+                    // particalize handles its own removal logic
+                    particalize(x, y, base, velocity);
 
                     if (Random::randFloat(0, 1) > 0.8f) break;
                 }
@@ -203,60 +186,44 @@ void Explosion::castRay(int destX, int destY, std::vector<uint8_t> &cache, int b
     }
 }
 
-void Explosion::applyDarken(int x, int y, float factor)
+void Explosion::applyDarken(int x, int y, BaseComponent* base, float factor)
 {
-    uint32_t index = world.getIndex(x, y);
-    BaseComponent* base = world.baseManager.get(index);
+    if (!base) return;
+
+    Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
+    if (!logic) return;
     
-    if (base)
+    MaterialGroup group = logic->getGroup();
+
+    if (group == MaterialGroup::ImmovableSolid || group == MaterialGroup::MovableSolid)
     {
-        // Check group via Logic Class
-        Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
-        if (!logic) return;
-        
-        MaterialGroup group = logic->getGroup(); // Ensure logic class has this
+        sf::Color originalColor = base->color;
+        float randomVariation = Random::randFloat(0.8f, 1.1f);
+        float darkenMult = (0.4f + (factor * 0.5f)) * randomVariation;
+        darkenMult = std::clamp(darkenMult, 0.2f, 0.95f);
 
-        if (group == MaterialGroup::ImmovableSolid || group == MaterialGroup::MovableSolid)
-        {
-            sf::Color c = base->color;
+        sf::Color newColor;
+        newColor.r = static_cast<uint8_t>(originalColor.r * darkenMult);
+        newColor.g = static_cast<uint8_t>(originalColor.g * darkenMult);
+        newColor.b = static_cast<uint8_t>(originalColor.b * darkenMult);
+        newColor.a = originalColor.a;
 
-            float randomVariation = Random::randFloat(0.8f, 1.1f);
-            float darkenMult = (0.4f + (factor * 0.5f)) * randomVariation;
-
-            if (darkenMult < 0.2f) darkenMult = 0.2f;
-            if (darkenMult > 0.95f) darkenMult = 0.95f;
-
-            base->color.r = static_cast<uint8_t>(c.r * darkenMult);
-            base->color.g = static_cast<uint8_t>(c.g * darkenMult);
-            base->color.b = static_cast<uint8_t>(c.b * darkenMult);
-            
-            base->flags.didColorChange = true;
-            base->flags.discolored = true;
-            
-            // Immediately update visual
-            world.updateParticleColor(index, x, y);
-        }
+        world.setParticleColor(x, y, newColor);
     }
 }
 
-void Explosion::particalize(int x, int y, sf::Vector2f velocity)
+void Explosion::particalize(int x, int y, BaseComponent* base, sf::Vector2f velocity)
 {
-    uint32_t index = world.getIndex(x, y);
-    BaseComponent* base = world.baseManager.get(index);
-    
-    if (!base) return;
+    // Safety check for nullptr and specific materials
+    if (!base || base->id == MaterialID::ExplosiveContainer) return;
 
-    // Safety check: Bedrock never moves, other explosives don't recurse
-    if (base->id == MaterialID::ExplosiveContainer) return;
-
+    // Cache values before removing the particle
     MaterialID contentId = base->id;
     sf::Color color = base->color;
     bool ignited = base->flags.isIgnited;
 
-    // Kill the original
-    world.removeParticle(index);
+    world.removeParticle(x, y);
 
-    // Create projectile using the static helper for ExplosiveContainer
-    // This correctly sets up the payload map
+    // Re-spawn as a rigid body payload
     ExplosiveContainer::spawnWithPayload(x, y, contentId, velocity, color, ignited, world);
 }

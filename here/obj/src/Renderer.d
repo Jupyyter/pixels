@@ -77,7 +77,7 @@ obj/src/Renderer.o: src/Renderer.cpp include/Renderer.hpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/ParticleWorld.hpp \
- include/Constants.hpp include/Random.hpp
+ include/Constants.hpp include/Random.hpp include/Particles/Particle.hpp
 include/Renderer.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp:
@@ -160,3 +160,4 @@ include/Renderer.hpp:
 include/ParticleWorld.hpp:
 include/Constants.hpp:
 include/Random.hpp:
+include/Particles/Particle.hpp:

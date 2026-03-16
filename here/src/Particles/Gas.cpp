@@ -1,102 +1,56 @@
 #include "Particles/Gas.hpp"
-#include "Particles/Liquid.hpp" 
-#include "Particles/Solid.hpp" 
-#include "Constants.hpp"
-#include "Random.hpp"
+#include "ParticleWorld.hpp"
 #include <algorithm> 
 #include <cmath> 
 
-// --- BASE GAS IMPLEMENTATION ---
-
 Gas::Gas(MaterialID id, float buoy, float chaos) 
-    : Particle(id), buoyancy(buoy), chaosLevel(chaos) {
-}
+    : Particle(id), buoyancy(buoy), chaosLevel(chaos) {}
 
 void Gas::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+    // 1. Spawns the BaseComponent (Sets the color)
     Particle::onSpawn(index, x, y, world);
     
-    KinematicsComponent kin;
-    kin.velocity = {0,0};
-    kin.isFreeFalling = true;
-    world.kinematicsManager.add(index, kin);
-
-    FluidComponent fluid;
-    fluid.density = 1;
-    fluid.dispersionRate = 1;
-    world.fluidManager.add(index, fluid);
+    // 2. Adds the Gas-specific components
+    world.add<KinematicsComponent>(x, y, KinematicsComponent(sf::Vector2f(0, 0), 0.0f, 0.0f, true, 0));
+    world.add<FluidComponent>(x, y, FluidComponent(1, 1));
 }
 
-void Gas::update(int x, int y, uint32_t index, float dt, ParticleWorld& world) 
+void Gas::update(const ParticleContext& ctx, float dt, ParticleWorld& world) 
 {
-    // 1. Visuals - Update based on the starting position
-    world.updateParticleColor(index, x, y);
-
-    // 2. Component Fetching
-    auto* kin = world.kinematicsManager.get(index);
+    // Important: Refresh kinematics from world if ctx version is null 
+    // (This happens if this is the first particle with kinematics in this chunk)
+    auto* kin = ctx.kinematics ? &ctx.kinematics[ctx.index] : world.get<KinematicsComponent>(ctx.x, ctx.y);
     if (!kin) return;
 
-    // 3. Velocity Calculation
-    // Buoyancy goes UP (negative Y), so we subtract from the gravity-based velocity
+    // Standard Gas Physics
     kin->velocity.y = std::clamp(kin->velocity.y - (GRAVITY * dt * buoyancy), -5.0f, 2.0f);
-    
-    // Apply Chaos/Jitter
     kin->velocity.x += Random::randFloat(-chaosLevel, chaosLevel);
     kin->velocity.x = std::clamp(kin->velocity.x, -3.0f, 3.0f);
     
-    // Random Turbulence
-    if (Random::chance(5)) {
+    if (Random::randInt(0, 100) < 5) {
         kin->velocity.x += Random::randFloat(-1.0f, 1.0f);
         kin->velocity.y += Random::randFloat(-0.5f, 0.5f);
     }
 
-    // 4. Movement Tracking
-    // We track coordinates locally because 'index' becomes invalid the moment we move
-    int currentX = x;
-    int currentY = y;
-
-    int targetX = x + static_cast<int>(std::round(kin->velocity.x));
-    int targetY = y + static_cast<int>(std::round(kin->velocity.y));
+    int curX = ctx.x, curY = ctx.y;
+    int targetX = ctx.x + static_cast<int>(std::round(kin->velocity.x));
+    int targetY = ctx.y + static_cast<int>(std::round(kin->velocity.y));
     
-    // Helper Lambda: Tries to move and updates our local trackers
     auto tryMove = [&](int tx, int ty) -> bool {
-        if (!world.inBounds(tx, ty)) return false; 
-        
-        // We must re-fetch the index for our current position because it might have changed
-        uint32_t currentIdx = world.getIndex(currentX, currentY);
-        uint32_t targetIdx = world.getIndex(tx, ty);
-
-        if (actOnNeighbor(tx, ty, currentIdx, targetIdx, world, true, true, 0)) {
-            currentX = tx;
-            currentY = ty;
-            return true;
-        }
-        return false;
+        return !actOnNeighbor(ctx, tx, ty, curX, curY, world, true, true, 0);
     };
 
-    // Helper Lambda: Raycast to prevent passing through thin walls at high speed
     auto isPathBlocked = [&](int tx, int ty) -> bool {
-        int dX = std::abs(tx - x);
-        int dY = std::abs(ty - y);
-        int sX = (x < tx) ? 1 : -1;
-        int sY = (y < ty) ? 1 : -1;
-        int err = dX - dY;
-        
-        int checkX = x;
-        int checkY = y;
+        int dX = std::abs(tx - ctx.x), dY = std::abs(ty - ctx.y);
+        int sX = (ctx.x < tx) ? 1 : -1, sY = (ctx.y < ty) ? 1 : -1;
+        int err = dX - dY, checkX = ctx.x, checkY = ctx.y;
 
-        while (true) {
-            if (checkX == tx && checkY == ty) break;
-            if (checkX != x || checkY != y) {
-                BaseComponent* nb = world.baseManager.get(world.getIndex(checkX, checkY));
-                if (nb) {
-                    // Check logic registry safely
-                    Particle* logic = Particle::GetRegistry()[static_cast<int>(nb->id)];
-                    if (logic) {
-                        MaterialGroup g = logic->getGroup();
-                        if (g == MaterialGroup::ImmovableSolid || g == MaterialGroup::MovableSolid) {
-                            return true;
-                        }
-                    }
+        while (checkX != tx || checkY != ty) {
+            if (checkX != ctx.x || checkY != ctx.y) {
+                if (auto* nb = world.getFast<BaseComponent>(ctx, checkX, checkY)) {
+                    Particle* logic = MaterialRegistry[static_cast<int>(nb->id)];
+                    if (logic && (logic->getGroup() == MaterialGroup::ImmovableSolid || 
+                                  logic->getGroup() == MaterialGroup::MovableSolid)) return true;
                 }
             }
             int e2 = 2 * err;
@@ -106,295 +60,201 @@ void Gas::update(int x, int y, uint32_t index, float dt, ParticleWorld& world)
         return false;
     };
 
-    // 5. Execution of Movement Logic
-    bool moved = false;
-
-    // A. Attempt long-distance jump (Velocity based)
-    if (!isPathBlocked(targetX, targetY) && tryMove(targetX, targetY)) {
-        moved = true;
+    // Movement Logic
+    if (!isPathBlocked(targetX, targetY) && tryMove(targetX, targetY)) {}
+    else if (tryMove(curX, curY - 1)) {
+        if (auto* k = world.getFast<KinematicsComponent>(ctx, curX, curY)) k->velocity.y *= 0.5f;
     }
-    // B. Fallback: Rise 1 pixel (Buoyancy)
-    else if (tryMove(currentX, currentY - 1)) {
-        // Re-fetch kin because moveParticle might have triggered a vector reallocation
-        if (auto* k = world.kinematicsManager.get(world.getIndex(currentX, currentY))) {
-            k->velocity.y *= 0.5f; 
-        }
-        moved = true;
-    }
-    // C. Fallback: Horizontal Drift / Ceiling sliding
     else {
-        int driftDir = (kin->velocity.x > 0) ? 1 : -1;
-        if (std::abs(kin->velocity.x) < 0.1f) driftDir = Random::randBool() ? 1 : -1;
-
-        if (tryMove(currentX + driftDir, currentY)) {
-            moved = true;
-        } 
-        else if (tryMove(currentX - driftDir, currentY)) {
-            moved = true;
-        }
-        else if (tryMove(currentX + driftDir, currentY - 1)) {
-             moved = true;
-        }
-        else if (tryMove(currentX - driftDir, currentY - 1)) {
-             moved = true;
+        int drift = (kin->velocity.x > 0) ? 1 : -1;
+        if (std::abs(kin->velocity.x) < 0.1f) drift = Random::randBool() ? 1 : -1;
+        if (!tryMove(curX + drift, curY)) {
+            if (!tryMove(curX - drift, curY)) {
+                if (!tryMove(curX + drift, curY - 1)) tryMove(curX - drift, curY - 1);
+            }
         }
     }
 
-    // 6. Post-Movement Physics
-    // Always re-fetch from manager using current position to avoid using stale pointers
-    uint32_t finalIndex = world.getIndex(currentX, currentY);
-    auto* finalKin = world.kinematicsManager.get(finalIndex);
+    // FINALIZATION
+    auto* finalBase = world.getFast<BaseComponent>(ctx, curX, curY);
+    if (!finalBase || finalBase->compMask == 0) return;
+
+    if (auto* fKin = world.getFast<KinematicsComponent>(ctx, curX, curY)) {
+        fKin->velocity.x *= 0.8f; fKin->velocity.y *= 0.9f;
+        if (std::abs(fKin->velocity.x) > 0.2f || std::abs(fKin->velocity.y) > 0.2f) {
+            world.wakeParticle(curX, curY);
+        }
+    }
+
+    world.updateParticleColor(world.computeIndex(curX, curY), curX, curY);
     
-    if (finalKin) {
-        finalKin->velocity.x *= 0.8f;
-        finalKin->velocity.y *= 0.9f;
+    // Virtual behaviors
+    if (finalBase->flags.isIgnited) {
+        auto* therm = world.getFast<ThermalComponent>(ctx, curX, curY);
+        applyHeatToNeighborsIfIgnited(finalBase, therm, curX, curY, world);
     }
 
-    // 7. Side Effects (Heat, Sparks, etc.)
-    applyHeatToNeighborsIfIgnited(finalIndex, currentX, currentY, world);
-    spawnSparkIfIgnited(finalIndex, currentX, currentY, world);
-    checkLifeSpan(finalIndex, world);
-    takeEffectsDamage(finalIndex, world);
+    auto* dur = world.getFast<DurabilityComponent>(ctx, curX, curY);
+    checkLifeSpan(finalBase, dur, curX, curY, world);
+
+    if (finalBase->compMask != 0) {
+        auto* therm = world.getFast<ThermalComponent>(ctx, curX, curY);
+        takeEffectsDamage(finalBase, dur, therm, curX, curY, world);
+    }
 }
 
-bool Gas::actOnNeighbor(int targetX, int targetY, uint32_t myIndex, uint32_t targetIndex, ParticleWorld& world, bool isFinal, bool isFirst, int depth) {
+bool Gas::actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY, int& myX, int& myY, ParticleWorld& world, bool isFinal, bool isFirst, int depth) {
+    if (!world.inBounds(targetX, targetY)) return true;
     
-    if (!world.inBounds(targetX, targetY)) return false;
+    BaseComponent* targetBase = world.getFast<BaseComponent>(ctx, targetX, targetY);
+    BaseComponent* myBase = world.getFast<BaseComponent>(ctx, myX, myY);
     
-    if (!world.isEmpty(targetX, targetY)) {
-        if (actOnOther(myIndex, targetIndex, world)) return true;
+    if (!myBase) return true;
+
+    if (targetBase && targetBase->compMask != 0) {
+        if (actOnOther(myBase, myX, myY, targetBase, targetX, targetY, world)) return true;
+        if (targetBase->compMask == 0) targetBase = nullptr; // target died
     }
 
-    if (world.isEmpty(targetX, targetY)) {
+    // Move into empty space
+    if (!targetBase || targetBase->compMask == 0) {
         if (isFinal) {
-            int curX = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] % world.getWidth();
-            int curY = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] / world.getWidth();
-            world.moveParticle(curX, curY, targetX, targetY);
-            return true; 
+            world.moveParticle(myX, myY, targetX, targetY);
+            myX = targetX; myY = targetY;
         } 
         return false;
     }
 
-    BaseComponent* neighborBase = world.baseManager.get(targetIndex);
-    if (neighborBase) {
-        Particle* logic = MaterialRegistry[static_cast<int>(neighborBase->id)];
-        if (!logic) return false;
+    // Interaction with other particles
+    Particle* logic = MaterialRegistry[static_cast<int>(targetBase->id)];
+    if (!logic) return true;
 
-        if (logic->getGroup() == MaterialGroup::Gas) {
-            if (compareGasDensities(myIndex, targetIndex, world)) {
-                int curX = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] % world.getWidth();
-                int curY = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] / world.getWidth();
-                swapGasForDensities(world, myIndex, targetIndex, targetX, targetY, curX, curY);
-                return true; 
-            }
+    if (logic->getGroup() == MaterialGroup::Gas) {
+        if (compareGasDensities(ctx, myX, myY, targetX, targetY, world)) {
+            swapGasForDensities(ctx, world, myX, myY, targetX, targetY);
+            return false; 
+        }
+        // GAS MIXING: If we didn't swap based on density, 
+        // give a small chance to swap anyway so gas isn't static.
+        else if (Random::randFloat(0,1) > 0.8f) {
+            world.swapParticles(myX, myY, targetX, targetY);
+            myX = targetX; myY = targetY;
             return false;
         }
-        else if (logic->getGroup() == MaterialGroup::Liquid) {
-            int curX = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] % world.getWidth();
-            int curY = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] / world.getWidth();
-            world.swapParticles(curX, curY, targetX, targetY);
-            return true;
-        }
     }
-    return false;
-}
-
-bool Gas::compareGasDensities(uint32_t myIndex, uint32_t otherIndex, ParticleWorld& world) {
-    auto* myF = world.fluidManager.get(myIndex);
-    auto* otherF = world.fluidManager.get(otherIndex);
-    
-    int myY = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] / world.getWidth();
-    int otherY = world.baseManager.denseToGrid[world.baseManager.sparse[otherIndex]] / world.getWidth();
-
-    if (myF && otherF) {
-        return (myF->density > otherF->density && otherY <= myY);
-    }
-    return false;
-}
-
-void Gas::swapGasForDensities(ParticleWorld& world, uint32_t myIndex, uint32_t otherIndex, int neighborX, int neighborY, int& currentX, int& currentY) {
-    if (auto* kin = world.kinematicsManager.get(myIndex)) {
-        kin->velocity.y = 2.0f;
-    }
-    world.swapParticles(currentX, currentY, neighborX, neighborY);
-}
-
-// --- SUBCLASS IMPLEMENTATIONS ---
-
-// STEAM
-void Steam::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    Gas::onSpawn(index, x, y, world);
-    auto* fluid = world.fluidManager.get(index);
-    fluid->density = 5;
-    fluid->dispersionRate = 2;
-    DurabilityComponent dur;
-    dur.health = Random::randInt(1000, 3000); 
-    world.durabilityManager.add(index, dur);
-}
-
-void Steam::checkLifeSpan(uint32_t index, ParticleWorld& world) {
-    auto* dur = world.durabilityManager.get(index);
-    if (dur && dur->health > 0) {
-        dur->health--;
-        if (dur->health <= 0) {
-            if (Random::randFloat(0, 1) > 0.5f) {
-                die(index, world);
-            } else {
-                int curX = world.baseManager.denseToGrid[world.baseManager.sparse[index]] % world.getWidth();
-                int curY = world.baseManager.denseToGrid[world.baseManager.sparse[index]] / world.getWidth();
-                dieAndReplace(index, curX, curY, MaterialID::Water, world);
-            }
-        }
-    }
-}
-
-// FLAMMABLE GAS
-void FlammableGas::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    Gas::onSpawn(index, x, y, world);
-    auto* fluid = world.fluidManager.get(index);
-    fluid->density = 1;
-    fluid->dispersionRate = 2;
-    ThermalComponent therm;
-    therm.flammabilityResistance = 10;
-    world.thermalManager.add(index, therm);
-    DurabilityComponent dur;
-    dur.health = Random::randInt(3000, 3500); 
-    world.durabilityManager.add(index, dur);
-}
-
-// SPARK
-void Spark::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    Gas::onSpawn(index, x, y, world);
-    
-    auto* base = world.baseManager.get(index);
-    base->flags.isIgnited = true;
-
-    auto* fluid = world.fluidManager.get(index);
-    fluid->density = 4;
-    fluid->dispersionRate = 4;
-
-    ThermalComponent therm;
-    therm.flammabilityResistance = 25;
-    therm.temperature = 3;
-    therm.heatFactor = 10; 
-    world.thermalManager.add(index, therm);
-
-    DurabilityComponent dur;
-    dur.health = Random::randInt(0, 20); 
-    world.durabilityManager.add(index, dur);
-}
-
-bool Spark::actOnNeighbor(int targetX, int targetY, uint32_t myIndex, uint32_t targetIndex, ParticleWorld& world, bool isFinal, bool isFirst, int depth) {
-    
-    if (!world.inBounds(targetX, targetY)) return false;
-
-    // Interaction Check
-    if (!world.isEmpty(targetX, targetY)) {
-        if (actOnOther(myIndex, targetIndex, world)) return true;
-    }
-
-    if (world.isEmpty(targetX, targetY)) {
-        if (isFinal) {
-            int curX = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] % world.getWidth();
-            int curY = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] / world.getWidth();
-            world.swapParticles(curX, curY, targetX, targetY);
-        }
-        return true; 
-    }
-    
-    BaseComponent* nb = world.baseManager.get(targetIndex);
-    if (!nb) return false;
-
-    if (nb->id == MaterialID::Spark || nb->id == MaterialID::ExplosionSpark) {
-        return false; 
-    }
-    else if (nb->id == MaterialID::Smoke) {
-        world.removeParticle(targetIndex);
+    else if (logic->getGroup() == MaterialGroup::Liquid) {
+        world.swapParticles(myX, myY, targetX, targetY);
+        myX = targetX; myY = targetY;
         return false;
     }
-    else {
-        // Ignite logic
-        Particle* logic = MaterialRegistry[static_cast<int>(nb->id)];
-        if (logic) {
-            auto* therm = world.thermalManager.get(myIndex);
-            int heat = therm ? therm->heatFactor : 10;
-            logic->receiveHeat(targetIndex, heat, world);
-            die(myIndex, world); // Spark dies on contact
+    
+    return true;
+}
+
+bool Gas::compareGasDensities(const ParticleContext& ctx, int myX, int myY, int otherX, int otherY, ParticleWorld& world) {
+    auto* myF = world.getFast<FluidComponent>(ctx, myX, myY);
+    auto* otherF = world.getFast<FluidComponent>(ctx, otherX, otherY);
+    return (myF && otherF && myF->density > otherF->density && otherY <= myY);
+}
+
+void Gas::swapGasForDensities(const ParticleContext& ctx, ParticleWorld& world, int& myX, int& myY, int targetX, int targetY) {
+    if (auto* kin = world.getFast<KinematicsComponent>(ctx, myX, myY)) kin->velocity.y = 2.0f;
+    world.swapParticles(myX, myY, targetX, targetY);
+    myX = targetX; myY = targetY;
+}
+
+// --- SUBCLASSES ---
+
+void Steam::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+    Gas::onSpawn(index, x, y, world);
+    if (auto* f = world.get<FluidComponent>(x, y)) f->density = 5;
+    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(1000, 3000), 0));
+}
+
+void Steam::checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) {
+    if (dur && --dur->health <= 0) {
+        if (Random::randFloat(0, 1) > 0.5f) {
+            die(x, y, world);
+        } else {
+            dieAndReplace(x, y, MaterialID::Water, world);
+        }
+    }
+}
+
+void FlammableGas::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+    Gas::onSpawn(index, x, y, world);
+    world.add<ThermalComponent>(x, y, ThermalComponent(0, 10, 0, 0));
+    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(3000, 3500), 0));
+}
+
+void Spark::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+    Gas::onSpawn(index, x, y, world);
+    if (auto* b = world.get<BaseComponent>(x, y)) b->flags.isIgnited = true;
+    world.add<ThermalComponent>(x, y, ThermalComponent(3, 25, 10, 1));
+    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(5, 30), 0));
+}
+
+bool Spark::actOnNeighbor(const ParticleContext& ctx, int tx, int ty, int& mx, int& my, ParticleWorld& world, bool isFinal, bool isFirst, int depth) {
+    if (!world.inBounds(tx, ty)) return true;
+
+    BaseComponent* targetBase = world.getFast<BaseComponent>(ctx, tx, ty);
+    if (!targetBase || targetBase->compMask == 0) {
+        if (isFinal) { world.moveParticle(mx, my, tx, ty); mx = tx; my = ty; }
+        return false; 
+    }
+
+    if (targetBase->id == MaterialID::Spark || targetBase->id == MaterialID::ExplosionSpark) return true;
+    if (targetBase->id == MaterialID::Smoke) { world.removeParticle(tx, ty); return false; }
+    
+    if (auto* logic = MaterialRegistry[static_cast<int>(targetBase->id)]) {
+        auto* tTherm = world.get<ThermalComponent>(tx, ty);
+        logic->receiveHeat(targetBase, tTherm, tx, ty, 10, world);
+        
+        // Spark dies on impact with non-gas
+        if (logic->getGroup() != MaterialGroup::Gas) {
+            die(mx, my, world);
             return true;
         }
     }
-    return false;
+    return true;
 }
 
-// EXPLOSION SPARK
 void ExplosionSpark::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     Gas::onSpawn(index, x, y, world);
-    
-    auto* base = world.baseManager.get(index);
-    base->flags.isIgnited = true;
-
-    auto* fluid = world.fluidManager.get(index);
-    fluid->density = 4;
-    fluid->dispersionRate = 4;
-    
-    ThermalComponent therm;
-    therm.flammabilityResistance = 25;
-    therm.temperature = 3;
-    therm.heatFactor = 10;
-    world.thermalManager.add(index, therm);
-
-    DurabilityComponent dur;
-    dur.health = Random::randInt(0, 20);
-    world.durabilityManager.add(index, dur);
+    if (auto* b = world.get<BaseComponent>(x, y)) b->flags.isIgnited = true;
+    world.add<ThermalComponent>(x, y, ThermalComponent(3, 25, 10, 1));
+    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(5, 30), 0));
 }
 
-bool ExplosionSpark::actOnNeighbor(int targetX, int targetY, uint32_t myIndex, uint32_t targetIndex, ParticleWorld& world, bool isFinal, bool isFirst, int depth) {
-    // Duplicated logic from Spark to avoid inheritance issues
-    if (!world.inBounds(targetX, targetY)) return false;
-    
-    if (!world.isEmpty(targetX, targetY)) {
-        if (actOnOther(myIndex, targetIndex, world)) return true;
+bool ExplosionSpark::actOnNeighbor(const ParticleContext& ctx, int tx, int ty, int& mx, int& my, ParticleWorld& world, bool isFinal, bool isFirst, int depth) {
+    if (!world.inBounds(tx, ty)) return true;
+
+    BaseComponent* targetBase = world.getFast<BaseComponent>(ctx, tx, ty);
+    if (!targetBase || targetBase->compMask == 0) {
+        if (isFinal) { world.moveParticle(mx, my, tx, ty); mx = tx; my = ty; }
+        return false; 
     }
+
+    if (targetBase->id == MaterialID::Spark || targetBase->id == MaterialID::ExplosionSpark) return true;
     
-    if (world.isEmpty(targetX, targetY)) {
-        if (isFinal) {
-            int curX = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] % world.getWidth();
-            int curY = world.baseManager.denseToGrid[world.baseManager.sparse[myIndex]] / world.getWidth();
-            world.swapParticles(curX, curY, targetX, targetY);
-        }
-        return true; 
-    }
-    
-    BaseComponent* nb = world.baseManager.get(targetIndex);
-    if (!nb) return false;
-    
-    if (nb->id == MaterialID::Spark || nb->id == MaterialID::ExplosionSpark) { return false; }
-    else if (nb->id == MaterialID::Smoke) { world.removeParticle(targetIndex); return false; }
-    else {
-        Particle* logic = MaterialRegistry[static_cast<int>(nb->id)];
-        if (logic) {
-            auto* therm = world.thermalManager.get(myIndex);
-            int heat = therm ? therm->heatFactor : 10;
-            logic->receiveHeat(targetIndex, heat, world);
-            die(myIndex, world);
+    if (auto* logic = MaterialRegistry[static_cast<int>(targetBase->id)]) {
+        auto* tTherm = world.get<ThermalComponent>(tx, ty);
+        logic->receiveHeat(targetBase, tTherm, tx, ty, 10, world);
+        if (logic->getGroup() != MaterialGroup::Gas) {
+            die(mx, my, world);
             return true;
         }
     }
-    return false;
+    return true;
 }
 
-// SMOKE
 void Smoke::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     Gas::onSpawn(index, x, y, world);
-    auto* fluid = world.fluidManager.get(index);
-    fluid->density = 3;
-    fluid->dispersionRate = 2;
-    DurabilityComponent dur;
-    dur.health = Random::randInt(450, 700);
-    world.durabilityManager.add(index, dur);
+    if (auto* f = world.get<FluidComponent>(x, y)) f->density = 3;
+    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(450, 700), 0));
 }
 
-// --- AUTO REGISTRATION ---
+// --- GLOBAL STATIC INSTANCES (Required for Registry Population) ---
 static Steam steam_instance;
 static FlammableGas flammablegas_instance;
 static Spark spark_instance;

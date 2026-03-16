@@ -3,7 +3,8 @@
 #include <cstdint>
 #include <SFML/System/Vector2.hpp>
 
-class ParticleWorld; // Forward declaration
+class ParticleWorld;
+struct BaseComponent; // Forward declaration for the component pointer
 
 class Explosion {
 private:
@@ -24,6 +25,10 @@ public:
 
 private:
     void castRay(int destX, int destY, std::vector<uint8_t>& cache, int boxSize);
-    void applyDarken(int x, int y, float factor);
-    void particalize(int x, int y, sf::Vector2f velocity);
+    
+    // Updated to take direct BaseComponent pointer to avoid redundant lookups
+    void applyDarken(int x, int y, BaseComponent* base, float factor);
+    
+    // Updated to take direct BaseComponent pointer to avoid redundant lookups
+    void particalize(int x, int y, BaseComponent* base, sf::Vector2f velocity);
 };

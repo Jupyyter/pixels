@@ -13,14 +13,15 @@ public:
     void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
 
     // Final update logic
-    void update(int x, int y, uint32_t index, float dt, ParticleWorld& world) override;
+    void update(const ParticleContext& ctx, float dt, ParticleWorld& world) override;
 
-    // Helpers
-    bool actOnNeighbor(int targetX, int targetY, uint32_t myIndex, uint32_t targetIndex, 
-                       ParticleWorld& world, bool isFinal, bool isFirst, int depth) override;
+    // Helpers (Optimized to take cached properties)
+    virtual bool actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY, int& myX, int& myY, 
+                       ParticleWorld& world, bool isFinal, bool isFirst, int depth, 
+                       int myDensity, int myDispersionRate);
 
-    bool iterateToAdditional(ParticleWorld& world, int startX, int startY, int distance, 
-                             uint32_t myIndex, int& currentX, int& currentY);
+    virtual bool iterateToAdditional(const ParticleContext& ctx, ParticleWorld& world, int startX, int startY, 
+                             int distance, int& currentX, int& currentY, int myDensity);
     
     int getAdditional(float val);
     float getAverageVelOrGravity(float myVel, float otherVel);
@@ -33,9 +34,9 @@ public:
     
     void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
     
-    bool receiveHeat(uint32_t index, int heat, ParticleWorld& world) override;
-    bool actOnOther(uint32_t myIndex, uint32_t otherIndex, ParticleWorld& world) override;
-    bool explode(uint32_t index, int strength, ParticleWorld& world) override;
+    bool receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world) override;
+    bool actOnOther(BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world) override;
+    bool explode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int strength, ParticleWorld& world) override;
 };
 
 // --- Oil ---
@@ -44,7 +45,7 @@ public:
     Oil() : Liquid(MaterialID::Oil) {}
 
     void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
-    bool actOnOther(uint32_t myIndex, uint32_t otherIndex, ParticleWorld& world) override;
+    bool actOnOther(BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world) override;
 };
 
 // --- Lava ---
@@ -54,12 +55,12 @@ public:
 
     void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
     
-    bool receiveHeat(uint32_t index, int heat, ParticleWorld& world) override { return false; }
-    void checkIfDead(uint32_t index, ParticleWorld& world) override;
+    bool receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world) override { return false; }
+    void checkIfDead(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) override;
     
-    bool actOnOther(uint32_t myIndex, uint32_t otherIndex, ParticleWorld& world) override;
-    void magmatize(uint32_t index, int damage, ParticleWorld& world) override {} // Immune
-    bool receiveCooling(uint32_t index, int cooling, ParticleWorld& world) override;
+    bool actOnOther(BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world) override;
+    bool magmatize(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) override { return false; } // Immune
+    bool receiveCooling(BaseComponent* base, ThermalComponent* therm, int x, int y, int cooling, ParticleWorld& world) override;
 };
 
 // --- Acid ---
@@ -69,9 +70,9 @@ public:
 
     void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
     
-    bool actOnOther(uint32_t myIndex, uint32_t otherIndex, ParticleWorld& world) override;
-    bool corrode(uint32_t index, ParticleWorld& world) override { return false; }
-    bool receiveHeat(uint32_t index, int heat, ParticleWorld& world) override { return false; }
+    bool actOnOther(BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world) override;
+    bool corrode(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) override { return false; }
+    bool receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world) override { return false; }
 };
 
 // --- Cement ---
@@ -80,8 +81,8 @@ public:
     Cement() : Liquid(MaterialID::Cement) {}
 
     void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
-    void update(int x, int y, uint32_t index, float dt, ParticleWorld& world) override;
-    bool receiveHeat(uint32_t index, int heat, ParticleWorld& world) override { return false; }
+    void update(const ParticleContext& ctx, float dt, ParticleWorld& world) override;
+    bool receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world) override { return false; }
 };
 
 // --- Blood ---
@@ -90,5 +91,5 @@ public:
     Blood() : Liquid(MaterialID::Blood) {}
     
     void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
-    bool actOnOther(uint32_t myIndex, uint32_t otherIndex, ParticleWorld& world) override;
+    bool actOnOther(BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world) override;
 };

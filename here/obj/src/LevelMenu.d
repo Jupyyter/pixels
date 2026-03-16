@@ -77,7 +77,8 @@ obj/src/LevelMenu.o: src/LevelMenu.cpp include/LevelMenu.hpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
- include/ParticleWorld.hpp include/Random.hpp
+ include/ParticleWorld.hpp include/Random.hpp \
+ include/Particles/Particle.hpp
 include/LevelMenu.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp:
@@ -160,3 +161,4 @@ include/LevelMenu.hpp:
 include/Constants.hpp:
 include/ParticleWorld.hpp:
 include/Random.hpp:
+include/Particles/Particle.hpp:
