@@ -19,13 +19,22 @@ void MovableSolid::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
 }
 
 void MovableSolid::update(const ParticleContext& ctx, float dt, ParticleWorld& world) {
-    // DIRECT MEMORY ACCESS: Skips hashmap
     if (!ctx.kinematics) return;
     auto* kin = &ctx.kinematics[ctx.index];
 
     kin->velocity.y += (GRAVITY * dt);
     if (kin->velocity.y > MAX_VEL_Y) kin->velocity.y = MAX_VEL_Y;
-    if (kin->isFreeFalling) kin->velocity.x *= 0.9f;
+    
+    // --- NEW FRICTION LOGIC ---
+    // This ensures sand treats the Rigid Body exactly like normal ground!
+    // Because rigid bodies wake particles up every frame, we MUST apply ground friction 
+    // to stop them from sliding infinitely.
+    if (kin->isFreeFalling) {
+        kin->velocity.x *= 0.9f; // Air resistance
+    } else {
+        kin->velocity.x *= 0.3f; // Strong ground friction
+        if (std::abs(kin->velocity.x) < 0.1f) kin->velocity.x = 0.0f;
+    }
 
     kin->xThreshold += std::abs(kin->velocity.x * dt);
     kin->yThreshold += std::abs(kin->velocity.y * dt);
@@ -39,7 +48,15 @@ void MovableSolid::update(const ParticleContext& ctx, float dt, ParticleWorld& w
     int yMod = (kin->velocity.y < 0) ? -1 : 1;
 
     int steps = std::max(velXInt, velYInt);
-    if (steps == 0 && world.isEmptyFast(ctx, ctx.x, ctx.y + 1)) kin->isFreeFalling = true;
+    
+    // If we aren't moving fast enough to trigger steps, check if we should fall
+    if (steps == 0) {
+        if (world.isEmptyFast(ctx, ctx.x, ctx.y + 1)) {
+            kin->isFreeFalling = true;
+        } else {
+            kin->isFreeFalling = false;
+        }
+    }
     
     int curX = ctx.x, curY = ctx.y;
     float slope = (steps == 0) ? 0.0f : ((float)std::min(velXInt, velYInt) / steps);
@@ -62,7 +79,6 @@ void MovableSolid::update(const ParticleContext& ctx, float dt, ParticleWorld& w
     uint32_t finalIdx = world.computeIndex(curX, curY); 
     world.updateParticleColor(finalIdx, curX, curY);
 
-    // OPTIMIZATION: Fast virtual call bypass using dependency injection
     auto* base = world.getFast<BaseComponent>(ctx, curX, curY);
     if (base) {
         if (base->flags.isIgnited) {
@@ -82,9 +98,6 @@ void MovableSolid::update(const ParticleContext& ctx, float dt, ParticleWorld& w
              fKin->stoppedMovingCount = 0;
         }
 
-        // REFINED SLEEP LOGIC: 
-        // We removed the velocity > 0.1f checks. It will now only wake if 
-        // it's actively falling through empty space or recently moved.
         if (fKin->isFreeFalling || fKin->stoppedMovingCount < 5) {
             world.wakeParticle(curX, curY);
         }
@@ -134,8 +147,14 @@ bool MovableSolid::actOnNeighbor(const ParticleContext& ctx, int targetX, int ta
     if (depth > 0 || isFinal) return true;
 
     if (myKin->isFreeFalling) {
-        float speed = std::max(std::abs(myKin->velocity.y) / 31.0f, 105.0f);
-        myKin->velocity.x = (myKin->velocity.x < 0) ? -speed : speed;
+        // Only trigger a horizontal splash if it fell fast enough
+        if (std::abs(myKin->velocity.y) > 60.0f) {
+            float speed = std::abs(myKin->velocity.y) * 0.4f; // 40% of fall speed converts to slide
+            myKin->velocity.x = (myKin->velocity.x < 0) ? -speed : speed;
+        } else {
+            // Apply heavy friction for tiny drops (like resting on a shifting rigid body)
+            myKin->velocity.x *= 0.5f; 
+        }
     }
 
     int addX = getAdditional(myKin->velocity.x);

@@ -9,7 +9,7 @@
 #include "RigidBody.hpp"
 #include "Particles/Explosion.hpp"
 
-const char MAGIC_HEADER[4] = {'S', 'A', 'N', 'D'};
+const char MAGIC_HEADER_V2[4] = {'S', 'N', 'D', '2'};
 
 // --- ANONYMOUS NAMESPACE: COMPONENT MOVEMENT HELPERS ---
 namespace {
@@ -343,11 +343,8 @@ void ParticleWorld::update(float deltaTime)
 
         if (!simulationBounds.findIntersection(chunkRect)) continue;
         
+        // baseArr is completely safe to cache because it is a fixed array inside the Chunk struct
         BaseComponent* baseArr = chunk->base;
-        auto* kinArr   = chunk->kinematics.get();
-        auto* fluidArr = chunk->fluid.get();
-        auto* thermArr = chunk->thermal.get();
-        auto* durArr   = chunk->durability.get();
 
         auto processParticle = [&](int lx, int ly) {
             uint32_t i = (ly << 6) | lx;
@@ -356,7 +353,19 @@ void ParticleWorld::update(float deltaTime)
 
             baseArr[i].flags.hasBeenUpdatedThisFrame = true;
 
-            ParticleContext ctx { chunk, i, chunkOriginX + lx, chunkOriginY + ly, baseArr, kinArr, fluidArr, thermArr, durArr };
+            // FIX: Always fetch pointers fresh using .get(). 
+            // This prevents a dangling pointer crash if an explosion allocated an array mid-loop!
+            ParticleContext ctx { 
+                chunk, 
+                i, 
+                chunkOriginX + lx, 
+                chunkOriginY + ly, 
+                baseArr, 
+                chunk->kinematics.get(), 
+                chunk->fluid.get(), 
+                chunk->thermal.get(), 
+                chunk->durability.get() 
+            };
 
             if (MaterialRegistry[static_cast<int>(baseArr[i].id)]) {
                 MaterialRegistry[static_cast<int>(baseArr[i].id)]->update(ctx, deltaTime, *this);
@@ -566,100 +575,114 @@ bool ParticleWorld::saveWorld(const std::string &baseFilename) {
     std::ofstream file(filename, std::ios::binary);
     if (!file.is_open()) return false;
 
-    file.write(MAGIC_HEADER, 4);
+    file.write(MAGIC_HEADER_V2, 4);
+    
     size_t chunkCount = chunks.size();
-    file.write((char *)&chunkCount, sizeof(chunkCount));
+    file.write(reinterpret_cast<const char*>(&chunkCount), sizeof(chunkCount));
 
     for (const auto &[coord, chunk] : chunks) {
-        file.write((char *)&coord.x, sizeof(coord.x));
-        file.write((char *)&coord.y, sizeof(coord.y));
+        file.write(reinterpret_cast<const char*>(&coord.x), sizeof(coord.x));
+        file.write(reinterpret_cast<const char*>(&coord.y), sizeof(coord.y));
 
         for (int i = 0; i < CHUNK_AREA; ++i) {
-            MaterialID id = chunk->base[i].compMask ? chunk->base[i].id : (MaterialID)0;
-            file.write((char *)&id, sizeof(id));
+            uint8_t mask = chunk->base[i].compMask;
+            file.write(reinterpret_cast<const char*>(&mask), sizeof(mask));
 
-            if ((int)id != 0) {
-                sf::Vector2f v(0, 0);
-                uint8_t flags = 0;
-
-                // Correctly save velocity and flags if the component exists
-                if ((chunk->base[i].compMask & COMP_KINEMATICS) && chunk->kinematics) {
-                    v = chunk->kinematics[i].velocity;
-                    if (chunk->kinematics[i].isFreeFalling) {
-                        flags |= 2; // Use bit 1 for isFreeFalling
-                    }
-                }
-                
-                if (chunk->base[i].flags.isIgnited) {
-                    flags |= 1; // Use bit 0 for isIgnited
-                }
-                
-                file.write((char *)&v, sizeof(v));
-                file.write((char *)&chunk->base[i].color, sizeof(sf::Color));
-                file.write((char *)&flags, 1);
+            if (mask != 0) {
+                // Using binary block writing. The compMask ensures we ONLY write initialized structs!
+                if (mask & COMP_BASE)       file.write(reinterpret_cast<const char*>(&chunk->base[i]),       sizeof(BaseComponent));
+                if (mask & COMP_KINEMATICS) file.write(reinterpret_cast<const char*>(&chunk->kinematics[i]), sizeof(KinematicsComponent));
+                if (mask & COMP_DURABILITY) file.write(reinterpret_cast<const char*>(&chunk->durability[i]), sizeof(DurabilityComponent));
+                if (mask & COMP_THERMAL)    file.write(reinterpret_cast<const char*>(&chunk->thermal[i]),    sizeof(ThermalComponent));
+                if (mask & COMP_FLUID)      file.write(reinterpret_cast<const char*>(&chunk->fluid[i]),      sizeof(FluidComponent));
             }
         }
     }
+
+    // Save Rigid Bodies
+    bool hasRBS = rigidBodySystem != nullptr;
+    file.write(reinterpret_cast<const char*>(&hasRBS), sizeof(hasRBS));
+    if (hasRBS) {
+        rigidBodySystem->save(file);
+    }
+
     return true;
 }
+
+// Replace the entirety of loadWorld:
 bool ParticleWorld::loadWorld(const std::string &filename) {
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) return false;
 
     char h[4];
     file.read(h, 4);
-    if (std::memcmp(h, MAGIC_HEADER, 4) != 0) return false;
+    if (std::memcmp(h, MAGIC_HEADER_V2, 4) != 0) {
+        std::cerr << "Cannot load world: Outdated or corrupted file format!\n";
+        return false;
+    }
 
     clear();
+    if (rigidBodySystem) {
+        rigidBodySystem->clearAll();
+    }
 
     size_t chunkCount;
-    file.read((char *)&chunkCount, sizeof(chunkCount));
+    file.read(reinterpret_cast<char*>(&chunkCount), sizeof(chunkCount));
 
     for (size_t i = 0; i < chunkCount; ++i) {
         int cx, cy;
-        file.read((char *)&cx, sizeof(cx));
-        file.read((char *)&cy, sizeof(cy));
+        file.read(reinterpret_cast<char*>(&cx), sizeof(cx));
+        file.read(reinterpret_cast<char*>(&cy), sizeof(cy));
 
         Chunk *c = getOrCreateChunk(cx * CHUNK_SIZE, cy * CHUNK_SIZE);
 
         for (int idx = 0; idx < CHUNK_AREA; ++idx) {
-            MaterialID id;
-            file.read((char *)&id, sizeof(id));
+            uint8_t mask;
+            file.read(reinterpret_cast<char*>(&mask), sizeof(mask));
 
-            if ((int)id != 0) {
-                sf::Vector2f v;
-                sf::Color col;
-                uint8_t f;
-                file.read((char *)&v, sizeof(v));
-                file.read((char *)&col, sizeof(col));
-                file.read((char *)&f, 1);
-
-                int lx = idx % CHUNK_SIZE;
-                int ly = idx / CHUNK_SIZE;
-                int gx = cx * CHUNK_SIZE + lx;
-                int gy = cy * CHUNK_SIZE + ly;
-
-                // Spawn particle with its default state
-                spawnParticle(id, gx, gy);
-
-                // Now get pointers and overwrite with loaded state
-                BaseComponent* base = getByLocalIndex<BaseComponent>(c, idx);
-                if (base) {
-                    base->color = col;
-                    base->flags.isIgnited = (f & 1);
+            if (mask != 0) {
+                if (mask & COMP_BASE) {
+                    file.read(reinterpret_cast<char*>(&c->base[idx]), sizeof(BaseComponent));
                 }
-                
-                if (auto* k = getByLocalIndex<KinematicsComponent>(c, idx)) {
-                    k->velocity = v;
-                    k->isFreeFalling = (f & 2);
+                if (mask & COMP_KINEMATICS) {
+                    if (!c->kinematics) c->kinematics = std::make_unique<KinematicsComponent[]>(CHUNK_AREA);
+                    file.read(reinterpret_cast<char*>(&c->kinematics[idx]), sizeof(KinematicsComponent));
+                }
+                if (mask & COMP_DURABILITY) {
+                    if (!c->durability) c->durability = std::make_unique<DurabilityComponent[]>(CHUNK_AREA);
+                    file.read(reinterpret_cast<char*>(&c->durability[idx]), sizeof(DurabilityComponent));
+                }
+                if (mask & COMP_THERMAL) {
+                    if (!c->thermal) c->thermal = std::make_unique<ThermalComponent[]>(CHUNK_AREA);
+                    file.read(reinterpret_cast<char*>(&c->thermal[idx]), sizeof(ThermalComponent));
+                }
+                if (mask & COMP_FLUID) {
+                    if (!c->fluid) c->fluid = std::make_unique<FluidComponent[]>(CHUNK_AREA);
+                    file.read(reinterpret_cast<char*>(&c->fluid[idx]), sizeof(FluidComponent));
                 }
 
-                // *** THE CRUCIAL FIX ***
-                // Update the visual pixel with the correct loaded color
-                updateChunkPixel(c, idx, col);
+                // --- CRITICAL FIX FOR RIGID BODIES ---
+                // If this pixel is part of a RigidBody, delete it from the static sandbox.
+                // The RigidBodySystem will rasterize it onto the map dynamically when we load it later!
+                if ((mask & COMP_BASE) && c->base[idx].flags.isRigidBodyPart) {
+                    c->base[idx].compMask = 0; 
+                } else if (mask & COMP_BASE) {
+                    updateChunkPixel(c, idx, c->base[idx].color);
+                }
             }
         }
+        c->isSleeping = false;
+        c->visualDirty = true;
     }
+
+    // Load Rigid Bodies
+    bool hasRBS;
+    if (file.read(reinterpret_cast<char*>(&hasRBS), sizeof(hasRBS))) {
+        if (hasRBS && rigidBodySystem) {
+            rigidBodySystem->load(file);
+        }
+    }
+
     return true;
 }
 

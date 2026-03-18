@@ -4,7 +4,7 @@
 #include <SFML/System/Vector2.hpp>
 
 class ParticleWorld;
-struct BaseComponent; // Forward declaration for the component pointer
+struct BaseComponent; 
 
 class Explosion {
 private:
@@ -24,11 +24,9 @@ public:
     void enact();
 
 private:
-    void castRay(int destX, int destY, std::vector<uint8_t>& cache, int boxSize);
+    // Added maxReach to correctly size the cache bounds
+    void castRay(int destX, int destY, std::vector<uint8_t>& cache, int boxSize, int maxReach);
     
-    // Updated to take direct BaseComponent pointer to avoid redundant lookups
     void applyDarken(int x, int y, BaseComponent* base, float factor);
-    
-    // Updated to take direct BaseComponent pointer to avoid redundant lookups
     void particalize(int x, int y, BaseComponent* base, sf::Vector2f velocity);
 };

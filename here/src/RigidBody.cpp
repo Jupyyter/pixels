@@ -7,11 +7,9 @@ RigidBody::RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalPar
     this->height = h;
     this->needsFixtureRebuild = false;
     
-    // Initialize empty grid
     particles.resize(w * h);
     for (auto& p : particles) p.active = false; 
     
-    // Populate the new fragment's grid
     for (const auto& p : parts) {
         particles[p.localY * w + p.localX] = p;
     }
@@ -26,6 +24,7 @@ RigidBody::RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalPar
     bdef.angularDamping = 2.0f;
     bdef.linearDamping = 0.2f;
     bdef.enableSleep = true;
+    bdef.isBullet = true; 
     bodyId = b2CreateBody(worldId, &bdef);
 
     rebuildFixtures();
@@ -35,7 +34,6 @@ std::vector<std::vector<LocalParticle>> RigidBody::findIslands() {
     std::vector<std::vector<LocalParticle>> islands;
     std::vector<bool> visited(width * height, false);
     
-    // 8-way directional checks so diagonal pixels stick together!
     int dirs[8][2] = {{1,0}, {-1,0}, {0,1}, {0,-1}, {1,1}, {-1,-1}, {1,-1}, {-1,1}};
     
     for (int y = 0; y < height; ++y) {
@@ -74,18 +72,16 @@ std::vector<std::vector<LocalParticle>> RigidBody::findIslands() {
     }
     return islands;
 }
-// No changes to RigidBody::RigidBody or RigidBody::rebuildFixtures
+
 RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int startY, MaterialID mat) {
     this->worldId = worldId;
     width = img.getSize().x;
     height = img.getSize().y;
     needsFixtureRebuild = false;
 
-    // FIX 1: Initialize the exact grid size so 2D indexing maps perfectly!
     particles.resize(width * height);
     for (auto& p : particles) p.active = false;
 
-    // Convert Sprite to Local Particle Grid
     for (unsigned int y = 0; y < height; ++y) {
         for (unsigned int x = 0; x < width; ++x) {
             sf::Color col = img.getPixel({x, y});
@@ -101,7 +97,6 @@ RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int st
                 p.dur = DurabilityComponent(150, 2); 
                 p.therm = ThermalComponent(0, 40, 10, 1);
                 
-                // Assign to the correct memory slot instead of push_back
                 particles[y * width + x] = p;
             }
         }
@@ -113,20 +108,19 @@ RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int st
     bdef.angularDamping = 2.0f; 
     bdef.linearDamping = 0.2f;  
     bdef.enableSleep = true;
+    bdef.isBullet = true; 
     bodyId = b2CreateBody(worldId, &bdef);
 
     rebuildFixtures();
 }
+
 void RigidBodySystem::renderDebug(sf::RenderTarget& target) const {
-    // Keep outlines consistent regardless of camera zoom
     float thickness = target.getView().getSize().x / target.getSize().x;
     
     auto drawBody = [&](b2BodyId bodyId, sf::Color color) {
         if (!b2Body_IsValid(bodyId)) return;
         
-        // FIX: Box2D 3.x only requires the bodyId here!
         b2Transform xf = b2Body_GetTransform(bodyId);
-        
         int shapeCount = b2Body_GetShapeCount(bodyId);
         if (shapeCount == 0) return;
         
@@ -146,7 +140,7 @@ void RigidBodySystem::renderDebug(sf::RenderTarget& target) const {
                     sfShape.setPoint(j, sf::Vector2f(worldPoint.x * M2P, worldPoint.y * M2P));
                 }
                 
-                sfShape.setFillColor(sf::Color(color.r, color.g, color.b, 60)); // Transparent fill
+                sfShape.setFillColor(sf::Color(color.r, color.g, color.b, 60)); 
                 sfShape.setOutlineColor(color);
                 sfShape.setOutlineThickness(thickness);
                 target.draw(sfShape);
@@ -167,68 +161,73 @@ void RigidBodySystem::renderDebug(sf::RenderTarget& target) const {
         }
     };
 
-    // 1. Draw Static Terrain Chunks (Cyan)
-    for (const auto& pair : chunkBodies) drawBody(pair.second, sf::Color::Cyan);
-    
-    // 2. Draw Dynamic Rigid Bodies (Green)
+    for (const auto& pair : chunkBodies) drawBody(pair.second.bodyId, sf::Color::Cyan);
     for (const auto& rb : bodies) drawBody(rb->bodyId, sf::Color::Green);
 }
+
 void RigidBody::rebuildFixtures() {
-    // 1. Clear old Box2D shapes from the body
     int shapeCount = b2Body_GetShapeCount(bodyId);
     if (shapeCount > 0) {
         std::vector<b2ShapeId> shapes(shapeCount);
         b2Body_GetShapes(bodyId, shapes.data(), shapeCount);
         for(int i = 0; i < shapeCount; ++i) {
-            // FIX: Box2D 3.x requires a boolean to update the body mass when deleting a shape
             b2DestroyShape(shapes[i], true); 
         }
     }
 
-    // 2. Build local 2D grid
-    std::vector<bool> localGrid(width * height, false);
-    for (const auto& p : particles) {
-        if (p.active) localGrid[p.localY * width + p.localX] = true;
-    }
-
-    // 3. Run-Length Encoding to combine adjacent particles
-    for (int ly = 0; ly < height; ++ly) {
-        int startX = -1;
-        for (int lx = 0; lx <= width; ++lx) {
-            bool solid = (lx < width) && localGrid[ly * width + lx];
-            if (solid && startX == -1) {
-                startX = lx;
-            } else if (!solid && startX != -1) {
-                float w = (lx - startX);
-                float h = 1.0f;
+    std::vector<bool> visited(width * height, false);
+    
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            int idx = y * width + x;
+            
+            if (particles[idx].active && !visited[idx]) {
+                int w = 0;
+                while (x + w < width && particles[y * width + x + w].active && !visited[y * width + x + w]) w++;
                 
-                // Box2D uses Half-Width and Half-Height!
-                float hx = (w / 2.0f) * P2M;
-                float hy = (h / 2.0f) * P2M;
+                int h = 1;
+                bool canExpand = true;
+                while (y + h < height && canExpand) {
+                    for (int i = 0; i < w; ++i) {
+                        int nIdx = (y + h) * width + x + i;
+                        if (!particles[nIdx].active || visited[nIdx]) {
+                            canExpand = false;
+                            break;
+                        }
+                    }
+                    if (canExpand) h++;
+                }
                 
-                // Center point of this specific box
-                float cx = startX + (w / 2.0f) - (width / 2.0f);
-                float cy = ly + (h / 2.0f) - (height / 2.0f);
+                for (int j = 0; j < h; ++j) {
+                    for (int i = 0; i < w; ++i) {
+                        visited[(y + j) * width + x + i] = true;
+                    }
+                }
+                
+                float radius = 0.02f;
+                float hx = (w / 2.0f) * P2M - radius;
+                float hy = (h / 2.0f) * P2M - radius;
+                if (hx < 0.01f) hx = 0.01f;
+                if (hy < 0.01f) hy = 0.01f;
+                
+                float cx = x + (w / 2.0f) - (width / 2.0f);
+                float cy = y + (h / 2.0f) - (height / 2.0f);
                 
                 b2Polygon box = b2MakeOffsetBox(hx, hy, {cx * P2M, cy * P2M}, b2MakeRot(0.0f));
+                box.radius = radius;
                 
                 b2ShapeDef shapeDef = b2DefaultShapeDef();
-                shapeDef.density = 5.0f;
-                shapeDef.material.friction = 0.8f;
+                shapeDef.density = 2.0f;     
+                shapeDef.material.friction = 0.1f;    
                 shapeDef.material.restitution = 0.05f;
                 
-                // FIX: Box2D 3.x API uses b2CreatePolygonShape
                 b2CreatePolygonShape(bodyId, &shapeDef, &box); 
-                
-                startX = -1;
             }
         }
     }
-    
     needsFixtureRebuild = false;
 }
 
-// No change to RigidBodySystem constructor
 RigidBodySystem::RigidBodySystem() {
     b2WorldDef worldDef = b2DefaultWorldDef();
     worldDef.gravity = {0.0f, 98.0f};
@@ -236,28 +235,22 @@ RigidBodySystem::RigidBodySystem() {
     chunkBodies.clear();
 }
 
-// --- FINAL FIX ---
 RigidBodySystem::~RigidBodySystem() {
-    // We own the worldId, and it's valid for our entire lifetime.
-    // No check is needed (or possible); just destroy it.
     b2DestroyWorld(worldId);
 }
 
-// No changes to any of the following functions
 void RigidBodySystem::addRigidBodyFromSprite(const sf::Image& img, int x, int y, MaterialID mat) {
     bodies.push_back(std::make_unique<RigidBody>(worldId, img, x, y, mat));
 }
 
 void RigidBodySystem::clearFromWorld(ParticleWorld& world) {
-    // 1. Clear active bodies
     for (auto& rb : bodies) {
         for (auto& dp : rb->drawnPixels) {
             Chunk* c = world.getChunk(dp.wx, dp.wy);
             if (c) {
                 uint32_t idx = world.computeLocalIndex(dp.wx, dp.wy);
-                // Only clear it if it is STILL a rigid body pixel
                 if (c->base[idx].compMask != 0 && c->base[idx].flags.isRigidBodyPart) {
-                    c->base[idx].compMask = 0; // Wipe from world
+                    c->base[idx].compMask = 0; 
                     world.updateChunkPixel(c, idx, sf::Color::Transparent);
                     world.wakeParticle(dp.wx, dp.wy);
                 }
@@ -266,12 +259,10 @@ void RigidBodySystem::clearFromWorld(ParticleWorld& world) {
         rb->drawnPixels.clear();
     }
     
-    // 2. NEW: Clear orphaned ghost pixels (from bodies that split or died last frame)
     for (auto& dp : orphanedPixels) {
         Chunk* c = world.getChunk(dp.wx, dp.wy);
         if (c) {
             uint32_t idx = world.computeLocalIndex(dp.wx, dp.wy);
-            // Only clear it if it is STILL a rigid body pixel (prevents erasing new sand that fell here)
             if (c->base[idx].compMask != 0 && c->base[idx].flags.isRigidBodyPart) {
                 c->base[idx].compMask = 0; 
                 world.updateChunkPixel(c, idx, sf::Color::Transparent);
@@ -279,17 +270,15 @@ void RigidBodySystem::clearFromWorld(ParticleWorld& world) {
             }
         }
     }
-    orphanedPixels.clear(); // Empty the trash bin!
+    orphanedPixels.clear(); 
 }
-
 
 void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
     std::unordered_set<ChunkCoord, ChunkCoordHash> overlappingChunks;
     
-    // 1. Gather all chunks that bodies currently touch and wake them if necessary
     for (auto& rb : bodies) {
         b2Transform transform = b2Body_GetTransform(rb->bodyId);
-        float radiusM = std::max(rb->width, rb->height) * P2M * 0.707f + 2.0f; // Padding
+        float radiusM = std::max(rb->width, rb->height) * P2M * 0.707f + 2.0f; 
         
         int minCx = static_cast<int>((transform.p.x - radiusM) * M2P) >> 6;
         int maxCx = static_cast<int>((transform.p.x + radiusM) * M2P) >> 6;
@@ -304,7 +293,6 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
                 overlappingChunks.insert(coord);
                 
                 Chunk* c = world.getChunk(cx << 6, cy << 6);
-                // FIX FLOATING: If sand is actively moving or was brushed, wake the physics body!
                 if (c && (!c->isSleeping || c->visualDirty)) {
                     needsWake = true;
                 }
@@ -316,37 +304,46 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
         }
     }
     
-    // 2. Cleanup Box2D terrain for chunks that no bodies are touching anymore
     for (auto it = chunkBodies.begin(); it != chunkBodies.end(); ) {
         if (overlappingChunks.find(it->first) == overlappingChunks.end()) {
-            b2DestroyBody(it->second);
+            b2DestroyBody(it->second.bodyId);
             it = chunkBodies.erase(it);
         } else {
             ++it;
         }
     }
 
-    // 3. Rebuild Box2D terrain for overlapping chunks 
     for (auto coord : overlappingChunks) {
         Chunk* c = world.getChunk(coord.x << 6, coord.y << 6);
         bool hasTerrain = chunkBodies.count(coord) > 0;
-        // Only rebuild if it doesn't exist, OR if sand is actively modifying it
         if (!hasTerrain || (c && (!c->isSleeping || c->visualDirty))) {
             rebuildChunkTerrain(coord, c);
         }
     }
     
-    b2World_Step(worldId, dt, 4);
+    b2World_Step(worldId, dt, 8);
 }
 
 void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
+    
+    // Helper function to stop fluid from teleporting through walls/ceilings
+    auto isBlocking = [&](int x, int y) {
+        BaseComponent* base = world.get<BaseComponent>(x, y);
+        if (!base || base->compMask == 0 || base->flags.isRigidBodyPart) return false;
+        Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
+        return logic && logic->getGroup() == MaterialGroup::ImmovableSolid;
+    };
+
     for (auto& rb : bodies) {
         rb->drawnPixels.clear();
         
         b2Transform transform = b2Body_GetTransform(rb->bodyId);
+        b2Vec2 b2vel = b2Body_GetLinearVelocity(rb->bodyId);
+        float velX = b2vel.x * M2P;
+        float velY = b2vel.y * M2P;
+        
         float radiusP = std::max(rb->width, rb->height) * 0.7071f + 1.0f; 
         
-        // Find bounding box in world space
         int minWx = static_cast<int>(std::floor(transform.p.x * M2P - radiusP));
         int maxWx = static_cast<int>(std::ceil(transform.p.x * M2P + radiusP));
         int minWy = static_cast<int>(std::floor(transform.p.y * M2P - radiusP));
@@ -355,13 +352,14 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
         float cs = transform.q.c;
         float sn = transform.q.s;
 
-        // FIX HOLES: Inverse Rasterization. Look at every world pixel and find its local pixel!
+        int waterOverlap = 0;
+        int sandOverlap = 0;
+
         for (int wy = minWy; wy <= maxWy; ++wy) {
             for (int wx = minWx; wx <= maxWx; ++wx) {
                 float dx = wx / M2P - transform.p.x;
                 float dy = wy / M2P - transform.p.y;
                 
-                // Inverse rotate
                 float rx = dx * cs + dy * sn;
                 float ry = -dx * sn + dy * cs;
                 
@@ -375,7 +373,86 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
                         Chunk* c = world.getOrCreateChunk(wx, wy);
                         if (c) {
                             uint32_t idx = world.computeLocalIndex(wx, wy);
+                            bool canPlace = false;
+                            
                             if (c->base[idx].compMask == 0) {
+                                canPlace = true;
+                            } else if (!c->base[idx].flags.isRigidBodyPart) {
+                                MaterialID matId = c->base[idx].id;
+                                Particle* logic = MaterialRegistry[static_cast<int>(matId)];
+                                
+                                if (logic) {
+                                    MaterialGroup group = logic->getGroup();
+                                    
+                                    if (group == MaterialGroup::Liquid || group == MaterialGroup::MovableSolid || group == MaterialGroup::Gas) {
+                                        
+                                        if (group == MaterialGroup::Liquid) waterOverlap++;
+                                        else if (group == MaterialGroup::MovableSolid) sandOverlap++;
+
+                                        int spawnX = wx, spawnY = wy;
+                                        bool found = false;
+                                        
+                                        // 1. Immediate perimeter (gentle push to the side)
+                                        for (int d = 1; d <= 2; ++d) {
+                                            if (world.isEmpty(wx, wy - d)) { spawnX = wx; spawnY = wy - d; found = true; break; }
+                                            if (world.isEmpty(wx - d, wy)) { spawnX = wx - d; spawnY = wy; found = true; break; }
+                                            if (world.isEmpty(wx + d, wy)) { spawnX = wx + d; spawnY = wy; found = true; break; }
+                                        }
+                                        
+                                        // 2. Upward raycast (halts if it hits a wall/roof to prevent escaping containers)
+                                        if (!found) {
+                                            int upY = wy - 1;
+                                            for(int i = 0; i < 150; i++) {
+                                                if (world.isEmpty(wx, upY)) { 
+                                                    spawnX = wx; spawnY = upY; found = true; break; 
+                                                } else {
+                                                    BaseComponent* b = world.get<BaseComponent>(wx, upY);
+                                                    if (b && !b->flags.isRigidBodyPart) {
+                                                        Particle* pLogic = MaterialRegistry[static_cast<int>(b->id)];
+                                                        if (pLogic && pLogic->getGroup() == MaterialGroup::ImmovableSolid) break; // HALT!
+                                                    }
+                                                }
+                                                upY--;
+                                            }
+                                        }
+
+                                        // 3. Sideways raycast (halts if it hits walls)
+                                        if (!found) {
+                                            for (int dir : {-1, 1}) {
+                                                int sideX = wx + dir;
+                                                for(int i = 0; i < 30; i++) {
+                                                    if (world.isEmpty(sideX, wy)) { 
+                                                        spawnX = sideX; spawnY = wy; found = true; break; 
+                                                    } else {
+                                                        BaseComponent* b = world.get<BaseComponent>(sideX, wy);
+                                                        if (b && !b->flags.isRigidBodyPart) {
+                                                            Particle* pLogic = MaterialRegistry[static_cast<int>(b->id)];
+                                                            if (pLogic && pLogic->getGroup() == MaterialGroup::ImmovableSolid) break; // HALT!
+                                                        }
+                                                    }
+                                                    sideX += dir;
+                                                }
+                                                if (found) break;
+                                            }
+                                        }
+
+                                        // Move the particle quietly
+                                        if (found) {
+                                            world.moveParticle(wx, wy, spawnX, spawnY);
+                                            if (auto* kin = world.get<KinematicsComponent>(spawnX, spawnY)) {
+                                                kin->isFreeFalling = true;
+                                            }
+                                            canPlace = true; // The space is now clear!
+                                        } else {
+                                            // If the water/sand is totally crushed by the block against a wall, delete it.
+                                            world.removeParticle(wx, wy);
+                                            canPlace = true;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (canPlace) {
                                 p.base.flags.isRigidBodyPart = true;
                                 world.add<BaseComponent>(wx, wy, p.base);
                                 world.add<DurabilityComponent>(wx, wy, p.dur);
@@ -383,7 +460,6 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
                                 world.setParticleColor(wx, wy, p.base.color);
                                 world.wakeParticle(wx, wy);
                                 
-                                // Record successful draw for syncing later
                                 rb->drawnPixels.push_back({wx, wy, localIdx});
                             }
                         }
@@ -391,6 +467,29 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
                 }
             }
         }
+        
+        float totalPixels = rb->width * rb->height;
+        float waterRatio = std::min((float)waterOverlap / totalPixels, 1.0f);
+        float sandRatio = std::min((float)sandOverlap / totalPixels, 1.0f);
+        
+        float linearDrag = 0.2f;   
+        float angularDrag = 2.0f;  
+
+        if (waterRatio > 0.0f) {
+            linearDrag += waterRatio * 15.0f; 
+            angularDrag += waterRatio * 20.0f;
+            float upwardAccel = waterRatio * 85.0f;
+            b2Vec2 force = {0.0f, -upwardAccel * b2Body_GetMass(rb->bodyId)};
+            b2Body_ApplyForceToCenter(rb->bodyId, force, true);
+        }
+
+        if (sandRatio > 0.0f) {
+            linearDrag += sandRatio * 0.1f; 
+            angularDrag += sandRatio * 0.5f;
+        }
+
+        b2Body_SetLinearDamping(rb->bodyId, linearDrag);
+        b2Body_SetAngularDamping(rb->bodyId, angularDrag);
     }
 }
 void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
@@ -425,18 +524,13 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
             std::vector<std::vector<LocalParticle>> islands = rb->findIslands();
             
             if (islands.empty()) {
-                // FIX: Dump pixels to the trash bin instead of immediately wiping them!
                 orphanedPixels.insert(orphanedPixels.end(), rb->drawnPixels.begin(), rb->drawnPixels.end());
                 b2DestroyBody(rb->bodyId);
                 it = bodies.erase(it);
                 continue;
             } else if (islands.size() == 1) {
-                // The object was damaged but remained in one piece
                 rb->rebuildFixtures();
             } else {
-                // The object was CUT IN HALF! Split it into independent bodies.
-                
-                // FIX: Dump original body pixels to the trash bin to be cleaned next frame!
                 orphanedPixels.insert(orphanedPixels.end(), rb->drawnPixels.begin(), rb->drawnPixels.end());
                 
                 b2Transform xf = b2Body_GetTransform(rb->bodyId);
@@ -444,7 +538,6 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
                 float angVel = b2Body_GetAngularVelocity(rb->bodyId);
                 
                 for (const auto& island : islands) {
-                    // 1. Find the bounds of this specific fragment
                     int minX = rb->width, maxX = 0;
                     int minY = rb->height, maxY = 0;
                     for (const auto& p : island) {
@@ -493,14 +586,29 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
         ++it;
     }
     
-    // Append any newly spawned fragments
     for (auto& nb : newBodies) {
         bodies.push_back(std::move(nb));
     }
 }
+
 void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk) {
+    uint64_t currentHash = 0;
+    if (chunk) {
+        for (int i = 0; i < CHUNK_AREA; ++i) {
+            if (chunk->base[i].compMask != 0 && !chunk->base[i].flags.isRigidBodyPart) {
+                // FIX: Only hash Immovable Solids (Stone, Wood) so RB can pass through Water/Sand!
+                Particle* logic = MaterialRegistry[static_cast<int>(chunk->base[i].id)];
+                if (logic && logic->getGroup() == MaterialGroup::ImmovableSolid) {
+                    currentHash ^= (uint64_t)(i + 1) * 2654435761ull; 
+                }
+            }
+        }
+    }
+
+    if (chunkBodies.count(coord) && chunkBodies[coord].hash == currentHash) return; 
+
     if (chunkBodies.count(coord)) {
-        b2DestroyBody(chunkBodies[coord]);
+        b2DestroyBody(chunkBodies[coord].bodyId);
         chunkBodies.erase(coord);
     }
 
@@ -512,40 +620,148 @@ void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk) {
     b2BodyId bodyId = b2CreateBody(worldId, &bdef);
 
     bool hasFixtures = false;
+    std::vector<bool> visited(CHUNK_AREA, false);
+    
     for (int ly = 0; ly < CHUNK_SIZE; ++ly) {
-        int startX = -1;
-        for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
-            bool solid = false;
-            if (lx < CHUNK_SIZE) {
-                uint32_t idx = (ly << 6) | lx;
-                if (chunk->base[idx].compMask != 0 && !chunk->base[idx].flags.isRigidBodyPart) solid = true;
+        for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
+            int idx = (ly << 6) | lx;
+            
+            bool isSolid = false;
+            if (chunk->base[idx].compMask != 0 && !chunk->base[idx].flags.isRigidBodyPart) {
+                // FIX: Box2D terrain is ONLY generated for Immovable Solids!
+                Particle* logic = MaterialRegistry[static_cast<int>(chunk->base[idx].id)];
+                if (logic && logic->getGroup() == MaterialGroup::ImmovableSolid) {
+                    isSolid = true;
+                }
             }
-            if (solid && startX == -1) {
-                startX = lx;
-            } else if (!solid && startX != -1) {
-                float w = (lx - startX);
-                float h = 1.0f;
+            
+            if (isSolid && !visited[idx]) {
+                int w = 0;
+                while (lx + w < CHUNK_SIZE) {
+                    int nIdx = (ly << 6) | (lx + w);
+                    bool isNeighborSolid = false;
+                    if (chunk->base[nIdx].compMask != 0 && !chunk->base[nIdx].flags.isRigidBodyPart) {
+                        Particle* nLogic = MaterialRegistry[static_cast<int>(chunk->base[nIdx].id)];
+                        if (nLogic && nLogic->getGroup() == MaterialGroup::ImmovableSolid) isNeighborSolid = true;
+                    }
+                    if (isNeighborSolid && !visited[nIdx]) w++;
+                    else break;
+                }
                 
-                // Box2D uses Half-Width and Half-Height!
-                float hx = (w / 2.0f) * P2M;
-                float hy = (h / 2.0f) * P2M;
+                int h = 1;
+                bool canExpand = true;
+                while (ly + h < CHUNK_SIZE && canExpand) {
+                    for (int i = 0; i < w; ++i) {
+                        int nIdx = ((ly + h) << 6) | (lx + i);
+                        bool isNeighborSolid = false;
+                        if (chunk->base[nIdx].compMask != 0 && !chunk->base[nIdx].flags.isRigidBodyPart) {
+                            Particle* nLogic = MaterialRegistry[static_cast<int>(chunk->base[nIdx].id)];
+                            if (nLogic && nLogic->getGroup() == MaterialGroup::ImmovableSolid) isNeighborSolid = true;
+                        }
+                        if (!isNeighborSolid || visited[nIdx]) {
+                            canExpand = false;
+                            break;
+                        }
+                    }
+                    if (canExpand) h++;
+                }
                 
-                float cx = startX + (w / 2.0f);
+                for (int j = 0; j < h; ++j) {
+                    for (int i = 0; i < w; ++i) {
+                        visited[((ly + j) << 6) | (lx + i)] = true;
+                    }
+                }
+                
+                float radius = 0.02f;
+                float hx = (w / 2.0f) * P2M - radius;
+                float hy = (h / 2.0f) * P2M - radius;
+                if (hx < 0.01f) hx = 0.01f;
+                if (hy < 0.01f) hy = 0.01f;
+                
+                float cx = lx + (w / 2.0f);
                 float cy = ly + (h / 2.0f);
                 
                 b2Polygon box = b2MakeOffsetBox(hx, hy, {cx * P2M, cy * P2M}, b2MakeRot(0.0f));
+                box.radius = radius;
                 
                 b2ShapeDef shapeDef = b2DefaultShapeDef();
+                shapeDef.material.friction = 0.1f; 
                 
-                // FIX: Box2D 3.x API uses b2CreatePolygonShape
                 b2CreatePolygonShape(bodyId, &shapeDef, &box); 
-                
                 hasFixtures = true;
-                startX = -1;
             }
         }
     }
     
-    if (hasFixtures) chunkBodies[coord] = bodyId;
+    if (hasFixtures) chunkBodies[coord] = {bodyId, currentHash};
     else b2DestroyBody(bodyId);
+}
+void RigidBodySystem::save(std::ostream& out) const {
+    size_t count = bodies.size();
+    out.write(reinterpret_cast<const char*>(&count), sizeof(count));
+    
+    for (const auto& rb : bodies) {
+        b2Transform xf = b2Body_GetTransform(rb->bodyId);
+        b2Vec2 linVel = b2Body_GetLinearVelocity(rb->bodyId);
+        float angVel = b2Body_GetAngularVelocity(rb->bodyId);
+        float angle = std::atan2(xf.q.s, xf.q.c);
+        
+        out.write(reinterpret_cast<const char*>(&xf.p), sizeof(b2Vec2));
+        out.write(reinterpret_cast<const char*>(&angle), sizeof(float));
+        out.write(reinterpret_cast<const char*>(&linVel), sizeof(b2Vec2));
+        out.write(reinterpret_cast<const char*>(&angVel), sizeof(float));
+        
+        out.write(reinterpret_cast<const char*>(&rb->width), sizeof(int));
+        out.write(reinterpret_cast<const char*>(&rb->height), sizeof(int));
+        
+        size_t pCount = rb->particles.size();
+        out.write(reinterpret_cast<const char*>(&pCount), sizeof(pCount));
+        
+        if (pCount > 0) {
+            out.write(reinterpret_cast<const char*>(rb->particles.data()), pCount * sizeof(LocalParticle));
+        }
+    }
+}
+
+void RigidBodySystem::load(std::istream& in) {
+    clearAll();
+    size_t count = 0;
+    in.read(reinterpret_cast<char*>(&count), sizeof(count));
+    
+    for (size_t i = 0; i < count; ++i) {
+        b2Vec2 pos, linVel;
+        float angle, angVel;
+        int w, h;
+        
+        in.read(reinterpret_cast<char*>(&pos), sizeof(b2Vec2));
+        in.read(reinterpret_cast<char*>(&angle), sizeof(float));
+        in.read(reinterpret_cast<char*>(&linVel), sizeof(b2Vec2));
+        in.read(reinterpret_cast<char*>(&angVel), sizeof(float));
+        in.read(reinterpret_cast<char*>(&w), sizeof(int));
+        in.read(reinterpret_cast<char*>(&h), sizeof(int));
+        
+        size_t pCount = 0;
+        in.read(reinterpret_cast<char*>(&pCount), sizeof(pCount));
+        
+        std::vector<LocalParticle> parts(pCount);
+        if (pCount > 0) {
+            in.read(reinterpret_cast<char*>(parts.data()), pCount * sizeof(LocalParticle));
+        }
+        
+        // Reconstruct the Body! This automatically re-builds Box2D fixtures.
+        bodies.push_back(std::make_unique<RigidBody>(worldId, w, h, parts, pos, angle, linVel, angVel));
+    }
+}
+
+void RigidBodySystem::clearAll() {
+    for (auto& rb : bodies) {
+        if (b2Body_IsValid(rb->bodyId)) b2DestroyBody(rb->bodyId);
+    }
+    bodies.clear();
+    
+    for (auto& pair : chunkBodies) {
+        if (b2Body_IsValid(pair.second.bodyId)) b2DestroyBody(pair.second.bodyId);
+    }
+    chunkBodies.clear();
+    orphanedPixels.clear();
 }

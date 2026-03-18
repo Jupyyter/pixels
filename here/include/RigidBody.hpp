@@ -34,6 +34,7 @@ struct DrawnPixel {
 };
 class RigidBody {
 public:
+
     b2BodyId bodyId;
     b2WorldId worldId;
     std::vector<DrawnPixel> drawnPixels;
@@ -46,15 +47,22 @@ public:
     void rebuildFixtures();
     std::vector<std::vector<LocalParticle>> findIslands();
 };
+struct ChunkTerrain {
+    b2BodyId bodyId;
+    uint64_t hash;
+};
 
 class RigidBodySystem {
 private:
 std::vector<DrawnPixel> orphanedPixels; 
     b2WorldId worldId;
     std::vector<std::unique_ptr<RigidBody>> bodies;
-    std::unordered_map<ChunkCoord, b2BodyId, ChunkCoordHash> chunkBodies;
+    std::unordered_map<ChunkCoord, ChunkTerrain, ChunkCoordHash> chunkBodies;
 
 public:
+void save(std::ostream& out) const;
+    void load(std::istream& in);
+    void clearAll();
     RigidBodySystem();
     ~RigidBodySystem();
 

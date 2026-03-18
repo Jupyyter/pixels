@@ -53,7 +53,6 @@ void ExplosiveContainer::spawnWithPayload(int x, int y, MaterialID payload, sf::
 // --- UPDATE LOGIC ---
 
 void ExplosiveContainer::update(const ParticleContext& ctx, float dt, ParticleWorld& world) {
-    // DIRECT MEMORY ACCESS
     if (!ctx.kinematics) return;
     auto* kin = &ctx.kinematics[ctx.index];
 
@@ -97,6 +96,18 @@ void ExplosiveContainer::update(const ParticleContext& ctx, float dt, ParticleWo
         int nextY = static_cast<int>(std::round(currY));
 
         if (!world.inBounds(nextX, nextY)) {
+            // FIX: Ensure it correctly moves to the last valid position before detonating at the world border
+            if (lastValidX != curX || lastValidY != curY) {
+                uint32_t currentIdx = world.computeIndex(curX, curY);
+                MaterialID payload = world.containerPayloads[currentIdx];
+                world.containerPayloads.erase(currentIdx);
+                
+                world.moveParticle(curX, curY, lastValidX, lastValidY);
+                
+                uint32_t newIdx = world.computeIndex(lastValidX, lastValidY);
+                world.containerPayloads[newIdx] = payload;
+                curX = lastValidX; curY = lastValidY;
+            }
             detonate(world.computeIndex(curX, curY), curX, curY, world);
             return;
         }
@@ -107,7 +118,6 @@ void ExplosiveContainer::update(const ParticleContext& ctx, float dt, ParticleWo
             lastValidX = nextX;
             lastValidY = nextY;
         } else {
-            // Revert back to `world.get` since the neighbor could be in an entirely different chunk
             auto* nb = world.get<BaseComponent>(nextX, nextY);
             
             Particle* logic = nb ? MaterialRegistry[static_cast<int>(nb->id)] : nullptr;
