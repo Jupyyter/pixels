@@ -46,9 +46,14 @@ public:
     bool isWeapon = false;
     bool isEquipped = false;
     bool isIndestructible = false;
+    
+    // Glued state properties
+    bool isGlued = false;
+    int startX = 0;
+    int startY = 0;
 
-    RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int startY, MaterialID mat, bool weapon = false);
-    RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalParticle>& parts, b2Vec2 pos, float angle, b2Vec2 linVel, float angVel);
+    RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int startY, MaterialID mat, bool weapon, bool glued);
+    RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalParticle>& parts, b2Vec2 pos, float angle, b2Vec2 linVel, float angVel, bool glued = false, int sX = 0, int sY = 0);
     
     void rebuildFixtures();
     std::vector<std::vector<LocalParticle>> findIslands();
@@ -80,12 +85,15 @@ public:
     ~RigidBodySystem();
 
     void renderDebug(sf::RenderTarget& target) const;
-    void addRigidBodyFromSprite(const sf::Image& img, int x, int y, MaterialID mat);
+    void addRigidBodyFromSprite(const sf::Image& img, int x, int y, MaterialID mat, bool glue, ParticleWorld& world);
     
     // --- WEAPONS SYSTEM ---
     void addWeapon(const sf::Image& img, int x, int y);
     RigidBody* getNearestWeapon(sf::Vector2f pos, float radius);
     void renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2f playerPos);
+    
+    // Glued Body specific outlines (called with showColliders)
+    void renderGluedOutlines(sf::RenderTarget& target, ParticleWorld& world) const;
     
     // Core Pipeline
     void clearFromWorld(ParticleWorld& world);

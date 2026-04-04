@@ -11,7 +11,6 @@
 
 const char MAGIC_HEADER_V2[4] = {'S', 'N', 'D', '2'};
 
-// --- ANONYMOUS NAMESPACE: COMPONENT MOVEMENT HELPERS ---
 namespace {
     inline void moveSameChunkFast(Chunk* c, uint32_t oldIdx, uint32_t newIdx, uint8_t mask) {
         if (mask & COMP_KINEMATICS) c->kinematics[newIdx] = c->kinematics[oldIdx];
@@ -71,8 +70,6 @@ namespace {
     }
 }
 
-// --- CONSTRUCTOR / DESTRUCTOR ---
-
 ParticleWorld::~ParticleWorld() = default;
 
 ParticleWorld::ParticleWorld(unsigned int w, unsigned int h, const std::string &worldFile)
@@ -94,8 +91,6 @@ void ParticleWorld::clear() {
     std::fill(std::begin(cacheCx), std::end(cacheCx), -999999);
     std::fill(std::begin(cacheCy), std::end(cacheCy), -999999);
 }
-
-// --- CHUNK MANAGEMENT (OPTIMIZED) ---
 
 Chunk* ParticleWorld::getChunk(int x, int y) const {
     int cx = x >> 6;
@@ -151,8 +146,6 @@ void ParticleWorld::updateChunkPixel(Chunk *c, uint32_t localIdx, sf::Color colo
 bool ParticleWorld::inBounds(int x, int y) {
     return true; 
 }
-
-// --- PARTICLE LOGIC (CRUD) ---
 
 void ParticleWorld::spawnParticle(MaterialID id, int x, int y) {
     Chunk *c = getOrCreateChunk(x, y);
@@ -216,11 +209,10 @@ void ParticleWorld::moveParticle(int oldX, int oldY, int newX, int newY) {
         updateChunkPixel(oldC, newIdx, oldC->base[newIdx].color);
         updateChunkPixel(oldC, oldIdx, sf::Color::Transparent);
         
-        // Wake the new position AND the old position's immediate neighbors
         wakeParticle(newX, newY);
-        wakeParticle(oldX, oldY - 1); // Wake neighbor above
-        wakeParticle(oldX - 1, oldY); // Wake neighbor left
-        wakeParticle(oldX + 1, oldY); // Wake neighbor right
+        wakeParticle(oldX, oldY - 1); 
+        wakeParticle(oldX - 1, oldY); 
+        wakeParticle(oldX + 1, oldY); 
         return;
     }
 
@@ -290,21 +282,16 @@ void ParticleWorld::swapParticles(int x1, int y1, int x2, int y2) {
     wakeParticle(x1, y1); wakeParticle(x1, y1 - 1);
     wakeParticle(x2, y2); wakeParticle(x2, y2 - 1);
 }
-// --- UPDATE LOOP ---
 
 void ParticleWorld::update(float deltaTime)
 {
-    // --- 1. RIGID BODY PRE-UPDATE ---
     if (rigidBodySystem) {
-        // SYNC FIRST: Catch pixels deleted by the player's eraser brush!
         rigidBodySystem->syncFromWorld(*this);
-        
         rigidBodySystem->clearFromWorld(*this);         
         rigidBodySystem->stepPhysics(deltaTime, *this); 
         rigidBodySystem->rasterizeToWorld(*this);       
     }
 
-    // --- 2. FALLING SAND SIMULATION ---
     frameCounter++;
     bool dir = (frameCounter % 2) == 0;
 
@@ -343,7 +330,6 @@ void ParticleWorld::update(float deltaTime)
 
         if (!simulationBounds.findIntersection(chunkRect)) continue;
         
-        // baseArr is completely safe to cache because it is a fixed array inside the Chunk struct
         BaseComponent* baseArr = chunk->base;
 
         auto processParticle = [&](int lx, int ly) {
@@ -353,8 +339,6 @@ void ParticleWorld::update(float deltaTime)
 
             baseArr[i].flags.hasBeenUpdatedThisFrame = true;
 
-            // FIX: Always fetch pointers fresh using .get(). 
-            // This prevents a dangling pointer crash if an explosion allocated an array mid-loop!
             ParticleContext ctx { 
                 chunk, 
                 i, 
@@ -395,9 +379,7 @@ void ParticleWorld::update(float deltaTime)
         }
     }
 
-    // --- 3. RIGID BODY POST-SYNC ---
     if (rigidBodySystem) {
-        // Did the world burn or destroy some rigid body particles? Sync & Recalculate!
         rigidBodySystem->syncFromWorld(*this);
     }
 }
@@ -408,13 +390,11 @@ void ParticleWorld::wakeParticle(int x, int y) {
     int lx = x & 63; 
     int ly = y & 63;
 
-    // 2. Update the "Active Rect" of the current chunk
     if (lx < c->nextMinX) c->nextMinX = lx;
     if (lx > c->nextMaxX) c->nextMaxX = lx;
     if (ly < c->nextMinY) c->nextMinY = ly;
     if (ly > c->nextMaxY) c->nextMaxY = ly;
 
-    // 3. Wake neighbors correctly by updating both Min and Max checks
     auto wakeNeighbor = [&](int nx, int ny) {
         if (Chunk* nc = getChunk(nx, ny)) {
             int nlx = nx & 63;
@@ -431,13 +411,11 @@ void ParticleWorld::wakeParticle(int x, int y) {
     bool top = (ly == 0);
     bool bottom = (ly == 63);
 
-    // Adjacent
     if (left) wakeNeighbor(x - 1, y);
     if (right) wakeNeighbor(x + 1, y);
     if (top) wakeNeighbor(x, y - 1);
     if (bottom) wakeNeighbor(x, y + 1);
 
-    // Diagonals (Corners)
     if (left && top) wakeNeighbor(x - 1, y - 1);
     if (right && top) wakeNeighbor(x + 1, y - 1);
     if (left && bottom) wakeNeighbor(x - 1, y + 1);
@@ -475,8 +453,6 @@ void ParticleWorld::updateParticleColor(uint32_t localIndex, int x, int y, Chunk
         }
     }
 }
-
-// --- CAMERA & RENDERING ---
 
 void ParticleWorld::setCameraPos(int x, int y) {
     cameraPos = {x, y};
@@ -524,8 +500,6 @@ void ParticleWorld::renderToBuffer() {
 
 void ParticleWorld::updatePixelColor(int x, int y, const sf::Color &color) {}
 
-// --- UTILITIES ---
-
 void ParticleWorld::updateCameraBounds(float centerX, float centerY, float viewWidth, float viewHeight) {
     renderBounds = sf::FloatRect(
         {centerX - viewWidth / 2.0f, centerY - viewHeight / 2.0f},
@@ -564,12 +538,13 @@ void ParticleWorld::eraseCircle(int centerX, int centerY, float radius) {
         }
     }
 }
-// --- FILE IO ---
+
 void ParticleWorld::renderDebugColliders(sf::RenderTarget& target) const {
     if (rigidBodySystem) {
         rigidBodySystem->renderDebug(target);
     }
 }
+
 bool ParticleWorld::saveWorld(const std::string &baseFilename) {
     std::string filename = getNextAvailableFilename("worlds/" + baseFilename);
     std::ofstream file(filename, std::ios::binary);
@@ -589,7 +564,6 @@ bool ParticleWorld::saveWorld(const std::string &baseFilename) {
             file.write(reinterpret_cast<const char*>(&mask), sizeof(mask));
 
             if (mask != 0) {
-                // Using binary block writing. The compMask ensures we ONLY write initialized structs!
                 if (mask & COMP_BASE)       file.write(reinterpret_cast<const char*>(&chunk->base[i]),       sizeof(BaseComponent));
                 if (mask & COMP_KINEMATICS) file.write(reinterpret_cast<const char*>(&chunk->kinematics[i]), sizeof(KinematicsComponent));
                 if (mask & COMP_DURABILITY) file.write(reinterpret_cast<const char*>(&chunk->durability[i]), sizeof(DurabilityComponent));
@@ -599,7 +573,6 @@ bool ParticleWorld::saveWorld(const std::string &baseFilename) {
         }
     }
 
-    // Save Rigid Bodies
     bool hasRBS = rigidBodySystem != nullptr;
     file.write(reinterpret_cast<const char*>(&hasRBS), sizeof(hasRBS));
     if (hasRBS) {
@@ -609,7 +582,6 @@ bool ParticleWorld::saveWorld(const std::string &baseFilename) {
     return true;
 }
 
-// Replace the entirety of loadWorld:
 bool ParticleWorld::loadWorld(const std::string &filename) {
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) return false;
@@ -661,9 +633,6 @@ bool ParticleWorld::loadWorld(const std::string &filename) {
                     file.read(reinterpret_cast<char*>(&c->fluid[idx]), sizeof(FluidComponent));
                 }
 
-                // --- CRITICAL FIX FOR RIGID BODIES ---
-                // If this pixel is part of a RigidBody, delete it from the static sandbox.
-                // The RigidBodySystem will rasterize it onto the map dynamically when we load it later!
                 if ((mask & COMP_BASE) && c->base[idx].flags.isRigidBodyPart) {
                     c->base[idx].compMask = 0; 
                 } else if (mask & COMP_BASE) {
@@ -675,7 +644,6 @@ bool ParticleWorld::loadWorld(const std::string &filename) {
         c->visualDirty = true;
     }
 
-    // Load Rigid Bodies
     bool hasRBS;
     if (file.read(reinterpret_cast<char*>(&hasRBS), sizeof(hasRBS))) {
         if (hasRBS && rigidBodySystem) {
@@ -698,20 +666,19 @@ std::string ParticleWorld::getNextAvailableFilename(const std::string &baseName)
     } while (std::filesystem::exists(f));
     return f;
 }
-void ParticleWorld::addRigidBodyFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat) {
+void ParticleWorld::addRigidBodyFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat, bool glue) {
     if (rigidBodySystem) {
-        rigidBodySystem->addRigidBodyFromSprite(img, startX, startY, mat);
+        rigidBodySystem->addRigidBodyFromSprite(img, startX, startY, mat, glue, *this);
     }
 }
 
-void ParticleWorld::addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, MaterialID mat) {
+void ParticleWorld::addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, MaterialID mat, bool glue) {
     if (!rigidBodySystem) return;
 
     int s = static_cast<int>(sz);
     if (s <= 0) return;
 
     sf::Image img;
-    // Fix: SFML 3 uses resize() and sf::Vector2u
     img.resize(sf::Vector2u(static_cast<unsigned int>(s), static_cast<unsigned int>(s)), sf::Color::Transparent);
     
     sf::Color matColor = Particle::getRandomColor(mat); 
@@ -719,7 +686,6 @@ void ParticleWorld::addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, Ma
     if (sh == RigidBodyShape::Box) {
         for (int y = 0; y < s; ++y) {
             for (int x = 0; x < s; ++x) {
-                // Fix: SFML 3 setPixel requires sf::Vector2u
                 img.setPixel(sf::Vector2u(static_cast<unsigned int>(x), static_cast<unsigned int>(y)), matColor);
             }
         }
@@ -730,17 +696,15 @@ void ParticleWorld::addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, Ma
                 int dx = x - r;
                 int dy = y - r;
                 if (dx * dx + dy * dy <= r * r) {
-                    // Fix: SFML 3 setPixel requires sf::Vector2u
                     img.setPixel(sf::Vector2u(static_cast<unsigned int>(x), static_cast<unsigned int>(y)), matColor);
                 }
             }
         }
     }
     
-    addRigidBodyFromSprite(img, cx, cy, mat);
+    addRigidBodyFromSprite(img, cx, cy, mat, glue);
 }
 
-// --- WEAPON SYSTEM WRAPPERS ---
 void ParticleWorld::addWeapon(const sf::Image& img, int startX, int startY) {
     if (rigidBodySystem) {
         rigidBodySystem->addWeapon(img, startX, startY);

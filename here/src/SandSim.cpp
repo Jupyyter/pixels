@@ -61,7 +61,25 @@ void SandSimApp::run() {
         render();
     }
 }
-
+sf::Image scaleImageNearestNeighbor(const sf::Image& source, float scale) {
+    if (scale == 1.0f) return source; 
+    
+    sf::Vector2u size = source.getSize();
+    unsigned int newW = std::max(1u, static_cast<unsigned int>(size.x * scale));
+    unsigned int newH = std::max(1u, static_cast<unsigned int>(size.y * scale));
+    
+    sf::Image result;
+    result.resize(sf::Vector2u(newW, newH), sf::Color::Transparent);
+    
+    for(unsigned int y = 0; y < newH; ++y) {
+        for(unsigned int x = 0; x < newW; ++x) {
+            unsigned int srcX = std::min(static_cast<unsigned int>(x / scale), size.x - 1);
+            unsigned int srcY = std::min(static_cast<unsigned int>(y / scale), size.y - 1);
+            result.setPixel(sf::Vector2u(x, y), source.getPixel(sf::Vector2u(srcX, srcY)));
+        }
+    }
+    return result;
+}
 void SandSimApp::constrainView() {
     sf::Vector2f viewSize = gameView.getSize();
     sf::Vector2f center = gameView.getCenter();
@@ -151,7 +169,6 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
     else if (const auto* resize = event.getIf<sf::Event::Resized>()) {
         handleResize(resize->size.x, resize->size.y);
     }
-    // --- SINGLE CLICK SPAWNING FOR ENTITIES, RIGID BODIES, & WEAPONS ---
     else if (const auto* mouseBtn = event.getIf<sf::Event::MouseButtonPressed>()) {
         if (mouseBtn->button == sf::Mouse::Button::Left && !isMouseOverUI()) {
             if (ui && world) {
@@ -159,13 +176,16 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
                 sf::Vector2f worldPos = window.mapPixelToCoords(mousePos, gameView);
                 
                 if (ui->getSpawnMode() == SpawnMode::RigidBody) {
-                    world->addRigidBody(
-                        static_cast<int>(worldPos.x), 
-                        static_cast<int>(worldPos.y), 
-                        ui->getSelectionRadius() * 2.0f, 
-                        ui->getRigidBodyShape(), 
-                        ui->getCurrentMaterialID()
-                    );
+                    const sf::Image* srcImg = ui->getSelectedRigidBodyImage();
+                    if (srcImg) {
+                        float scale = ui->getRigidBodyScale();
+                        sf::Image scaled = scaleImageNearestNeighbor(*srcImg, scale);
+                        
+                        int startX = static_cast<int>(worldPos.x) - (scaled.getSize().x / 2);
+                        int startY = static_cast<int>(worldPos.y) - (scaled.getSize().y / 2);
+                        
+                        world->addRigidBodyFromSprite(scaled, startX, startY, ui->getCurrentMaterialID(), ui->getGlueToTerrain());
+                    }
                 } 
                 else if (ui->getSpawnMode() == SpawnMode::Weapon) {
                     sf::Image img;
@@ -233,7 +253,6 @@ void SandSimApp::update() {
             sf::Vector2f size = gameView.getSize();
             world->updateCameraBounds(center.x, center.y, size.x, size.y);
 
-            // Pass the RigidBodySystem to process weapon picking up/dropping
             if (entitySystem) {
                 entitySystem->updateInput(dt.asSeconds(), *world->getRigidBodySystem(), *world);
                 entitySystem->updateProceduralAnimations(dt.asSeconds(), *world);
@@ -264,38 +283,41 @@ void SandSimApp::render() {
             renderer->render(window, *world);
         }
 
-        // --- NEW: RENDER ENTITIES OVER WORLD ---
-        // --- NEW: RENDER ENTITIES AND WEAPONS ---
         if (entitySystem) {
-            // Outline weapons that are unequipped and near the player
             world->getRigidBodySystem()->renderWeaponsOutline(window, entitySystem->getPlayerPos());
             
-            // Draw player, hands, and the equipped weapon
+            // Only draw glued edge outlines if "Show Colliders" debug overlay is active
+            if (ui && ui->getShowColliders()) {
+                world->getRigidBodySystem()->renderGluedOutlines(window, *world);
+            }
+            
             entitySystem->renderEntities(window);
         }
         
         if (!isMouseOverUI() && !isPanning) {
             sf::Vector2f worldPos = window.mapPixelToCoords(sf::Mouse::getPosition(window), gameView);
             
-            if (ui->getSpawnMode() == SpawnMode::RigidBody && ui->getRigidBodyShape() == RigidBodyShape::Box) {
-                float diameter = ui->getSelectionRadius() * 2.0f;
-                sf::RectangleShape brush({diameter, diameter});
-                brush.setOrigin({ui->getSelectionRadius(), ui->getSelectionRadius()});
-                brush.setPosition(worldPos);
-                brush.setFillColor(sf::Color(255, 255, 255, 40));
-                brush.setOutlineColor(sf::Color(255, 255, 255, 180));
-                brush.setOutlineThickness(1.0f / currentZoom);
-                window.draw(brush);
+            if (ui->getSpawnMode() == SpawnMode::RigidBody) {
+                const sf::Texture* ghostTex = ui->getSelectedRigidBodyTexture();
+                if (ghostTex) {
+                    sf::Sprite ghostSprite(*ghostTex);
+                    float scale = ui->getRigidBodyScale();
+                    ghostSprite.setScale({scale, scale});
+                    ghostSprite.setOrigin({ghostTex->getSize().x / 2.0f, ghostTex->getSize().y / 2.0f});
+                    ghostSprite.setPosition(worldPos);
+                    
+                    ghostSprite.setColor(sf::Color(255, 255, 255, 128)); 
+                    window.draw(ghostSprite);
+                }
             } 
-            else if (ui->getSpawnMode() == SpawnMode::Entity) {
-                // simple box indicator for entity spawn
+            else if (ui->getSpawnMode() == SpawnMode::Entity || ui->getSpawnMode() == SpawnMode::Weapon) {
                 sf::RectangleShape brush({8.0f, 16.0f});
                 brush.setOrigin({4.0f, 8.0f});
                 brush.setPosition(worldPos);
                 brush.setFillColor(sf::Color(255, 0, 0, 100));
                 window.draw(brush);
             }
-            else {
+            else { 
                 sf::CircleShape brush(ui->getSelectionRadius());
                 brush.setOrigin({ui->getSelectionRadius(), ui->getSelectionRadius()});
                 brush.setPosition(worldPos);
@@ -317,7 +339,6 @@ void SandSimApp::render() {
 void SandSimApp::startGame(const std::string& worldFile) {
     world = std::make_unique<ParticleWorld>(VIEW_WIDTH, VIEW_HEIGHT, worldFile);
     
-    // Create the Entity System attached to the Sandbox's Box2D world
     entitySystem = std::make_unique<EntitySystem>(world->getRigidBodySystem()->getWorldId());
 
     ui = std::make_unique<UI>(window, world.get());
@@ -331,14 +352,13 @@ void SandSimApp::startGame(const std::string& worldFile) {
 }
 
 void SandSimApp::returnToMenu() {
-    entitySystem.reset(); // Safely destroy EnTT instances BEFORE physics teardown!
+    entitySystem.reset(); 
     world.reset();
     ui.reset();
     currentState = GameState::MENU;
 }
 
 void SandSimApp::handleMouseHeld() {
-    // Prevent continuous spawning for anything other than particles
     if (ui && ui->getSpawnMode() != SpawnMode::Particles) return;
 
     sf::Vector2i mousePos = sf::Mouse::getPosition(window);

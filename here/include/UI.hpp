@@ -1,13 +1,22 @@
 #pragma once
 #include <SFML/Graphics.hpp>
+#include <string>
+#include <vector>
 #include "Constants.hpp"
-#include "RigidBody.hpp" 
 
 class ParticleWorld;
 
-// Added 'Weapon' to Spawn Modes
+// Spawn Modes
 enum class SpawnMode { Particles, RigidBody, Entity, Weapon };
 enum class EntityType { Player };
+
+// Struct to hold loaded rigid body assets
+struct RigidBodyAsset {
+    std::string name;
+    std::string path;
+    sf::Texture texture;
+    sf::Image image;
+};
 
 class UI {
 public:
@@ -22,7 +31,12 @@ public:
 
     SpawnMode getSpawnMode() const { return spawnMode; }
     EntityType getSelectedEntity() const { return currentEntity; }
-    RigidBodyShape getRigidBodyShape() const { return currentShape; }
+    
+    // --- NEW: Rigid Body Getters ---
+    float getRigidBodyScale() const { return rigidBodyScale; }
+    const sf::Image* getSelectedRigidBodyImage() const;
+    const sf::Texture* getSelectedRigidBodyTexture() const;
+    bool getGlueToTerrain() const { return glueToTerrain; }
     
     bool getShowChunkBounds() const { return showChunkBounds; }
     bool getShowColliders() const { return showColliders; }
@@ -36,7 +50,13 @@ private:
     
     SpawnMode spawnMode = SpawnMode::Particles;
     EntityType currentEntity = EntityType::Player;
-    RigidBodyShape currentShape = RigidBodyShape::Box;
     
+    // Rigid Body Asset Management
+    std::vector<RigidBodyAsset> rigidBodyAssets;
+    int selectedRigidBodyIndex = 0;
+    float rigidBodyScale = 1.0f; // 1.0 = 100%
+    bool glueToTerrain = false;
+    
+    void loadRigidBodyAssets();
     void drawMaterialTabs();
 };

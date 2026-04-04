@@ -6,11 +6,14 @@
 
 constexpr float PI = 3.14159265358979323846f;
 
-RigidBody::RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalParticle>& parts, b2Vec2 pos, float angle, b2Vec2 linVel, float angVel) {
+RigidBody::RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalParticle>& parts, b2Vec2 pos, float angle, b2Vec2 linVel, float angVel, bool glued, int sX, int sY) {
     this->worldId = worldId;
     this->width = w;
     this->height = h;
     this->needsFixtureRebuild = false;
+    this->isGlued = glued;
+    this->startX = sX;
+    this->startY = sY;
     
     particles.resize(w * h);
     for (auto& p : particles) p.active = false; 
@@ -19,20 +22,24 @@ RigidBody::RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalPar
         particles[p.localY * w + p.localX] = p;
     }
 
-    b2BodyDef bdef = b2DefaultBodyDef();
-    bdef.type = b2_dynamicBody;
-    bdef.position = pos;
-    
-    bdef.rotation = b2MakeRot(angle);
-    bdef.linearVelocity = linVel;
-    bdef.angularVelocity = angVel;
-    bdef.angularDamping = 2.0f;
-    bdef.linearDamping = 0.2f;
-    bdef.enableSleep = true;
-    bdef.isBullet = true; 
-    bodyId = b2CreateBody(worldId, &bdef);
+    if (isGlued) {
+        bodyId = b2_nullBodyId;
+    } else {
+        b2BodyDef bdef = b2DefaultBodyDef();
+        bdef.type = b2_dynamicBody;
+        bdef.position = pos;
+        
+        bdef.rotation = b2MakeRot(angle);
+        bdef.linearVelocity = linVel;
+        bdef.angularVelocity = angVel;
+        bdef.angularDamping = 2.0f;
+        bdef.linearDamping = 0.2f;
+        bdef.enableSleep = true;
+        bdef.isBullet = true; 
+        bodyId = b2CreateBody(worldId, &bdef);
 
-    rebuildFixtures();
+        rebuildFixtures();
+    }
 }
 
 std::vector<std::vector<LocalParticle>> RigidBody::findIslands() {
@@ -78,14 +85,17 @@ std::vector<std::vector<LocalParticle>> RigidBody::findIslands() {
     return islands;
 }
 
-RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int startY, MaterialID mat, bool weapon) {
+RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int startY, MaterialID mat, bool weapon, bool glued) {
     this->worldId = worldId;
     width = img.getSize().x;
     height = img.getSize().y;
     needsFixtureRebuild = false;
     
     isWeapon = weapon;
-    isIndestructible = weapon; // Weapons bypass voxel erosion so they can't be melted
+    isIndestructible = weapon;
+    this->isGlued = glued;
+    this->startX = startX;
+    this->startY = startY;
 
     particles.resize(width * height);
     for (auto& p : particles) p.active = false;
@@ -112,19 +122,29 @@ RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int st
         }
     }
 
-    b2BodyDef bdef = b2DefaultBodyDef();
-    bdef.type = b2_dynamicBody;
-    bdef.position = {startX * P2M, startY * P2M};
-    bdef.angularDamping = 2.0f; 
-    bdef.linearDamping = 0.2f;  
-    bdef.enableSleep = true;
-    bdef.isBullet = true; 
-    bodyId = b2CreateBody(worldId, &bdef);
+    if (isGlued) {
+        bodyId = b2_nullBodyId;
+    } else {
+        b2BodyDef bdef = b2DefaultBodyDef();
+        bdef.type = b2_dynamicBody;
 
-    rebuildFixtures();
+        float centerX = static_cast<float>(startX) + width / 2.0f;
+        float centerY = static_cast<float>(startY) + height / 2.0f;
+        bdef.position = {centerX * P2M, centerY * P2M};
+
+        bdef.angularDamping = 2.0f; 
+        bdef.linearDamping = 0.2f;  
+        bdef.enableSleep = true;
+        bdef.isBullet = true; 
+        bodyId = b2CreateBody(worldId, &bdef);
+
+        rebuildFixtures();
+    }
 }
 
 void RigidBody::clearFromWorld(ParticleWorld& world) {
+    if (isGlued) return; 
+
     for (auto& dp : drawnPixels) {
         Chunk* c = world.getChunk(dp.wx, dp.wy);
         if (c) {
@@ -142,25 +162,20 @@ void RigidBody::clearFromWorld(ParticleWorld& world) {
 void RigidBody::renderPixelated(sf::RenderTarget& target, sf::Vector2f pos, float angleDeg, bool flipX, sf::Color overrideColor) {
     sf::VertexArray va(sf::PrimitiveType::Triangles);
 
-    // Inverse Rotation (negative angle) for iterating over screen pixels mapped BACK to local texture
     float rad = -angleDeg * PI / 180.0f;
     float cs  = std::cos(rad);
     float sn  = std::sin(rad);
 
-    // Determine the maximum possible radius a pixel could be from the center to form a bounds check
     float radius = std::max(width, height) * 0.7071f + 1.0f;
     int maxD = static_cast<int>(std::ceil(radius));
 
     for (int dy = -maxD; dy <= maxD; ++dy) {
         for (int dx = -maxD; dx <= maxD; ++dx) {
-            // 1. Inverse rotate screen space back to local un-rotated space
             float rx = dx * cs - dy * sn;
             float ry = dx * sn + dy * cs;
 
-            // 2. Inverse scale/flip
             if (flipX) rx = -rx;
 
-            // 3. Translate from center to top-left local coordinates
             int lx = static_cast<int>(std::round(rx + width / 2.0f - 0.5f));
             int ly = static_cast<int>(std::round(ry + height / 2.0f - 0.5f));
 
@@ -232,7 +247,6 @@ void RigidBodySystem::renderDebug(sf::RenderTarget& target) const {
                 target.draw(sfCircle);
                 
             } else if (type == b2_segmentShape) {
-                // Support rendering the new ground segment lines!
                 b2Segment segment = b2Shape_GetSegment(shapes[i]);
                 b2Vec2 p1 = b2TransformPoint(xf, segment.point1);
                 b2Vec2 p2 = b2TransformPoint(xf, segment.point2);
@@ -252,6 +266,8 @@ void RigidBodySystem::renderDebug(sf::RenderTarget& target) const {
 }
 
 void RigidBody::rebuildFixtures() {
+    if (isGlued) return;
+
     int shapeCount = b2Body_GetShapeCount(bodyId);
     if (shapeCount > 0) {
         std::vector<b2ShapeId> shapes(shapeCount);
@@ -325,12 +341,64 @@ RigidBodySystem::~RigidBodySystem() {
     b2DestroyWorld(worldId);
 }
 
-void RigidBodySystem::addRigidBodyFromSprite(const sf::Image& img, int x, int y, MaterialID mat) {
-    bodies.push_back(std::make_unique<RigidBody>(worldId, img, x, y, mat, false));
+void RigidBodySystem::addRigidBodyFromSprite(const sf::Image& img, int x, int y, MaterialID mat, bool glue, ParticleWorld& world) {
+    bool touchesTerrain = false;
+    if (glue) {
+        for (unsigned int ly = 0; ly < img.getSize().y; ++ly) {
+            for (unsigned int lx = 0; lx < img.getSize().x; ++lx) {
+                if (img.getPixel({lx, ly}).a > 0) {
+                    int wx = x + lx;
+                    int wy = y + ly;
+                    for (int dy = -1; dy <= 1; ++dy) {
+                        for (int dx = -1; dx <= 1; ++dx) {
+                            if (std::abs(dx) + std::abs(dy) == 1) {
+                                BaseComponent* b = world.get<BaseComponent>(wx + dx, wy + dy);
+                                if (b && !b->flags.isRigidBodyPart) {
+                                    Particle* logic = MaterialRegistry[static_cast<int>(b->id)];
+                                    if (logic && logic->getGroup() == MaterialGroup::ImmovableSolid) {
+                                        touchesTerrain = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (touchesTerrain) break;
+                    }
+                }
+                if (touchesTerrain) break;
+            }
+        }
+    }
+
+    auto rb = std::make_unique<RigidBody>(worldId, img, x, y, mat, false, touchesTerrain);
+    
+    if (touchesTerrain) {
+        for (int ly = 0; ly < rb->height; ++ly) {
+            for (int lx = 0; lx < rb->width; ++lx) {
+                int localIdx = ly * rb->width + lx;
+                LocalParticle& p = rb->particles[localIdx];
+                if (p.active) {
+                    int wx = x + lx;
+                    int wy = y + ly;
+                    
+                    p.base.flags.isRigidBodyPart = false; 
+                    world.add<BaseComponent>(wx, wy, p.base);
+                    world.add<DurabilityComponent>(wx, wy, p.dur);
+                    world.add<ThermalComponent>(wx, wy, p.therm);
+                    world.setParticleColor(wx, wy, p.base.color);
+                    world.wakeParticle(wx, wy);
+                    
+                    rb->drawnPixels.push_back({wx, wy, localIdx});
+                }
+            }
+        }
+    }
+    
+    bodies.push_back(std::move(rb));
 }
 
 void RigidBodySystem::addWeapon(const sf::Image& img, int x, int y) {
-    bodies.push_back(std::make_unique<RigidBody>(worldId, img, x, y, MaterialID::Sand, true));
+    bodies.push_back(std::make_unique<RigidBody>(worldId, img, x, y, MaterialID::Sand, true, false));
 }
 
 RigidBody* RigidBodySystem::getNearestWeapon(sf::Vector2f pos, float radius) {
@@ -338,7 +406,7 @@ RigidBody* RigidBodySystem::getNearestWeapon(sf::Vector2f pos, float radius) {
     float minDist = radius;
 
     for (auto& rb : bodies) {
-        if (!rb->isWeapon || rb->isEquipped) continue;
+        if (!rb->isWeapon || rb->isEquipped || rb->isGlued) continue;
         
         b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
         float dist = std::hypot(bp.x * M2P - pos.x, bp.y * M2P - pos.y);
@@ -353,17 +421,15 @@ RigidBody* RigidBodySystem::getNearestWeapon(sf::Vector2f pos, float radius) {
 
 void RigidBodySystem::renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2f playerPos) {
     for (auto& rb : bodies) {
-        if (!rb->isWeapon || rb->isEquipped) continue;
+        if (!rb->isWeapon || rb->isEquipped || rb->isGlued) continue;
         
         b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
         sf::Vector2f wp(bp.x * M2P, bp.y * M2P);
         
-        // Draw outline if player is close enough to pick it up
         if (std::hypot(wp.x - playerPos.x, wp.y - playerPos.y) < 40.0f) {
             b2Transform xf = b2Body_GetTransform(rb->bodyId);
             float ang = std::atan2(xf.q.s, xf.q.c) * 180.f / PI;
             
-            // Render 4 times slightly shifted to create a pixel-perfect outline effect
             rb->renderPixelated(target, wp + sf::Vector2f( 1,  0), ang, false, sf::Color::Red);
             rb->renderPixelated(target, wp + sf::Vector2f(-1,  0), ang, false, sf::Color::Red);
             rb->renderPixelated(target, wp + sf::Vector2f( 0,  1), ang, false, sf::Color::Red);
@@ -372,6 +438,60 @@ void RigidBodySystem::renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2
     }
 }
 
+
+void RigidBodySystem::renderGluedOutlines(sf::RenderTarget& target, ParticleWorld& world) const {
+    sf::VertexArray va(sf::PrimitiveType::Lines);
+    
+    for (auto& rb : bodies) {
+        if (!rb->isGlued) continue;
+
+        int dirs[4][2] = {{1,0}, {-1,0}, {0,1}, {0,-1}};
+        for (const auto& dp : rb->drawnPixels) {
+            if (!rb->particles[dp.localIdx].active) continue;
+            
+            bool isConnection = false;
+            for (int d = 0; d < 4; ++d) {
+                int nx = dp.wx + dirs[d][0];
+                int ny = dp.wy + dirs[d][1];
+                
+                bool inBody = false;
+                int nlx = nx - rb->startX;
+                int nly = ny - rb->startY;
+                if (nlx >= 0 && nlx < rb->width && nly >= 0 && nly < rb->height) {
+                    if (rb->particles[nly * rb->width + nlx].active) inBody = true;
+                }
+                
+                if (!inBody) {
+                    BaseComponent* b = world.get<BaseComponent>(nx, ny);
+                    if (b && !b->flags.isRigidBodyPart) {
+                        Particle* logic = MaterialRegistry[static_cast<int>(b->id)];
+                        if (logic && logic->getGroup() == MaterialGroup::ImmovableSolid) {
+                            isConnection = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (isConnection) {
+                sf::Color col = sf::Color::Cyan;
+                sf::Vector2f tl(dp.wx, dp.wy);
+                sf::Vector2f tr(dp.wx + 1.0f, dp.wy);
+                sf::Vector2f br(dp.wx + 1.0f, dp.wy + 1.0f);
+                sf::Vector2f bl(dp.wx, dp.wy + 1.0f);
+
+                va.append(sf::Vertex{tl, col}); va.append(sf::Vertex{tr, col});
+                va.append(sf::Vertex{tr, col}); va.append(sf::Vertex{br, col});
+                va.append(sf::Vertex{br, col}); va.append(sf::Vertex{bl, col});
+                va.append(sf::Vertex{bl, col}); va.append(sf::Vertex{tl, col});
+            }
+        }
+    }
+    
+    if (va.getVertexCount() > 0) {
+        target.draw(va);
+    }
+}
 void RigidBodySystem::clearFromWorld(ParticleWorld& world) {
     for (auto& rb : bodies) {
         rb->clearFromWorld(world);
@@ -395,7 +515,7 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
     std::unordered_set<ChunkCoord, ChunkCoordHash> overlappingChunks;
     
     for (auto& rb : bodies) {
-        if (rb->isEquipped) continue; // Skip physical calculation if carried by a player
+        if (rb->isEquipped || rb->isGlued) continue;
 
         b2Transform transform = b2Body_GetTransform(rb->bodyId);
         float radiusM = std::max(rb->width, rb->height) * P2M * 0.707f + 2.0f; 
@@ -445,7 +565,6 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
 }
 
 void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
-    
     auto isBlocking = [&](int x, int y) {
         BaseComponent* base = world.get<BaseComponent>(x, y);
         if (!base || base->compMask == 0 || base->flags.isRigidBodyPart) return false;
@@ -454,14 +573,11 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
     };
 
     for (auto& rb : bodies) {
-        if (rb->isEquipped) continue; // Don't put pixels on the map if carried
+        if (rb->isEquipped || rb->isGlued) continue;
 
         rb->drawnPixels.clear();
         
         b2Transform transform = b2Body_GetTransform(rb->bodyId);
-        b2Vec2 b2vel = b2Body_GetLinearVelocity(rb->bodyId);
-        float velX = b2vel.x * M2P;
-        float velY = b2vel.y * M2P;
         
         float radiusP = std::max(rb->width, rb->height) * 0.7071f + 1.0f; 
         
@@ -506,7 +622,6 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
                                     MaterialGroup group = logic->getGroup();
                                     
                                     if (group == MaterialGroup::Liquid || group == MaterialGroup::MovableSolid || group == MaterialGroup::Gas) {
-                                        
                                         if (group == MaterialGroup::Liquid) waterOverlap++;
                                         else if (group == MaterialGroup::MovableSolid) sandOverlap++;
 
@@ -584,9 +699,9 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
             }
         }
         
-        float totalPixels = rb->width * rb->height;
-        float waterRatio = std::min((float)waterOverlap / totalPixels, 1.0f);
-        float sandRatio = std::min((float)sandOverlap / totalPixels, 1.0f);
+        float totalPixels = static_cast<float>(rb->width * rb->height);
+        float waterRatio = (totalPixels > 0) ? std::min(static_cast<float>(waterOverlap) / totalPixels, 1.0f) : 0.0f;
+        float sandRatio = (totalPixels > 0) ? std::min(static_cast<float>(sandOverlap) / totalPixels, 1.0f) : 0.0f;
         
         float linearDrag = 0.2f;   
         float angularDrag = 2.0f;  
@@ -616,7 +731,7 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
         RigidBody* rb = it->get();
         if (rb->isEquipped) {
             ++it;
-            continue; // Skip synchronizing destruction if it's currently held
+            continue;
         }
 
         bool needsRebuild = false;
@@ -628,7 +743,7 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
             Chunk* c = world.getChunk(dp.wx, dp.wy);
             if (c) {
                 uint32_t idx = world.computeLocalIndex(dp.wx, dp.wy);
-                if (c->base[idx].compMask == 0 || !c->base[idx].flags.isRigidBodyPart) {
+                if (c->base[idx].compMask == 0 || c->base[idx].flags.isRigidBodyPart == rb->isGlued) {
                     if (!rb->isIndestructible) {
                         p.active = false;
                         needsRebuild = true;
@@ -645,25 +760,85 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
                 }
             }
         }
+
+        if (rb->isGlued && !needsRebuild) {
+            bool stillAttached = false;
+            int dirs[4][2] = {{1,0}, {-1,0}, {0,1}, {0,-1}};
+            for (auto& dp : rb->drawnPixels) {
+                if (!rb->particles[dp.localIdx].active) continue;
+                for (int d = 0; d < 4; ++d) {
+                    int nx = dp.wx + dirs[d][0];
+                    int ny = dp.wy + dirs[d][1];
+                    
+                    bool inBody = false;
+                    int nlx = nx - rb->startX;
+                    int nly = ny - rb->startY;
+                    if (nlx >= 0 && nlx < rb->width && nly >= 0 && nly < rb->height) {
+                        if (rb->particles[nly * rb->width + nlx].active) inBody = true;
+                    }
+                    
+                    if (!inBody) {
+                        BaseComponent* b = world.get<BaseComponent>(nx, ny);
+                        if (b && !b->flags.isRigidBodyPart) {
+                            Particle* logic = MaterialRegistry[static_cast<int>(b->id)];
+                            if (logic && logic->getGroup() == MaterialGroup::ImmovableSolid) {
+                                stillAttached = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (stillAttached) break;
+            }
+            if (!stillAttached) needsRebuild = true;
+        }
         
         if (needsRebuild) {
             std::vector<std::vector<LocalParticle>> islands = rb->findIslands();
             
             if (islands.empty()) {
-                orphanedPixels.insert(orphanedPixels.end(), rb->drawnPixels.begin(), rb->drawnPixels.end());
-                b2DestroyBody(rb->bodyId);
+                if (!rb->isGlued) orphanedPixels.insert(orphanedPixels.end(), rb->drawnPixels.begin(), rb->drawnPixels.end());
+                if (b2Body_IsValid(rb->bodyId)) b2DestroyBody(rb->bodyId);
                 it = bodies.erase(it);
                 continue;
-            } else if (islands.size() == 1) {
+            } else if (islands.size() == 1 && !rb->isGlued) {
                 rb->rebuildFixtures();
             } else {
-                orphanedPixels.insert(orphanedPixels.end(), rb->drawnPixels.begin(), rb->drawnPixels.end());
-                
-                b2Transform xf = b2Body_GetTransform(rb->bodyId);
-                b2Vec2 linVel = b2Body_GetLinearVelocity(rb->bodyId);
-                float angVel = b2Body_GetAngularVelocity(rb->bodyId);
+                if (!rb->isGlued) orphanedPixels.insert(orphanedPixels.end(), rb->drawnPixels.begin(), rb->drawnPixels.end());
                 
                 for (const auto& island : islands) {
+                    bool islandGlued = false;
+                    if (rb->isGlued) {
+                        int dirs[4][2] = {{1,0}, {-1,0}, {0,1}, {0,-1}};
+                        for (const auto& p : island) {
+                            int wx = rb->startX + p.localX;
+                            int wy = rb->startY + p.localY;
+                            for (int d = 0; d < 4; ++d) {
+                                int nx = wx + dirs[d][0];
+                                int ny = wy + dirs[d][1];
+                                
+                                bool inBody = false;
+                                int nlx = nx - rb->startX;
+                                int nly = ny - rb->startY;
+                                if (nlx >= 0 && nlx < rb->width && nly >= 0 && nly < rb->height) {
+                                    if (rb->particles[nly * rb->width + nlx].active) inBody = true;
+                                }
+                                
+                                if (!inBody) {
+                                    BaseComponent* b = world.get<BaseComponent>(nx, ny);
+                                    if (b && !b->flags.isRigidBodyPart) {
+                                        Particle* logic = MaterialRegistry[static_cast<int>(b->id)];
+                                        if (logic && logic->getGroup() == MaterialGroup::ImmovableSolid) {
+                                            islandGlued = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            if (islandGlued) break;
+                        }
+                    }
+                    
                     int minX = rb->width, maxX = 0;
                     int minY = rb->height, maxY = 0;
                     for (const auto& p : island) {
@@ -682,29 +857,72 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
                         p.localY -= minY;
                     }
                     
-                    float dx_m = ((float)minX + newW / 2.0f - rb->width / 2.0f) * P2M;
-                    float dy_m = ((float)minY + newH / 2.0f - rb->height / 2.0f) * P2M;
-                    
-                    float cs = xf.q.c;
-                    float sn = xf.q.s;
-                    float ox_world = dx_m * cs - dy_m * sn;
-                    float oy_world = dx_m * sn + dy_m * cs;
-                    
-                    b2Vec2 newPos = { xf.p.x + ox_world, xf.p.y + oy_world };
-                    
-                    b2Vec2 newLinVel = {
-                        linVel.x - angVel * oy_world,
-                        linVel.y + angVel * ox_world
-                    };
-                    
-                    float currentAngle = std::atan2(xf.q.s, xf.q.c);
-                    
-                    newBodies.push_back(std::make_unique<RigidBody>(
-                        worldId, newW, newH, newParts, newPos, currentAngle, newLinVel, angVel
-                    ));
+                    if (islandGlued) {
+                        auto newBody = std::make_unique<RigidBody>(worldId, newW, newH, newParts, b2Vec2({0,0}), 0.0f, b2Vec2({0,0}), 0.0f, true, rb->startX + minX, rb->startY + minY);
+                        newBody->isWeapon = rb->isWeapon;
+                        newBody->isIndestructible = rb->isIndestructible;
+                        for (auto& p : newBody->particles) {
+                            if (p.active) {
+                                newBody->drawnPixels.push_back({newBody->startX + p.localX, newBody->startY + p.localY, p.localY * newW + p.localX});
+                            }
+                        }
+                        newBodies.push_back(std::move(newBody));
+                    } else {
+                        if (rb->isGlued) {
+                            for (const auto& p : island) {
+                                int wx = rb->startX + p.localX;
+                                int wy = rb->startY + p.localY;
+                                Chunk* c = world.getChunk(wx, wy);
+                                if (c) {
+                                    uint32_t idx = world.computeLocalIndex(wx, wy);
+                                    if (c->base[idx].compMask != 0 && c->base[idx].flags.isRigidBodyPart == false) {
+                                        c->base[idx].compMask = 0;
+                                        world.updateChunkPixel(c, idx, sf::Color::Transparent);
+                                        world.wakeParticle(wx, wy);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        b2Vec2 newPos, newLinVel;
+                        float currentAngle, angVel;
+                        
+                        if (rb->isGlued) {
+                            float cx = rb->startX + minX + newW / 2.0f;
+                            float cy = rb->startY + minY + newH / 2.0f;
+                            newPos = { cx * P2M, cy * P2M };
+                            newLinVel = {0, 0};
+                            currentAngle = 0;
+                            angVel = 0;
+                        } else {
+                            b2Transform xf = b2Body_GetTransform(rb->bodyId);
+                            b2Vec2 linVel = b2Body_GetLinearVelocity(rb->bodyId);
+                            angVel = b2Body_GetAngularVelocity(rb->bodyId);
+                            currentAngle = std::atan2(xf.q.s, xf.q.c);
+                            
+                            float dx_m = ((float)minX + newW / 2.0f - rb->width / 2.0f) * P2M;
+                            float dy_m = ((float)minY + newH / 2.0f - rb->height / 2.0f) * P2M;
+                            
+                            float cs = xf.q.c;
+                            float sn = xf.q.s;
+                            float ox_world = dx_m * cs - dy_m * sn;
+                            float oy_world = dx_m * sn + dy_m * cs;
+                            
+                            newPos = { xf.p.x + ox_world, xf.p.y + oy_world };
+                            newLinVel = {
+                                linVel.x - angVel * oy_world,
+                                linVel.y + angVel * ox_world
+                            };
+                        }
+                        
+                        auto newBody = std::make_unique<RigidBody>(worldId, newW, newH, newParts, newPos, currentAngle, newLinVel, angVel, false, 0, 0);
+                        newBody->isWeapon = rb->isWeapon;
+                        newBody->isIndestructible = rb->isIndestructible;
+                        newBodies.push_back(std::move(newBody));
+                    }
                 }
                 
-                b2DestroyBody(rb->bodyId);
+                if (b2Body_IsValid(rb->bodyId)) b2DestroyBody(rb->bodyId);
                 it = bodies.erase(it);
                 continue; 
             }
@@ -717,7 +935,6 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
     }
 }
 
-// --- HELPER MATH FOR SIMPLIFICATION ---
 namespace {
     struct IntPoint {
         int x, y;
@@ -773,7 +990,6 @@ namespace {
         return result;
     }
 }
-// ----------------------------------------
 
 void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, ParticleWorld& world) {
     uint64_t currentHash = 0;
@@ -912,18 +1128,31 @@ void RigidBodySystem::save(std::ostream& out) const {
     out.write(reinterpret_cast<const char*>(&count), sizeof(count));
     
     for (const auto& rb : bodies) {
-        b2Transform xf = b2Body_GetTransform(rb->bodyId);
-        b2Vec2 linVel = b2Body_GetLinearVelocity(rb->bodyId);
-        float angVel = b2Body_GetAngularVelocity(rb->bodyId);
-        float angle = std::atan2(xf.q.s, xf.q.c);
+        b2Vec2 p = {0,0};
+        b2Vec2 linVel = {0,0};
+        float angVel = 0;
+        float angle = 0;
         
-        out.write(reinterpret_cast<const char*>(&xf.p), sizeof(b2Vec2));
+        if (!rb->isGlued) {
+            b2Transform xf = b2Body_GetTransform(rb->bodyId);
+            linVel = b2Body_GetLinearVelocity(rb->bodyId);
+            angVel = b2Body_GetAngularVelocity(rb->bodyId);
+            angle = std::atan2(xf.q.s, xf.q.c);
+            p = xf.p;
+        }
+
+        out.write(reinterpret_cast<const char*>(&p), sizeof(b2Vec2));
         out.write(reinterpret_cast<const char*>(&angle), sizeof(float));
         out.write(reinterpret_cast<const char*>(&linVel), sizeof(b2Vec2));
         out.write(reinterpret_cast<const char*>(&angVel), sizeof(float));
         
         out.write(reinterpret_cast<const char*>(&rb->width), sizeof(int));
         out.write(reinterpret_cast<const char*>(&rb->height), sizeof(int));
+        out.write(reinterpret_cast<const char*>(&rb->isWeapon), sizeof(bool));
+        
+        out.write(reinterpret_cast<const char*>(&rb->isGlued), sizeof(bool));
+        out.write(reinterpret_cast<const char*>(&rb->startX), sizeof(int));
+        out.write(reinterpret_cast<const char*>(&rb->startY), sizeof(int));
         
         size_t pCount = rb->particles.size();
         out.write(reinterpret_cast<const char*>(&pCount), sizeof(pCount));
@@ -943,6 +1172,7 @@ void RigidBodySystem::load(std::istream& in) {
         b2Vec2 pos, linVel;
         float angle, angVel;
         int w, h;
+        bool isWeapon = false;
         
         in.read(reinterpret_cast<char*>(&pos), sizeof(b2Vec2));
         in.read(reinterpret_cast<char*>(&angle), sizeof(float));
@@ -950,6 +1180,17 @@ void RigidBodySystem::load(std::istream& in) {
         in.read(reinterpret_cast<char*>(&angVel), sizeof(float));
         in.read(reinterpret_cast<char*>(&w), sizeof(int));
         in.read(reinterpret_cast<char*>(&h), sizeof(int));
+        
+        if (!in.read(reinterpret_cast<char*>(&isWeapon), sizeof(bool))) {
+            isWeapon = false; 
+        }
+
+        bool isGlued = false;
+        int sX = 0, sY = 0;
+        if (in.read(reinterpret_cast<char*>(&isGlued), sizeof(bool))) {
+            in.read(reinterpret_cast<char*>(&sX), sizeof(int));
+            in.read(reinterpret_cast<char*>(&sY), sizeof(int));
+        }
         
         size_t pCount = 0;
         in.read(reinterpret_cast<char*>(&pCount), sizeof(pCount));
@@ -959,7 +1200,19 @@ void RigidBodySystem::load(std::istream& in) {
             in.read(reinterpret_cast<char*>(parts.data()), pCount * sizeof(LocalParticle));
         }
         
-        bodies.push_back(std::make_unique<RigidBody>(worldId, w, h, parts, pos, angle, linVel, angVel));
+        auto newBody = std::make_unique<RigidBody>(worldId, w, h, parts, pos, angle, linVel, angVel, isGlued, sX, sY);
+        newBody->isWeapon = isWeapon;
+        newBody->isIndestructible = isWeapon;
+        
+        if (isGlued) {
+            for (auto& p : newBody->particles) {
+                if (p.active) {
+                    newBody->drawnPixels.push_back({sX + p.localX, sY + p.localY, p.localY * w + p.localX});
+                }
+            }
+        }
+
+        bodies.push_back(std::move(newBody));
     }
 }
 

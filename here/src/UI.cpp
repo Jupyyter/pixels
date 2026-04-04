@@ -2,8 +2,49 @@
 #include "ParticleWorld.hpp"
 #include <imgui.h>
 #include <imgui-SFML.h>
+#include <filesystem>
+#include <iostream>
 
-UI::UI(sf::RenderWindow& window, ParticleWorld* worldPtr) : world(worldPtr) {}
+UI::UI(sf::RenderWindow& window, ParticleWorld* worldPtr) : world(worldPtr) {
+    loadRigidBodyAssets();
+}
+
+void UI::loadRigidBodyAssets() {
+    std::string folderPath = "assets/images/rigidBodies";
+    
+    if (!std::filesystem::exists(folderPath)) {
+        std::filesystem::create_directories(folderPath);
+    }
+
+    for (const auto& entry : std::filesystem::directory_iterator(folderPath)) {
+        if (entry.is_regular_file()) {
+            std::string path = entry.path().string();
+            std::string ext = entry.path().extension().string();
+            
+            if (ext == ".png" || ext == ".jpg" || ext == ".bmp") {
+                RigidBodyAsset asset;
+                asset.name = entry.path().stem().string();
+                asset.path = path;
+                
+                if (asset.image.loadFromFile(path)) {
+                    if (asset.texture.loadFromImage(asset.image)) {
+                        rigidBodyAssets.push_back(std::move(asset));
+                    }
+                }
+            }
+        }
+    }
+}
+
+const sf::Image* UI::getSelectedRigidBodyImage() const {
+    if (rigidBodyAssets.empty() || selectedRigidBodyIndex < 0 || selectedRigidBodyIndex >= rigidBodyAssets.size()) return nullptr;
+    return &rigidBodyAssets[selectedRigidBodyIndex].image;
+}
+
+const sf::Texture* UI::getSelectedRigidBodyTexture() const {
+    if (rigidBodyAssets.empty() || selectedRigidBodyIndex < 0 || selectedRigidBodyIndex >= rigidBodyAssets.size()) return nullptr;
+    return &rigidBodyAssets[selectedRigidBodyIndex].texture;
+}
 
 void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, float frameTime) {
     ImGui::Begin("Simulation Control");
@@ -12,25 +53,49 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
     ImGui::Checkbox("Simulation Running", &simRunning);
     ImGui::Separator();
 
-    // --- SPAWN MODE SELECTOR ---
     ImGui::Text("Spawn Mode");
     int mode = static_cast<int>(spawnMode);
     ImGui::RadioButton("Brush (Particles)", &mode, static_cast<int>(SpawnMode::Particles));
     ImGui::RadioButton("Rigid Body", &mode, static_cast<int>(SpawnMode::RigidBody));
     ImGui::RadioButton("Entity", &mode, static_cast<int>(SpawnMode::Entity));
-    ImGui::RadioButton("Weapon", &mode, static_cast<int>(SpawnMode::Weapon)); // New weapon mode
+    ImGui::RadioButton("Weapon", &mode, static_cast<int>(SpawnMode::Weapon)); 
     spawnMode = static_cast<SpawnMode>(mode);
     
     ImGui::Separator();
 
-    // Mode specific options
     if (spawnMode == SpawnMode::RigidBody) {
-        ImGui::Text("Rigid Body Settings");
-        int shape = static_cast<int>(currentShape);
-        ImGui::RadioButton("Box", &shape, static_cast<int>(RigidBodyShape::Box)); ImGui::SameLine();
-        ImGui::RadioButton("Circle", &shape, static_cast<int>(RigidBodyShape::Circle));
-        currentShape = static_cast<RigidBodyShape>(shape);
-        ImGui::SliderFloat("Size", &selectionRadius, MIN_SELECTION_RADIUS, MAX_SELECTION_RADIUS);
+        ImGui::Text("Rigid Body Assets");
+        ImGui::SliderFloat("Scale (%)", &rigidBodyScale, 0.1f, 5.0f, "%.2fx");
+        ImGui::Checkbox("Glue to Terrain", &glueToTerrain);
+        
+        if (rigidBodyAssets.empty()) {
+            ImGui::TextColored(ImVec4(1, 0, 0, 1), "No images found in:");
+            ImGui::TextWrapped("assets/images/rigidBodies/");
+        } else {
+            int columns = std::max(1, static_cast<int>(ImGui::GetWindowWidth() / 80.0f));
+            if (ImGui::BeginTable("##rbgrid", columns)) {
+                for (size_t i = 0; i < rigidBodyAssets.size(); ++i) {
+                    ImGui::TableNextColumn();
+                    bool selected = (selectedRigidBodyIndex == i);
+                    
+                    if (selected) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.8f, 0.0f, 0.5f)); 
+                    }
+                    
+                    std::string btnId = "##rb" + std::to_string(i);
+                    if (ImGui::ImageButton(btnId.c_str(), rigidBodyAssets[i].texture, sf::Vector2f(60, 60))) {
+                        selectedRigidBodyIndex = i;
+                    }
+                    
+                    if (selected) {
+                        ImGui::PopStyleColor();
+                    }
+                    
+                    ImGui::TextWrapped("%s", rigidBodyAssets[i].name.c_str());
+                }
+                ImGui::EndTable();
+            }
+        }
     } 
     else if (spawnMode == SpawnMode::Entity) {
         ImGui::Text("Entity Spawner");
