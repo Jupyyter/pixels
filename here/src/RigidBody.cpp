@@ -1,6 +1,11 @@
 #include "RigidBody.hpp"
 #include <cmath>
 #include <unordered_set>
+#include <unordered_map>
+#include <vector>
+
+constexpr float PI = 3.14159265358979323846f;
+
 RigidBody::RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalParticle>& parts, b2Vec2 pos, float angle, b2Vec2 linVel, float angVel) {
     this->worldId = worldId;
     this->width = w;
@@ -73,11 +78,14 @@ std::vector<std::vector<LocalParticle>> RigidBody::findIslands() {
     return islands;
 }
 
-RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int startY, MaterialID mat) {
+RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int startY, MaterialID mat, bool weapon) {
     this->worldId = worldId;
     width = img.getSize().x;
     height = img.getSize().y;
     needsFixtureRebuild = false;
+    
+    isWeapon = weapon;
+    isIndestructible = weapon; // Weapons bypass voxel erosion so they can't be melted
 
     particles.resize(width * height);
     for (auto& p : particles) p.active = false;
@@ -89,6 +97,8 @@ RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int st
                 LocalParticle p;
                 p.localX = x;
                 p.localY = y;
+                p.lastWorldX = 0;
+                p.lastWorldY = 0;
                 p.active = true;
                 
                 p.base = BaseComponent(mat, col, ParticleFlags());
@@ -112,6 +122,69 @@ RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int st
     bodyId = b2CreateBody(worldId, &bdef);
 
     rebuildFixtures();
+}
+
+void RigidBody::clearFromWorld(ParticleWorld& world) {
+    for (auto& dp : drawnPixels) {
+        Chunk* c = world.getChunk(dp.wx, dp.wy);
+        if (c) {
+            uint32_t idx = world.computeLocalIndex(dp.wx, dp.wy);
+            if (c->base[idx].compMask != 0 && c->base[idx].flags.isRigidBodyPart) {
+                c->base[idx].compMask = 0; 
+                world.updateChunkPixel(c, idx, sf::Color::Transparent);
+                world.wakeParticle(dp.wx, dp.wy);
+            }
+        }
+    }
+    drawnPixels.clear();
+}
+
+void RigidBody::renderPixelated(sf::RenderTarget& target, sf::Vector2f pos, float angleDeg, bool flipX, sf::Color overrideColor) {
+    sf::VertexArray va(sf::PrimitiveType::Triangles);
+
+    // Inverse Rotation (negative angle) for iterating over screen pixels mapped BACK to local texture
+    float rad = -angleDeg * PI / 180.0f;
+    float cs  = std::cos(rad);
+    float sn  = std::sin(rad);
+
+    // Determine the maximum possible radius a pixel could be from the center to form a bounds check
+    float radius = std::max(width, height) * 0.7071f + 1.0f;
+    int maxD = static_cast<int>(std::ceil(radius));
+
+    for (int dy = -maxD; dy <= maxD; ++dy) {
+        for (int dx = -maxD; dx <= maxD; ++dx) {
+            // 1. Inverse rotate screen space back to local un-rotated space
+            float rx = dx * cs - dy * sn;
+            float ry = dx * sn + dy * cs;
+
+            // 2. Inverse scale/flip
+            if (flipX) rx = -rx;
+
+            // 3. Translate from center to top-left local coordinates
+            int lx = static_cast<int>(std::round(rx + width / 2.0f - 0.5f));
+            int ly = static_cast<int>(std::round(ry + height / 2.0f - 0.5f));
+
+            if (lx >= 0 && lx < width && ly >= 0 && ly < height) {
+                const auto& p = particles[ly * width + lx];
+                if (p.active) {
+                    float px = pos.x + dx;
+                    float py = pos.y + dy;
+
+                    sf::Color col = (overrideColor == sf::Color::Transparent) ? p.base.color : overrideColor;
+
+                    sf::Vector2f tl(px, py);
+                    sf::Vector2f tr(px + 1.0f, py);
+                    sf::Vector2f br(px + 1.0f, py + 1.0f);
+                    sf::Vector2f bl(px, py + 1.0f);
+
+                    va.append(sf::Vertex{tl, col}); va.append(sf::Vertex{tr, col}); va.append(sf::Vertex{br, col});
+                    va.append(sf::Vertex{tl, col}); va.append(sf::Vertex{br, col}); va.append(sf::Vertex{bl, col});
+                }
+            }
+        }
+    }
+    
+    if (va.getVertexCount() > 0) target.draw(va);
 }
 
 void RigidBodySystem::renderDebug(sf::RenderTarget& target) const {
@@ -157,6 +230,19 @@ void RigidBodySystem::renderDebug(sf::RenderTarget& target) const {
                 sfCircle.setOutlineColor(color);
                 sfCircle.setOutlineThickness(thickness);
                 target.draw(sfCircle);
+                
+            } else if (type == b2_segmentShape) {
+                // Support rendering the new ground segment lines!
+                b2Segment segment = b2Shape_GetSegment(shapes[i]);
+                b2Vec2 p1 = b2TransformPoint(xf, segment.point1);
+                b2Vec2 p2 = b2TransformPoint(xf, segment.point2);
+                
+                sf::Vertex line[2];
+                line[0].position = sf::Vector2f(p1.x * M2P, p1.y * M2P);
+                line[0].color = color;
+                line[1].position = sf::Vector2f(p2.x * M2P, p2.y * M2P);
+                line[1].color = color;
+                target.draw(line, 2, sf::PrimitiveType::Lines);
             }
         }
     };
@@ -240,23 +326,55 @@ RigidBodySystem::~RigidBodySystem() {
 }
 
 void RigidBodySystem::addRigidBodyFromSprite(const sf::Image& img, int x, int y, MaterialID mat) {
-    bodies.push_back(std::make_unique<RigidBody>(worldId, img, x, y, mat));
+    bodies.push_back(std::make_unique<RigidBody>(worldId, img, x, y, mat, false));
+}
+
+void RigidBodySystem::addWeapon(const sf::Image& img, int x, int y) {
+    bodies.push_back(std::make_unique<RigidBody>(worldId, img, x, y, MaterialID::Sand, true));
+}
+
+RigidBody* RigidBodySystem::getNearestWeapon(sf::Vector2f pos, float radius) {
+    RigidBody* nearest = nullptr;
+    float minDist = radius;
+
+    for (auto& rb : bodies) {
+        if (!rb->isWeapon || rb->isEquipped) continue;
+        
+        b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
+        float dist = std::hypot(bp.x * M2P - pos.x, bp.y * M2P - pos.y);
+        
+        if (dist < minDist) {
+            minDist = dist;
+            nearest = rb.get();
+        }
+    }
+    return nearest;
+}
+
+void RigidBodySystem::renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2f playerPos) {
+    for (auto& rb : bodies) {
+        if (!rb->isWeapon || rb->isEquipped) continue;
+        
+        b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
+        sf::Vector2f wp(bp.x * M2P, bp.y * M2P);
+        
+        // Draw outline if player is close enough to pick it up
+        if (std::hypot(wp.x - playerPos.x, wp.y - playerPos.y) < 40.0f) {
+            b2Transform xf = b2Body_GetTransform(rb->bodyId);
+            float ang = std::atan2(xf.q.s, xf.q.c) * 180.f / PI;
+            
+            // Render 4 times slightly shifted to create a pixel-perfect outline effect
+            rb->renderPixelated(target, wp + sf::Vector2f( 1,  0), ang, false, sf::Color::Red);
+            rb->renderPixelated(target, wp + sf::Vector2f(-1,  0), ang, false, sf::Color::Red);
+            rb->renderPixelated(target, wp + sf::Vector2f( 0,  1), ang, false, sf::Color::Red);
+            rb->renderPixelated(target, wp + sf::Vector2f( 0, -1), ang, false, sf::Color::Red);
+        }
+    }
 }
 
 void RigidBodySystem::clearFromWorld(ParticleWorld& world) {
     for (auto& rb : bodies) {
-        for (auto& dp : rb->drawnPixels) {
-            Chunk* c = world.getChunk(dp.wx, dp.wy);
-            if (c) {
-                uint32_t idx = world.computeLocalIndex(dp.wx, dp.wy);
-                if (c->base[idx].compMask != 0 && c->base[idx].flags.isRigidBodyPart) {
-                    c->base[idx].compMask = 0; 
-                    world.updateChunkPixel(c, idx, sf::Color::Transparent);
-                    world.wakeParticle(dp.wx, dp.wy);
-                }
-            }
-        }
-        rb->drawnPixels.clear();
+        rb->clearFromWorld(world);
     }
     
     for (auto& dp : orphanedPixels) {
@@ -277,6 +395,8 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
     std::unordered_set<ChunkCoord, ChunkCoordHash> overlappingChunks;
     
     for (auto& rb : bodies) {
+        if (rb->isEquipped) continue; // Skip physical calculation if carried by a player
+
         b2Transform transform = b2Body_GetTransform(rb->bodyId);
         float radiusM = std::max(rb->width, rb->height) * P2M * 0.707f + 2.0f; 
         
@@ -317,7 +437,7 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
         Chunk* c = world.getChunk(coord.x << 6, coord.y << 6);
         bool hasTerrain = chunkBodies.count(coord) > 0;
         if (!hasTerrain || (c && (!c->isSleeping || c->visualDirty))) {
-            rebuildChunkTerrain(coord, c);
+            rebuildChunkTerrain(coord, c, world);
         }
     }
     
@@ -326,7 +446,6 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
 
 void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
     
-    // Helper function to stop fluid from teleporting through walls/ceilings
     auto isBlocking = [&](int x, int y) {
         BaseComponent* base = world.get<BaseComponent>(x, y);
         if (!base || base->compMask == 0 || base->flags.isRigidBodyPart) return false;
@@ -335,6 +454,8 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
     };
 
     for (auto& rb : bodies) {
+        if (rb->isEquipped) continue; // Don't put pixels on the map if carried
+
         rb->drawnPixels.clear();
         
         b2Transform transform = b2Body_GetTransform(rb->bodyId);
@@ -392,14 +513,12 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
                                         int spawnX = wx, spawnY = wy;
                                         bool found = false;
                                         
-                                        // 1. Immediate perimeter (gentle push to the side)
                                         for (int d = 1; d <= 2; ++d) {
                                             if (world.isEmpty(wx, wy - d)) { spawnX = wx; spawnY = wy - d; found = true; break; }
                                             if (world.isEmpty(wx - d, wy)) { spawnX = wx - d; spawnY = wy; found = true; break; }
                                             if (world.isEmpty(wx + d, wy)) { spawnX = wx + d; spawnY = wy; found = true; break; }
                                         }
                                         
-                                        // 2. Upward raycast (halts if it hits a wall/roof to prevent escaping containers)
                                         if (!found) {
                                             int upY = wy - 1;
                                             for(int i = 0; i < 150; i++) {
@@ -409,14 +528,13 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
                                                     BaseComponent* b = world.get<BaseComponent>(wx, upY);
                                                     if (b && !b->flags.isRigidBodyPart) {
                                                         Particle* pLogic = MaterialRegistry[static_cast<int>(b->id)];
-                                                        if (pLogic && pLogic->getGroup() == MaterialGroup::ImmovableSolid) break; // HALT!
+                                                        if (pLogic && pLogic->getGroup() == MaterialGroup::ImmovableSolid) break; 
                                                     }
                                                 }
                                                 upY--;
                                             }
                                         }
 
-                                        // 3. Sideways raycast (halts if it hits walls)
                                         if (!found) {
                                             for (int dir : {-1, 1}) {
                                                 int sideX = wx + dir;
@@ -427,7 +545,7 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
                                                         BaseComponent* b = world.get<BaseComponent>(sideX, wy);
                                                         if (b && !b->flags.isRigidBodyPart) {
                                                             Particle* pLogic = MaterialRegistry[static_cast<int>(b->id)];
-                                                            if (pLogic && pLogic->getGroup() == MaterialGroup::ImmovableSolid) break; // HALT!
+                                                            if (pLogic && pLogic->getGroup() == MaterialGroup::ImmovableSolid) break; 
                                                         }
                                                     }
                                                     sideX += dir;
@@ -436,15 +554,13 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
                                             }
                                         }
 
-                                        // Move the particle quietly
                                         if (found) {
                                             world.moveParticle(wx, wy, spawnX, spawnY);
                                             if (auto* kin = world.get<KinematicsComponent>(spawnX, spawnY)) {
                                                 kin->isFreeFalling = true;
                                             }
-                                            canPlace = true; // The space is now clear!
+                                            canPlace = true; 
                                         } else {
-                                            // If the water/sand is totally crushed by the block against a wall, delete it.
                                             world.removeParticle(wx, wy);
                                             canPlace = true;
                                         }
@@ -492,11 +608,17 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
         b2Body_SetAngularDamping(rb->bodyId, angularDrag);
     }
 }
+
 void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
     std::vector<std::unique_ptr<RigidBody>> newBodies;
     
     for (auto it = bodies.begin(); it != bodies.end(); ) {
         RigidBody* rb = it->get();
+        if (rb->isEquipped) {
+            ++it;
+            continue; // Skip synchronizing destruction if it's currently held
+        }
+
         bool needsRebuild = false;
         
         for (auto& dp : rb->drawnPixels) {
@@ -507,16 +629,20 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
             if (c) {
                 uint32_t idx = world.computeLocalIndex(dp.wx, dp.wy);
                 if (c->base[idx].compMask == 0 || !c->base[idx].flags.isRigidBodyPart) {
-                    p.active = false;
-                    needsRebuild = true;
+                    if (!rb->isIndestructible) {
+                        p.active = false;
+                        needsRebuild = true;
+                    }
                 } else {
                     p.base = c->base[idx];
                     if (c->base[idx].compMask & COMP_DURABILITY) p.dur = c->durability[idx];
                     if (c->base[idx].compMask & COMP_THERMAL) p.therm = c->thermal[idx];
                 }
             } else {
-                p.active = false;
-                needsRebuild = true;
+                if (!rb->isIndestructible) {
+                    p.active = false;
+                    needsRebuild = true;
+                }
             }
         }
         
@@ -591,12 +717,69 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
     }
 }
 
-void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk) {
+// --- HELPER MATH FOR SIMPLIFICATION ---
+namespace {
+    struct IntPoint {
+        int x, y;
+        bool operator==(const IntPoint& o) const { return x == o.x && y == o.y; }
+    };
+
+    struct IntPointHash {
+        size_t operator()(const IntPoint& p) const {
+            return std::hash<int>()(p.x) ^ (std::hash<int>()(p.y) << 1);
+        }
+    };
+
+    float perpendicularDistance(IntPoint p, IntPoint p1, IntPoint p2) {
+        float dx = p2.x - p1.x;
+        float dy = p2.y - p1.y;
+        float mag = std::sqrt(dx*dx + dy*dy);
+        if (mag > 0.0f) {
+            return std::abs((p2.x - p1.x)*(p1.y - p.y) - (p1.x - p.x)*(p2.y - p1.y)) / mag;
+        }
+        dx = p.x - p1.x;
+        dy = p.y - p1.y;
+        return std::sqrt(dx*dx + dy*dy);
+    }
+
+    void simplifyPath(const std::vector<IntPoint>& path, int start, int end, float epsilon, std::vector<bool>& keep) {
+        float maxDist = 0.0f;
+        int index = start;
+        for (int i = start + 1; i < end; ++i) {
+            float dist = perpendicularDistance(path[i], path[start], path[end]);
+            if (dist > maxDist) {
+                maxDist = dist;
+                index = i;
+            }
+        }
+        if (maxDist > epsilon) {
+            keep[index] = true;
+            simplifyPath(path, start, index, epsilon, keep);
+            simplifyPath(path, index, end, epsilon, keep);
+        }
+    }
+
+    std::vector<IntPoint> simplify(const std::vector<IntPoint>& path, float epsilon) {
+        if (path.size() < 3) return path;
+        std::vector<bool> keep(path.size(), false);
+        keep[0] = true;
+        keep[path.size() - 1] = true;
+        simplifyPath(path, 0, path.size() - 1, epsilon, keep);
+        
+        std::vector<IntPoint> result;
+        for (size_t i = 0; i < path.size(); ++i) {
+            if (keep[i]) result.push_back(path[i]);
+        }
+        return result;
+    }
+}
+// ----------------------------------------
+
+void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, ParticleWorld& world) {
     uint64_t currentHash = 0;
     if (chunk) {
         for (int i = 0; i < CHUNK_AREA; ++i) {
             if (chunk->base[i].compMask != 0 && !chunk->base[i].flags.isRigidBodyPart) {
-                // FIX: Only hash Immovable Solids (Stone, Wood) so RB can pass through Water/Sand!
                 Particle* logic = MaterialRegistry[static_cast<int>(chunk->base[i].id)];
                 if (logic && logic->getGroup() == MaterialGroup::ImmovableSolid) {
                     currentHash ^= (uint64_t)(i + 1) * 2654435761ull; 
@@ -612,90 +795,118 @@ void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk) {
         chunkBodies.erase(coord);
     }
 
-    if (!chunk) return;
+    if (!chunk || currentHash == 0) return;
 
     b2BodyDef bdef = b2DefaultBodyDef();
     bdef.type = b2_staticBody;
-    bdef.position = { (coord.x * CHUNK_SIZE) * P2M, (coord.y * CHUNK_SIZE) * P2M };
+    bdef.position = { 0.0f, 0.0f }; 
     b2BodyId bodyId = b2CreateBody(worldId, &bdef);
 
-    bool hasFixtures = false;
-    std::vector<bool> visited(CHUNK_AREA, false);
-    
+    auto isSolid = [&](int wx, int wy) {
+        BaseComponent* base = world.get<BaseComponent>(wx, wy);
+        if (!base || base->compMask == 0 || base->flags.isRigidBodyPart) return false;
+        Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
+        return logic && logic->getGroup() == MaterialGroup::ImmovableSolid;
+    };
+
+    struct Edge { IntPoint p1, p2; };
+    std::vector<Edge> all_edges;
+    int chunkWx = coord.x * CHUNK_SIZE;
+    int chunkWy = coord.y * CHUNK_SIZE;
+
     for (int ly = 0; ly < CHUNK_SIZE; ++ly) {
         for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
-            int idx = (ly << 6) | lx;
+            int wx = chunkWx + lx;
+            int wy = chunkWy + ly;
             
-            bool isSolid = false;
-            if (chunk->base[idx].compMask != 0 && !chunk->base[idx].flags.isRigidBodyPart) {
-                // FIX: Box2D terrain is ONLY generated for Immovable Solids!
-                Particle* logic = MaterialRegistry[static_cast<int>(chunk->base[idx].id)];
-                if (logic && logic->getGroup() == MaterialGroup::ImmovableSolid) {
-                    isSolid = true;
-                }
-            }
-            
-            if (isSolid && !visited[idx]) {
-                int w = 0;
-                while (lx + w < CHUNK_SIZE) {
-                    int nIdx = (ly << 6) | (lx + w);
-                    bool isNeighborSolid = false;
-                    if (chunk->base[nIdx].compMask != 0 && !chunk->base[nIdx].flags.isRigidBodyPart) {
-                        Particle* nLogic = MaterialRegistry[static_cast<int>(chunk->base[nIdx].id)];
-                        if (nLogic && nLogic->getGroup() == MaterialGroup::ImmovableSolid) isNeighborSolid = true;
-                    }
-                    if (isNeighborSolid && !visited[nIdx]) w++;
-                    else break;
-                }
-                
-                int h = 1;
-                bool canExpand = true;
-                while (ly + h < CHUNK_SIZE && canExpand) {
-                    for (int i = 0; i < w; ++i) {
-                        int nIdx = ((ly + h) << 6) | (lx + i);
-                        bool isNeighborSolid = false;
-                        if (chunk->base[nIdx].compMask != 0 && !chunk->base[nIdx].flags.isRigidBodyPart) {
-                            Particle* nLogic = MaterialRegistry[static_cast<int>(chunk->base[nIdx].id)];
-                            if (nLogic && nLogic->getGroup() == MaterialGroup::ImmovableSolid) isNeighborSolid = true;
-                        }
-                        if (!isNeighborSolid || visited[nIdx]) {
-                            canExpand = false;
-                            break;
-                        }
-                    }
-                    if (canExpand) h++;
-                }
-                
-                for (int j = 0; j < h; ++j) {
-                    for (int i = 0; i < w; ++i) {
-                        visited[((ly + j) << 6) | (lx + i)] = true;
-                    }
-                }
-                
-                float radius = 0.02f;
-                float hx = (w / 2.0f) * P2M - radius;
-                float hy = (h / 2.0f) * P2M - radius;
-                if (hx < 0.01f) hx = 0.01f;
-                if (hy < 0.01f) hy = 0.01f;
-                
-                float cx = lx + (w / 2.0f);
-                float cy = ly + (h / 2.0f);
-                
-                b2Polygon box = b2MakeOffsetBox(hx, hy, {cx * P2M, cy * P2M}, b2MakeRot(0.0f));
-                box.radius = radius;
-                
-                b2ShapeDef shapeDef = b2DefaultShapeDef();
-                shapeDef.material.friction = 0.1f; 
-                
-                b2CreatePolygonShape(bodyId, &shapeDef, &box); 
-                hasFixtures = true;
+            if (isSolid(wx, wy)) {
+                if (!isSolid(wx, wy - 1))     all_edges.push_back({{wx, wy}, {wx + 1, wy}});
+                if (!isSolid(wx + 1, wy))     all_edges.push_back({{wx + 1, wy}, {wx + 1, wy + 1}});
+                if (!isSolid(wx, wy + 1))     all_edges.push_back({{wx + 1, wy + 1}, {wx, wy + 1}});
+                if (!isSolid(wx - 1, wy))     all_edges.push_back({{wx, wy + 1}, {wx, wy}});
             }
         }
     }
-    
-    if (hasFixtures) chunkBodies[coord] = {bodyId, currentHash};
-    else b2DestroyBody(bodyId);
+
+    std::unordered_map<IntPoint, int, IntPointHash> inDegree;
+    std::unordered_map<IntPoint, int, IntPointHash> outDegree;
+    std::unordered_multimap<IntPoint, IntPoint, IntPointHash> adj;
+
+    for (const auto& edge : all_edges) {
+        adj.insert({edge.p1, edge.p2});
+        outDegree[edge.p1]++;
+        inDegree[edge.p2]++;
+    }
+
+    std::vector<std::vector<IntPoint>> polylines;
+
+    for (auto& pair : outDegree) {
+        IntPoint start = pair.first;
+        while (outDegree[start] > inDegree[start]) {
+            std::vector<IntPoint> path;
+            path.push_back(start);
+            IntPoint curr = start;
+            while (true) {
+                auto it = adj.find(curr);
+                if (it == adj.end()) break;
+                IntPoint next = it->second;
+                path.push_back(next);
+                adj.erase(it);
+                outDegree[curr]--;
+                inDegree[next]--;
+                curr = next;
+            }
+            polylines.push_back(path);
+        }
+    }
+
+    for (auto& pair : outDegree) {
+        IntPoint start = pair.first;
+        while (outDegree[start] > 0) {
+            std::vector<IntPoint> path;
+            path.push_back(start);
+            IntPoint curr = start;
+            while (true) {
+                auto it = adj.find(curr);
+                if (it == adj.end()) break;
+                IntPoint next = it->second;
+                path.push_back(next);
+                adj.erase(it);
+                outDegree[curr]--;
+                inDegree[next]--;
+                curr = next;
+                if (curr == start) break;
+            }
+            polylines.push_back(path);
+        }
+    }
+
+    bool hasFixtures = false;
+
+    for (const auto& poly : polylines) {
+        std::vector<IntPoint> simplified = simplify(poly, 0.8f);
+        if (simplified.size() < 2) continue;
+
+        b2ShapeDef shapeDef = b2DefaultShapeDef();
+        shapeDef.material.friction = 0.5f; 
+
+        for (size_t i = 0; i < simplified.size() - 1; ++i) {
+            b2Segment segment = { 
+                {simplified[i].x * P2M, simplified[i].y * P2M}, 
+                {simplified[i+1].x * P2M, simplified[i+1].y * P2M} 
+            };
+            b2CreateSegmentShape(bodyId, &shapeDef, &segment);
+            hasFixtures = true;
+        }
+    }
+
+    if (hasFixtures) {
+        chunkBodies[coord] = {bodyId, currentHash};
+    } else {
+        b2DestroyBody(bodyId);
+    }
 }
+
 void RigidBodySystem::save(std::ostream& out) const {
     size_t count = bodies.size();
     out.write(reinterpret_cast<const char*>(&count), sizeof(count));
@@ -748,7 +959,6 @@ void RigidBodySystem::load(std::istream& in) {
             in.read(reinterpret_cast<char*>(parts.data()), pCount * sizeof(LocalParticle));
         }
         
-        // Reconstruct the Body! This automatically re-builds Box2D fixtures.
         bodies.push_back(std::make_unique<RigidBody>(worldId, w, h, parts, pos, angle, linVel, angVel));
     }
 }

@@ -32,9 +32,9 @@ struct DrawnPixel {
     int wx, wy;
     int localIdx;
 };
+
 class RigidBody {
 public:
-
     b2BodyId bodyId;
     b2WorldId worldId;
     std::vector<DrawnPixel> drawnPixels;
@@ -42,11 +42,24 @@ public:
     int width, height;
     bool needsFixtureRebuild;
 
-    RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int startY, MaterialID mat);
+    // --- Weapon / Item Properties ---
+    bool isWeapon = false;
+    bool isEquipped = false;
+    bool isIndestructible = false;
+
+    RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int startY, MaterialID mat, bool weapon = false);
     RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalParticle>& parts, b2Vec2 pos, float angle, b2Vec2 linVel, float angVel);
+    
     void rebuildFixtures();
     std::vector<std::vector<LocalParticle>> findIslands();
+
+    // Pulled from world when equipped
+    void clearFromWorld(ParticleWorld& world);
+    
+    // Custom drawing when held by an entity
+    void renderPixelated(sf::RenderTarget& target, sf::Vector2f pos, float angleDeg, bool flipX, sf::Color overrideColor = sf::Color::Transparent);
 };
+
 struct ChunkTerrain {
     b2BodyId bodyId;
     uint64_t hash;
@@ -54,13 +67,13 @@ struct ChunkTerrain {
 
 class RigidBodySystem {
 private:
-std::vector<DrawnPixel> orphanedPixels; 
+    std::vector<DrawnPixel> orphanedPixels; 
     b2WorldId worldId;
     std::vector<std::unique_ptr<RigidBody>> bodies;
     std::unordered_map<ChunkCoord, ChunkTerrain, ChunkCoordHash> chunkBodies;
 
 public:
-void save(std::ostream& out) const;
+    void save(std::ostream& out) const;
     void load(std::istream& in);
     void clearAll();
     RigidBodySystem();
@@ -69,11 +82,16 @@ void save(std::ostream& out) const;
     void renderDebug(sf::RenderTarget& target) const;
     void addRigidBodyFromSprite(const sf::Image& img, int x, int y, MaterialID mat);
     
+    // --- WEAPONS SYSTEM ---
+    void addWeapon(const sf::Image& img, int x, int y);
+    RigidBody* getNearestWeapon(sf::Vector2f pos, float radius);
+    void renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2f playerPos);
+    
     // Core Pipeline
     void clearFromWorld(ParticleWorld& world);
     void stepPhysics(float dt, ParticleWorld& world);
     void rasterizeToWorld(ParticleWorld& world);
     void syncFromWorld(ParticleWorld& world);
-    
-    void rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk);
+    b2WorldId getWorldId() const { return worldId; }
+    void rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, ParticleWorld& world);
 };

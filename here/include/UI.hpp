@@ -1,9 +1,13 @@
 #pragma once
 #include <SFML/Graphics.hpp>
 #include "Constants.hpp"
-#include "RigidBody.hpp" // <-- Add this to access RigidBodyShape
+#include "RigidBody.hpp" 
 
 class ParticleWorld;
+
+// Added 'Weapon' to Spawn Modes
+enum class SpawnMode { Particles, RigidBody, Entity, Weapon };
+enum class EntityType { Player };
 
 class UI {
 public:
@@ -12,27 +16,27 @@ public:
     void update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, float frameTime);
     void render(sf::RenderWindow& window);
 
-    // Getters for SandSimApp
     MaterialID getCurrentMaterialID() const { return currentMaterial; }
     float getSelectionRadius() const { return selectionRadius; }
     bool isMouseOverUI() const; 
 
-    // --- NEW RIGID BODY GETTERS ---
-    bool isCurrentSelectionRigidBody() const { return spawnAsRigidBody; } 
+    SpawnMode getSpawnMode() const { return spawnMode; }
+    EntityType getSelectedEntity() const { return currentEntity; }
     RigidBodyShape getRigidBodyShape() const { return currentShape; }
-bool getShowChunkBounds() const { return showChunkBounds; }
+    
+    bool getShowChunkBounds() const { return showChunkBounds; }
     bool getShowColliders() const { return showColliders; }
+
 private:
-bool showChunkBounds = false;
+    bool showChunkBounds = false;
     bool showColliders = false;
     ParticleWorld* world;
     MaterialID currentMaterial = MaterialID::Sand;
     float selectionRadius = DEFAULT_SELECTION_RADIUS;
     
-    // --- NEW RIGID BODY STATE ---
-    bool spawnAsRigidBody = false;
+    SpawnMode spawnMode = SpawnMode::Particles;
+    EntityType currentEntity = EntityType::Player;
     RigidBodyShape currentShape = RigidBodyShape::Box;
     
-    // Internal helper to draw material tabs
     void drawMaterialTabs();
 };

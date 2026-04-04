@@ -9,6 +9,7 @@
 #include "UI.hpp"
 #include "LevelMenu.hpp"
 #include "Random.hpp"
+#include "EntitySystem.hpp" // NEW
 
 enum class GameState { MENU, PLAYING };
 
@@ -29,7 +30,7 @@ private:
     // Camera/View logic
     void handleZoom(float delta, const sf::Vector2i& mousePos);
     void handleResize(unsigned int width, unsigned int height);
-    void constrainView(); // New: Keeps camera inside map
+    void constrainView();
 
     // Simulation logic
     void startGame(const std::string& worldFile);
@@ -62,6 +63,7 @@ private:
     bool hasPreviousMousePos;
 
     std::unique_ptr<ParticleWorld> world;
+    std::unique_ptr<EntitySystem> entitySystem; // NEW
     std::unique_ptr<Renderer> renderer;
     std::unique_ptr<UI> ui;
     std::unique_ptr<LevelMenu> levelMenu;

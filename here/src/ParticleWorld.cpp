@@ -739,3 +739,16 @@ void ParticleWorld::addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, Ma
     
     addRigidBodyFromSprite(img, cx, cy, mat);
 }
+
+// --- WEAPON SYSTEM WRAPPERS ---
+void ParticleWorld::addWeapon(const sf::Image& img, int startX, int startY) {
+    if (rigidBodySystem) {
+        rigidBodySystem->addWeapon(img, startX, startY);
+    }
+}
+
+void ParticleWorld::renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2f playerPos) const {
+    if (rigidBodySystem) {
+        rigidBodySystem->renderWeaponsOutline(target, playerPos);
+    }
+}

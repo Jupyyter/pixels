@@ -5,7 +5,6 @@
 #include <imgui.h>
 #include <imgui-SFML.h>
 
-// Camera Constants
 constexpr float CAMERA_MARGIN = 50.0f; 
 
 SandSimApp::SandSimApp() : 
@@ -14,8 +13,6 @@ SandSimApp::SandSimApp() :
     currentZoom(1.0f), isPanning(false)
 {
     window.create(sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}), "Sand Simulation - SFML 3");
-    
-    // FIX 1: Never use both VSync and Framerate Limit. VSync is safer and smoother.
     window.setVerticalSyncEnabled(true); 
 
     if (!ImGui::SFML::Init(window)) {
@@ -29,7 +26,6 @@ SandSimApp::SandSimApp() :
     gameView.setCenter({static_cast<float>(WORLD_WIDTH) / 2.f, static_cast<float>(WORLD_HEIGHT) / 2.f});
 
     handleResize(window.getSize().x, window.getSize().y);
-
     Random::setSeed(static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
 }
 
@@ -102,7 +98,6 @@ void SandSimApp::constrainView() {
 
 void SandSimApp::handleEvents() {
     while (const std::optional event = window.pollEvent()) {
-        // FIX 2: ImGui must process events regardless of GameState!
         ImGui::SFML::ProcessEvent(window, *event);
 
         if (event->is<sf::Event::Closed>()) {
@@ -147,9 +142,6 @@ void SandSimApp::handleMenuEvents(const sf::Event& event) {
     }
     else if (const auto* wheel = event.getIf<sf::Event::MouseWheelScrolled>()) levelMenu->handleMouseWheel(wheel->delta);
     else if (const auto* key = event.getIf<sf::Event::KeyPressed>()) if (key->code == sf::Keyboard::Key::Escape) running = false;
-    
-    // FIX 3: Removed levelMenu->update(worldPos) from here. 
-    // It should not run 100 times per frame just because the mouse moved!
 }
 
 void SandSimApp::handleGameEvents(const sf::Event& event) {
@@ -159,26 +151,37 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
     else if (const auto* resize = event.getIf<sf::Event::Resized>()) {
         handleResize(resize->size.x, resize->size.y);
     }
-    // --- NEW: SINGLE CLICK RIGID BODY SPAWNING ---
+    // --- SINGLE CLICK SPAWNING FOR ENTITIES, RIGID BODIES, & WEAPONS ---
     else if (const auto* mouseBtn = event.getIf<sf::Event::MouseButtonPressed>()) {
         if (mouseBtn->button == sf::Mouse::Button::Left && !isMouseOverUI()) {
-            if (ui && ui->isCurrentSelectionRigidBody() && world) {
+            if (ui && world) {
                 sf::Vector2i mousePos = sf::Mouse::getPosition(window);
                 sf::Vector2f worldPos = window.mapPixelToCoords(mousePos, gameView);
                 
-                // Spawn it! The diameter is Radius * 2
-                world->addRigidBody(
-                    static_cast<int>(worldPos.x), 
-                    static_cast<int>(worldPos.y), 
-                    ui->getSelectionRadius() * 2.0f, 
-                    ui->getRigidBodyShape(), 
-                    ui->getCurrentMaterialID()
-                );
+                if (ui->getSpawnMode() == SpawnMode::RigidBody) {
+                    world->addRigidBody(
+                        static_cast<int>(worldPos.x), 
+                        static_cast<int>(worldPos.y), 
+                        ui->getSelectionRadius() * 2.0f, 
+                        ui->getRigidBodyShape(), 
+                        ui->getCurrentMaterialID()
+                    );
+                } 
+                else if (ui->getSpawnMode() == SpawnMode::Weapon) {
+                    sf::Image img;
+                    if (img.loadFromFile("assets/images/weapon.png")) {
+                        world->addWeapon(img, static_cast<int>(worldPos.x), static_cast<int>(worldPos.y));
+                    }
+                }
+                else if (ui->getSpawnMode() == SpawnMode::Entity) {
+                    if (entitySystem && ui->getSelectedEntity() == EntityType::Player) {
+                        entitySystem->spawnPlayer(worldPos.x, worldPos.y, "assets/images/jhonnyIdle.png");
+                    }
+                }
             }
         }
     }
 }
-
 void SandSimApp::handleZoom(float delta, const sf::Vector2i& mousePos) {
     sf::Vector2f worldBefore = window.mapPixelToCoords(mousePos, gameView);
     float factor = (delta > 0) ? 0.9f : 1.1f;
@@ -214,37 +217,32 @@ void SandSimApp::update() {
     sf::Time dt = clock.restart();
     frameTime = static_cast<float>(frameClock.restart().asMilliseconds());
 
-    // FIX 4: ImGui MUST update every frame, regardless of game state!
     ImGui::SFML::Update(window, dt);
 
     if (currentState == GameState::PLAYING) {
-    if (ui) {
+        if (ui) {
             ui->update(window, dt, simulationRunning, frameTime);
-            
-            // --- NEW: SYNC UI DEBUG STATE TO RENDERER ---
             if (renderer) {
                 renderer->setShowChunkBounds(ui->getShowChunkBounds());
                 renderer->setShowColliders(ui->getShowColliders());
             }
         }
-    
-    if (simulationRunning && world) {
-        // --- NEW: Tell the world where the camera is! ---
-        sf::Vector2f center = gameView.getCenter();
-        sf::Vector2f size = gameView.getSize();
-        world->updateCameraBounds(center.x, center.y, size.x, size.y);
-        // ------------------------------------------------
         
-        world->update(dt.asSeconds());
-    }
-}
-    else if (currentState == GameState::MENU) {
-        // FIX 5: Level Menu updates safely ONCE per frame
-        sf::Vector2f worldPos = window.mapPixelToCoords(sf::Mouse::getPosition(window));
-        levelMenu->update(worldPos);
-    }
-}
+        if (simulationRunning && world) {
+            sf::Vector2f center = gameView.getCenter();
+            sf::Vector2f size = gameView.getSize();
+            world->updateCameraBounds(center.x, center.y, size.x, size.y);
 
+            // Pass the RigidBodySystem to process weapon picking up/dropping
+            if (entitySystem) {
+                entitySystem->updateInput(dt.asSeconds(), *world->getRigidBodySystem(), *world);
+                entitySystem->updateProceduralAnimations(dt.asSeconds(), *world);
+            }
+
+            world->update(dt.asSeconds());
+        }
+    }
+}
 void SandSimApp::render() {
     window.clear(sf::Color(0, 0, 0));
     
@@ -263,18 +261,23 @@ void SandSimApp::render() {
         window.draw(border);
 
         if (world && renderer) {
-            // Because we changed how ParticleWorld handles the camera, 
-            // we must sync the world's internal buffer to our camera position!
-
-            
             renderer->render(window, *world);
+        }
+
+        // --- NEW: RENDER ENTITIES OVER WORLD ---
+        // --- NEW: RENDER ENTITIES AND WEAPONS ---
+        if (entitySystem) {
+            // Outline weapons that are unequipped and near the player
+            world->getRigidBodySystem()->renderWeaponsOutline(window, entitySystem->getPlayerPos());
+            
+            // Draw player, hands, and the equipped weapon
+            entitySystem->renderEntities(window);
         }
         
         if (!isMouseOverUI() && !isPanning) {
             sf::Vector2f worldPos = window.mapPixelToCoords(sf::Mouse::getPosition(window), gameView);
             
-            // Draw a Box brush if Box mode is active
-            if (ui->isCurrentSelectionRigidBody() && ui->getRigidBodyShape() == RigidBodyShape::Box) {
+            if (ui->getSpawnMode() == SpawnMode::RigidBody && ui->getRigidBodyShape() == RigidBodyShape::Box) {
                 float diameter = ui->getSelectionRadius() * 2.0f;
                 sf::RectangleShape brush({diameter, diameter});
                 brush.setOrigin({ui->getSelectionRadius(), ui->getSelectionRadius()});
@@ -283,8 +286,16 @@ void SandSimApp::render() {
                 brush.setOutlineColor(sf::Color(255, 255, 255, 180));
                 brush.setOutlineThickness(1.0f / currentZoom);
                 window.draw(brush);
-            } else {
-                // Default Circle brush
+            } 
+            else if (ui->getSpawnMode() == SpawnMode::Entity) {
+                // simple box indicator for entity spawn
+                sf::RectangleShape brush({8.0f, 16.0f});
+                brush.setOrigin({4.0f, 8.0f});
+                brush.setPosition(worldPos);
+                brush.setFillColor(sf::Color(255, 0, 0, 100));
+                window.draw(brush);
+            }
+            else {
                 sf::CircleShape brush(ui->getSelectionRadius());
                 brush.setOrigin({ui->getSelectionRadius(), ui->getSelectionRadius()});
                 brush.setPosition(worldPos);
@@ -296,17 +307,19 @@ void SandSimApp::render() {
         }
 
         window.setView(window.getDefaultView());
-        if (ui) ui->render(window); // Render any UI shapes built inside UI.cpp
+        if (ui) ui->render(window); 
     }
     
-    // FIX 6: ImGui MUST render every frame!
     ImGui::SFML::Render(window);
-    
     window.display();
 }
 
 void SandSimApp::startGame(const std::string& worldFile) {
     world = std::make_unique<ParticleWorld>(VIEW_WIDTH, VIEW_HEIGHT, worldFile);
+    
+    // Create the Entity System attached to the Sandbox's Box2D world
+    entitySystem = std::make_unique<EntitySystem>(world->getRigidBodySystem()->getWorldId());
+
     ui = std::make_unique<UI>(window, world.get());
     
     currentZoom = 1.0f;
@@ -318,14 +331,15 @@ void SandSimApp::startGame(const std::string& worldFile) {
 }
 
 void SandSimApp::returnToMenu() {
+    entitySystem.reset(); // Safely destroy EnTT instances BEFORE physics teardown!
     world.reset();
     ui.reset();
     currentState = GameState::MENU;
 }
 
 void SandSimApp::handleMouseHeld() {
-    
-if (ui && ui->isCurrentSelectionRigidBody()) return;
+    // Prevent continuous spawning for anything other than particles
+    if (ui && ui->getSpawnMode() != SpawnMode::Particles) return;
 
     sf::Vector2i mousePos = sf::Mouse::getPosition(window);
     sf::Vector2f worldPos = window.mapPixelToCoords(mousePos, gameView);

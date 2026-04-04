@@ -5,15 +5,15 @@ CXX = g++
 EXECUTABLE = main
 OBJ_DIR = obj
 
-# --- NEW: Added IMGUI_DIR to the variables ---
+# --- Library Directories ---
 SFML_DIR = ../SFML-3.0.0
 GLM_DIR = ../glm/glm-master
 BOX2D_DIR = ../2dbox
 IMGUI_DIR = ../imgui-src
+ENTT_DIR = ../entt       # <-- NEW: Added EnTT directory
 # ---------------------------------------------
 
 # Folders to search for .cpp files and .hpp files
-# --- NEW: Added IMGUI_DIR to SEARCH_DIRS ---
 SEARCH_DIRS := src include $(IMGUI_DIR)
 
 # --------------------------------------------------------------------------------
@@ -39,15 +39,18 @@ CPP_STANDARD = -std=c++17
 CXXFLAGS_COMMON = $(CPP_STANDARD) -DSFML_STATIC -MMD -MP
 
 # Include directories:
-# --- NEW: Added IMGUI_DIR to Include Paths ---
 INCLUDE_DIRS = \
 	-I$(SFML_DIR)/include \
 	-I$(GLM_DIR) \
 	-I$(LOCAL_INCLUDE_DIR) \
 	-I$(BOX2D_DIR)/include \
 	-I$(IMGUI_DIR) \
+	-I$(ENTT_DIR) \
+	-I.. \
 	-I. \
 	$(addprefix -I,$(SEARCH_DIRS)) 
+# ^ NEW: Added -I$(ENTT_DIR) (allows #include <entt.hpp>) 
+#   and -I.. (allows #include <entt/entt.hpp>)
 
 CXXFLAGS_RELEASE = $(CXXFLAGS_COMMON) $(INCLUDE_DIRS) -O3
 CXXFLAGS_DEBUG = $(CXXFLAGS_COMMON) $(INCLUDE_DIRS) -g

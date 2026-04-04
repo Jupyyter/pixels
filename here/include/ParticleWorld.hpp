@@ -106,14 +106,20 @@ private:
 
 
 public:
-void renderDebugColliders(sf::RenderTarget& target) const;
-void addRigidBodyFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat);
-void addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, MaterialID mat);
-// Internal Helpers
+    RigidBodySystem* getRigidBodySystem() const { return rigidBodySystem.get(); }
+    void renderDebugColliders(sf::RenderTarget& target) const;
+    void addRigidBodyFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat);
+    void addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, MaterialID mat);
+    
+    // --- WEAPON SYSTEM WRAPPERS ---
+    void addWeapon(const sf::Image& img, int startX, int startY);
+    void renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2f playerPos) const;
+
+    // Internal Helpers
     void updateChunkPixel(Chunk* c, uint32_t localIdx, sf::Color color);
     void removeParticleInternal(Chunk* chunk, uint32_t localIndex);
-Chunk* getOrCreateChunk(int x, int y);
-Chunk* getChunk(int x, int y) const;
+    Chunk* getOrCreateChunk(int x, int y);
+    Chunk* getChunk(int x, int y) const;
     std::unordered_map<uint32_t, MaterialID> containerPayloads;
     ParticleWorld(unsigned int w, unsigned int h, const std::string& worldFile = "");
     ~ParticleWorld();

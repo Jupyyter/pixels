@@ -1,5 +1,8 @@
-obj/src/main.o: src/main.cpp include/SandSim.hpp \
- ../SFML-3.0.0/include/SFML/Graphics.hpp \
+obj/src/EntitySystem.o: src/EntitySystem.cpp include/EntitySystem.hpp \
+ ../entt/entt.hpp ../2dbox/include/box2d/box2d.h \
+ ../2dbox/include/box2d/base.h ../2dbox/include/box2d/collision.h \
+ ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
+ ../2dbox/include/box2d/types.h ../SFML-3.0.0/include/SFML/Graphics.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/Export.hpp \
  ../SFML-3.0.0/include/SFML/Config.hpp \
@@ -76,15 +79,17 @@ obj/src/main.o: src/main.cpp include/SandSim.hpp \
  ../SFML-3.0.0/include/SFML/System/FileInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
- ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
- include/ParticleWorld.hpp include/Random.hpp \
- include/Particles/Particle.hpp include/Renderer.hpp include/UI.hpp \
- include/RigidBody.hpp ../2dbox/include/box2d/box2d.h \
- ../2dbox/include/box2d/base.h ../2dbox/include/box2d/collision.h \
- ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
- ../2dbox/include/box2d/types.h include/LevelMenu.hpp \
- include/EntitySystem.hpp ../entt/entt.hpp include/EntityComponents.hpp
-include/SandSim.hpp:
+ ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/EntityComponents.hpp \
+ include/ParticleWorld.hpp include/Constants.hpp include/Random.hpp \
+ include/Particles/Particle.hpp include/RigidBody.hpp
+include/EntitySystem.hpp:
+../entt/entt.hpp:
+../2dbox/include/box2d/box2d.h:
+../2dbox/include/box2d/base.h:
+../2dbox/include/box2d/collision.h:
+../2dbox/include/box2d/math_functions.h:
+../2dbox/include/box2d/id.h:
+../2dbox/include/box2d/types.h:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/Export.hpp:
@@ -163,20 +168,9 @@ include/SandSim.hpp:
 ../SFML-3.0.0/include/SFML/System/InputStream.hpp:
 ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp:
 ../SFML-3.0.0/include/SFML/System/Sleep.hpp:
-include/Constants.hpp:
+include/EntityComponents.hpp:
 include/ParticleWorld.hpp:
+include/Constants.hpp:
 include/Random.hpp:
 include/Particles/Particle.hpp:
-include/Renderer.hpp:
-include/UI.hpp:
 include/RigidBody.hpp:
-../2dbox/include/box2d/box2d.h:
-../2dbox/include/box2d/base.h:
-../2dbox/include/box2d/collision.h:
-../2dbox/include/box2d/math_functions.h:
-../2dbox/include/box2d/id.h:
-../2dbox/include/box2d/types.h:
-include/LevelMenu.hpp:
-include/EntitySystem.hpp:
-../entt/entt.hpp:
-include/EntityComponents.hpp:
