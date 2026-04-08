@@ -7,11 +7,11 @@
 class ParticleWorld;
 
 // Spawn Modes
-enum class SpawnMode { Particles, RigidBody, Entity, Weapon };
+enum class SpawnMode { Particles, Image, Entity, Weapon };
 enum class EntityType { Player };
 
-// Struct to hold loaded rigid body assets
-struct RigidBodyAsset {
+// Struct to hold loaded image assets (Used for Rigid Bodies, Structures, and Weapons)
+struct ImageAsset {
     std::string name;
     std::string path;
     sf::Texture texture;
@@ -22,7 +22,7 @@ class UI {
 public:
     UI(sf::RenderWindow& window, ParticleWorld* worldPtr);
     
-    void update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, float frameTime);
+    void update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, float frameTime, sf::Vector2f mouseWorldPos);
     void render(sf::RenderWindow& window);
 
     MaterialID getCurrentMaterialID() const { return currentMaterial; }
@@ -32,10 +32,18 @@ public:
     SpawnMode getSpawnMode() const { return spawnMode; }
     EntityType getSelectedEntity() const { return currentEntity; }
     
-    // --- NEW: Rigid Body Getters ---
-    float getRigidBodyScale() const { return rigidBodyScale; }
-    const sf::Image* getSelectedRigidBodyImage() const;
-    const sf::Texture* getSelectedRigidBodyTexture() const;
+    // Unified Asset Getters
+    float getAssetScale() const { return assetScale; }
+    const sf::Image* getSelectedAssetImage() const;
+    const sf::Texture* getSelectedAssetTexture() const;
+    
+    // Weapons Getters
+    const sf::Image* getSelectedWeaponImage() const;
+    const sf::Texture* getSelectedWeaponTexture() const;
+    std::string getSelectedWeaponName() const;
+
+    // Spawning properties
+    bool getSpawnAsRigidBody() const { return spawnAsRigidBody; }
     bool getGlueToTerrain() const { return glueToTerrain; }
     
     bool getShowChunkBounds() const { return showChunkBounds; }
@@ -51,12 +59,18 @@ private:
     SpawnMode spawnMode = SpawnMode::Particles;
     EntityType currentEntity = EntityType::Player;
     
-    // Rigid Body Asset Management
-    std::vector<RigidBodyAsset> rigidBodyAssets;
-    int selectedRigidBodyIndex = 0;
-    float rigidBodyScale = 1.0f; // 1.0 = 100%
+    // Unified Assets list (Structures + Rigid Bodies)
+    std::vector<ImageAsset> imageAssets;
+    int selectedAssetIndex = 0;
+    float assetScale = 1.0f;
+    bool spawnAsRigidBody = false;
     bool glueToTerrain = false;
-    
-    void loadRigidBodyAssets();
+
+    // Weapons Assets
+    std::vector<ImageAsset> weaponAssets;
+    int selectedWeaponIndex = 0;
+
+    void loadImageAssets();
+    void loadWeaponAssets();
     void drawMaterialTabs();
 };

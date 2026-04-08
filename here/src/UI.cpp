@@ -6,29 +6,60 @@
 #include <iostream>
 
 UI::UI(sf::RenderWindow& window, ParticleWorld* worldPtr) : world(worldPtr) {
-    loadRigidBodyAssets();
+    loadImageAssets();
+    loadWeaponAssets();
 }
 
-void UI::loadRigidBodyAssets() {
-    std::string folderPath = "assets/images/rigidBodies";
+void UI::loadImageAssets() {
+    imageAssets.clear();
     
-    if (!std::filesystem::exists(folderPath)) {
-        std::filesystem::create_directories(folderPath);
-    }
+    auto loadFromDir = [&](const std::string& folderPath) {
+        if (!std::filesystem::exists(folderPath)) {
+            std::filesystem::create_directories(folderPath);
+        }
 
+        for (const auto& entry : std::filesystem::directory_iterator(folderPath)) {
+            if (entry.is_regular_file()) {
+                std::string path = entry.path().string();
+                std::string ext = entry.path().extension().string();
+                
+                if (ext == ".png" || ext == ".jpg" || ext == ".bmp") {
+                    ImageAsset asset;
+                    asset.name = entry.path().stem().string();
+                    asset.path = path;
+                    
+                    if (asset.image.loadFromFile(path)) {
+                        if (asset.texture.loadFromImage(asset.image)) {
+                            imageAssets.push_back(std::move(asset));
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    loadFromDir("assets/images/rigidBodies");
+    loadFromDir("assets/images/structures");
+}
+
+void UI::loadWeaponAssets() {
+    weaponAssets.clear();
+    std::string folderPath = "assets/images/weapons";
+    if (!std::filesystem::exists(folderPath)) std::filesystem::create_directories(folderPath);
+    
     for (const auto& entry : std::filesystem::directory_iterator(folderPath)) {
         if (entry.is_regular_file()) {
             std::string path = entry.path().string();
             std::string ext = entry.path().extension().string();
             
             if (ext == ".png" || ext == ".jpg" || ext == ".bmp") {
-                RigidBodyAsset asset;
+                ImageAsset asset;
                 asset.name = entry.path().stem().string();
                 asset.path = path;
                 
                 if (asset.image.loadFromFile(path)) {
                     if (asset.texture.loadFromImage(asset.image)) {
-                        rigidBodyAssets.push_back(std::move(asset));
+                        weaponAssets.push_back(std::move(asset));
                     }
                 }
             }
@@ -36,17 +67,63 @@ void UI::loadRigidBodyAssets() {
     }
 }
 
-const sf::Image* UI::getSelectedRigidBodyImage() const {
-    if (rigidBodyAssets.empty() || selectedRigidBodyIndex < 0 || selectedRigidBodyIndex >= rigidBodyAssets.size()) return nullptr;
-    return &rigidBodyAssets[selectedRigidBodyIndex].image;
+const sf::Image* UI::getSelectedAssetImage() const {
+    if (imageAssets.empty() || selectedAssetIndex < 0 || selectedAssetIndex >= imageAssets.size()) return nullptr;
+    return &imageAssets[selectedAssetIndex].image;
 }
 
-const sf::Texture* UI::getSelectedRigidBodyTexture() const {
-    if (rigidBodyAssets.empty() || selectedRigidBodyIndex < 0 || selectedRigidBodyIndex >= rigidBodyAssets.size()) return nullptr;
-    return &rigidBodyAssets[selectedRigidBodyIndex].texture;
+const sf::Texture* UI::getSelectedAssetTexture() const {
+    if (imageAssets.empty() || selectedAssetIndex < 0 || selectedAssetIndex >= imageAssets.size()) return nullptr;
+    return &imageAssets[selectedAssetIndex].texture;
 }
 
-void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, float frameTime) {
+const sf::Image* UI::getSelectedWeaponImage() const {
+    if (weaponAssets.empty() || selectedWeaponIndex < 0 || selectedWeaponIndex >= weaponAssets.size()) return nullptr;
+    return &weaponAssets[selectedWeaponIndex].image;
+}
+
+const sf::Texture* UI::getSelectedWeaponTexture() const {
+    if (weaponAssets.empty() || selectedWeaponIndex < 0 || selectedWeaponIndex >= weaponAssets.size()) return nullptr;
+    return &weaponAssets[selectedWeaponIndex].texture;
+}
+
+std::string UI::getSelectedWeaponName() const {
+    if (weaponAssets.empty() || selectedWeaponIndex < 0 || selectedWeaponIndex >= weaponAssets.size()) return "weapon";
+    return weaponAssets[selectedWeaponIndex].name;
+}
+
+
+void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, float frameTime, sf::Vector2f mouseWorldPos) {
+    
+    // --- HIGH VISIBILITY HOVER TOOLTIP ---
+    ImGui::SetNextWindowPos(ImVec2(10, 10));
+    ImGui::SetNextWindowBgAlpha(0.6f); 
+    ImGuiWindowFlags tooltipFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | 
+                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | 
+                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs;
+    
+    if (ImGui::Begin("HoverTooltip", nullptr, tooltipFlags)) {
+        std::string hoveredName = "Air";
+        if (world) {
+            int wx = static_cast<int>(mouseWorldPos.x);
+            int wy = static_cast<int>(mouseWorldPos.y);
+            BaseComponent* base = world->get<BaseComponent>(wx, wy);
+            if (base && base->compMask != 0) {
+                for (const auto& mat : ALL_MATERIALS) {
+                    if (mat.id == base->id) {
+                        hoveredName = mat.name;
+                        break;
+                    }
+                }
+            }
+        }
+        ImGui::SetWindowFontScale(1.5f);
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Hovering: %s", hoveredName.c_str());
+        ImGui::SetWindowFontScale(1.0f);
+    }
+    ImGui::End();
+
+    // --- MAIN UI ---
     ImGui::Begin("Simulation Control");
 
     ImGui::Text("Performance: %.1f FPS", 1000.0f / frameTime);
@@ -56,42 +133,46 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
     ImGui::Text("Spawn Mode");
     int mode = static_cast<int>(spawnMode);
     ImGui::RadioButton("Brush (Particles)", &mode, static_cast<int>(SpawnMode::Particles));
-    ImGui::RadioButton("Rigid Body", &mode, static_cast<int>(SpawnMode::RigidBody));
+    ImGui::RadioButton("Image / Asset", &mode, static_cast<int>(SpawnMode::Image));
     ImGui::RadioButton("Entity", &mode, static_cast<int>(SpawnMode::Entity));
     ImGui::RadioButton("Weapon", &mode, static_cast<int>(SpawnMode::Weapon)); 
     spawnMode = static_cast<SpawnMode>(mode);
     
     ImGui::Separator();
 
-    if (spawnMode == SpawnMode::RigidBody) {
-        ImGui::Text("Rigid Body Assets");
-        ImGui::SliderFloat("Scale (%)", &rigidBodyScale, 0.1f, 5.0f, "%.2fx");
-        ImGui::Checkbox("Glue to Terrain", &glueToTerrain);
+    if (spawnMode == SpawnMode::Image) {
+        ImGui::Text("Image Assets Gallery");
+        ImGui::SliderFloat("Scale (%)", &assetScale, 0.1f, 5.0f, "%.2fx");
         
-        if (rigidBodyAssets.empty()) {
+        ImGui::Checkbox("Spawn as Rigid Body", &spawnAsRigidBody);
+        if (spawnAsRigidBody) {
+            ImGui::Checkbox("Glue to Terrain", &glueToTerrain);
+        }
+
+        ImGui::Spacing();
+        if (imageAssets.empty()) {
             ImGui::TextColored(ImVec4(1, 0, 0, 1), "No images found in:");
-            ImGui::TextWrapped("assets/images/rigidBodies/");
+            ImGui::TextWrapped("assets/images/rigidBodies/ OR assets/images/structures/");
         } else {
             int columns = std::max(1, static_cast<int>(ImGui::GetWindowWidth() / 80.0f));
-            if (ImGui::BeginTable("##rbgrid", columns)) {
-                for (size_t i = 0; i < rigidBodyAssets.size(); ++i) {
+            if (ImGui::BeginTable("##assetgrid", columns)) {
+                for (size_t i = 0; i < imageAssets.size(); ++i) {
                     ImGui::TableNextColumn();
-                    bool selected = (selectedRigidBodyIndex == i);
+                    bool selected = (selectedAssetIndex == i);
                     
                     if (selected) {
                         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.8f, 0.0f, 0.5f)); 
                     }
                     
-                    std::string btnId = "##rb" + std::to_string(i);
-                    if (ImGui::ImageButton(btnId.c_str(), rigidBodyAssets[i].texture, sf::Vector2f(60, 60))) {
-                        selectedRigidBodyIndex = i;
+                    std::string btnId = "##asset" + std::to_string(i);
+                    if (ImGui::ImageButton(btnId.c_str(), imageAssets[i].texture, sf::Vector2f(60, 60))) {
+                        selectedAssetIndex = i;
                     }
                     
                     if (selected) {
                         ImGui::PopStyleColor();
                     }
-                    
-                    ImGui::TextWrapped("%s", rigidBodyAssets[i].name.c_str());
+                    ImGui::TextWrapped("%s", imageAssets[i].name.c_str());
                 }
                 ImGui::EndTable();
             }
@@ -104,9 +185,29 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
         currentEntity = static_cast<EntityType>(ent);
     } 
     else if (spawnMode == SpawnMode::Weapon) {
-        ImGui::Text("Weapon Spawner");
-        ImGui::TextDisabled("Click to drop a weapon.");
-        ImGui::TextDisabled("Press 'E' near it to equip/drop.");
+        ImGui::Text("Weapon Assets Gallery");
+        if (weaponAssets.empty()) {
+            ImGui::TextColored(ImVec4(1, 0, 0, 1), "No images found in assets/images/weapons/");
+        } else {
+            int columns = std::max(1, static_cast<int>(ImGui::GetWindowWidth() / 80.0f));
+            if (ImGui::BeginTable("##weapongrid", columns)) {
+                for (size_t i = 0; i < weaponAssets.size(); ++i) {
+                    ImGui::TableNextColumn();
+                    bool selected = (selectedWeaponIndex == i);
+                    
+                    if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.8f, 0.0f, 0.5f)); 
+                    
+                    std::string btnId = "##weap" + std::to_string(i);
+                    if (ImGui::ImageButton(btnId.c_str(), weaponAssets[i].texture, sf::Vector2f(60, 60))) {
+                        selectedWeaponIndex = i;
+                    }
+                    
+                    if (selected) ImGui::PopStyleColor();
+                    ImGui::TextWrapped("%s", weaponAssets[i].name.c_str());
+                }
+                ImGui::EndTable();
+            }
+        }
     }
     else {
         ImGui::SliderFloat("Brush Radius", &selectionRadius, MIN_SELECTION_RADIUS, MAX_SELECTION_RADIUS);

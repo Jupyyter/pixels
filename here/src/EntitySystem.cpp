@@ -1,14 +1,13 @@
 #include "EntitySystem.hpp"
+#include "Weapon.hpp"
 #include <cmath>
 #include <iostream>
+#include <cstdlib>
 
-// P2M and M2P are now inherited from RigidBody.hpp, so we only define the ones unique to this file
 constexpr float PI       = 3.14159265358979323846f;
 constexpr float NO_GROUND = 1e9f;
-
 constexpr float FOOT_CAST_UP   = 24.0f;
 constexpr float FOOT_CAST_DOWN = 24.0f;
-
 constexpr float TARGET_CAST_UP   = 40.0f;
 constexpr float TARGET_CAST_DOWN = 80.0f;
 
@@ -19,7 +18,6 @@ inline sf::Vector2f lerpV(sf::Vector2f a, sf::Vector2f b, float t) {
 inline float length(sf::Vector2f v) { return std::hypot(v.x, v.y); }
 inline float clamp01(float t)       { return t < 0.f ? 0.f : (t > 1.f ? 1.f : t); }
 
-// ============================================================
 EntitySystem::EntitySystem(b2WorldId physWorld) : physicsWorldId(physWorld) {
     sf::Image dummy;
     dummy.resize(sf::Vector2u(32, 32), sf::Color(100, 100, 100));
@@ -27,7 +25,6 @@ EntitySystem::EntitySystem(b2WorldId physWorld) : physicsWorldId(physWorld) {
 }
 EntitySystem::~EntitySystem() { registry.clear(); }
 
-// ============================================================
 entt::entity EntitySystem::spawnPlayer(float x, float y, const std::string& texturePath) {
     auto entity = registry.create();
 
@@ -86,7 +83,20 @@ entt::entity EntitySystem::spawnPlayer(float x, float y, const std::string& text
     return entity;
 }
 
-// ============================================================
+void EntitySystem::triggerSwing(sf::Vector2f targetWorldPos) {
+    auto view = registry.view<PlayerControllerComponent>();
+    for (auto [entity, player] : view.each()) {
+        if (player.equippedWeapon && !player.isSwinging) {
+            player.isSwinging = true;
+            player.swingTimer = 0.0f;
+            player.swingEffectApplied = false;
+            player.swingTarget = targetWorldPos;
+            // Generate a slightly randomized float between -0.2f and 0.2f to warp the parabola 
+            player.swingRandomness = ((rand() % 100) / 100.0f) * 0.4f - 0.2f;
+        }
+    }
+}
+
 void EntitySystem::updateInput(float dt, RigidBodySystem& rbs, ParticleWorld& pw) {
     auto view = registry.view<PlayerControllerComponent, PhysicsComponent, SpriteSheetComponent>();
     view.each([&](auto, auto& player, auto& phys, auto& sprite) {
@@ -95,8 +105,8 @@ void EntitySystem::updateInput(float dt, RigidBodySystem& rbs, ParticleWorld& pw
         sf::Vector2f bodyPos(pos.x * M2P, pos.y * M2P);
 
         float desiredVelX = 0.0f;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) { desiredVelX = -player.moveSpeed; sprite.flipX = true;  }
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) { desiredVelX =  player.moveSpeed; sprite.flipX = false; }
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) { desiredVelX = -player.moveSpeed; if (!player.isSwinging) sprite.flipX = true;  }
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) { desiredVelX =  player.moveSpeed; if (!player.isSwinging) sprite.flipX = false; }
         vel.x = lerp(vel.x, desiredVelX, dt * 8.0f);
 
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W) && player.isGrounded)
@@ -108,30 +118,26 @@ void EntitySystem::updateInput(float dt, RigidBodySystem& rbs, ParticleWorld& pw
 
         b2Body_SetLinearVelocity(phys.bodyId, vel);
 
-        // Weapon Pick-up / Drop interaction
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::E)) {
             if (!player.ePressedLastFrame) {
                 player.ePressedLastFrame = true;
 
                 if (player.equippedWeapon) {
-                    // Drop Weapon
                     player.equippedWeapon->isEquipped = false;
                     b2Body_Enable(player.equippedWeapon->bodyId);
                     
                     b2Vec2 dropPos = { (bodyPos.x + (sprite.flipX ? -15.f : 15.f)) * P2M, (bodyPos.y - 10.f) * P2M };
-                    // FIX: Passed b2MakeRot(0.0f) instead of 0.0f
                     b2Body_SetTransform(player.equippedWeapon->bodyId, dropPos, b2MakeRot(0.0f));
                     b2Body_SetLinearVelocity(player.equippedWeapon->bodyId, { sprite.flipX ? -8.f : 8.f, -5.0f });
                     b2Body_SetAngularVelocity(player.equippedWeapon->bodyId, sprite.flipX ? -5.0f : 5.0f);
                     
                     player.equippedWeapon = nullptr;
                 } else {
-                    // Equip nearest weapon
                     RigidBody* nearest = rbs.getNearestWeapon(bodyPos, 40.0f);
                     if (nearest) {
                         nearest->clearFromWorld(pw);
                         nearest->isEquipped = true;
-                        b2Body_Disable(nearest->bodyId); // Suspend physical collision
+                        b2Body_Disable(nearest->bodyId); 
                         player.equippedWeapon = nearest;
                     }
                 }
@@ -142,7 +148,6 @@ void EntitySystem::updateInput(float dt, RigidBodySystem& rbs, ParticleWorld& pw
     });
 }
 
-// ============================================================
 float EntitySystem::groundCastY(float worldX, float castFromY, float maxDown, ParticleWorld& pw) {
     int px     = static_cast<int>(std::round(worldX));
     int startY = static_cast<int>(std::floor(castFromY));
@@ -154,11 +159,10 @@ float EntitySystem::groundCastY(float worldX, float castFromY, float maxDown, Pa
     return NO_GROUND;
 }
 
-// ============================================================
 void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
-    auto view = registry.view<PhysicsComponent, ProceduralAnimationComponent, SpriteSheetComponent>();
+    auto view = registry.view<PlayerControllerComponent, PhysicsComponent, ProceduralAnimationComponent, SpriteSheetComponent>();
 
-    view.each([&](auto entity, auto& phys, auto& anim, auto& spriteComp) {
+    view.each([&](auto entity, auto& player, auto& phys, auto& anim, auto& spriteComp) {
 
         b2Vec2 b2Pos = b2Body_GetPosition(phys.bodyId);
         sf::Vector2f bodyPos(b2Pos.x * M2P, b2Pos.y * M2P);
@@ -175,9 +179,7 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
         bool isAirborne  = (b2Vel.y < -5.0f) || (distToGround > 24.0f);
         bool wantsToWalk = std::abs(b2Vel.x) > 0.5f && !isAirborne;
 
-        if (auto* player = registry.try_get<PlayerControllerComponent>(entity)) {
-            player->isGrounded = !isAirborne;
-        }
+        player.isGrounded = !isAirborne;
 
         auto castNearFoot = [&](float worldX, float footY) -> float {
             float castFrom = footY - FOOT_CAST_UP;
@@ -206,8 +208,6 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
             }
         }
 
-        bool isStopped   = !wantsToWalk && !isAirborne;
-
         // ---- Sprite sheet ----
         {
             auto& as = spriteComp.animations[spriteComp.currentState];
@@ -230,9 +230,6 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
             anim.bob.offsetY  += anim.bob.velocity * dt;
         }
 
-        // ============================================================
-        // AIRBORNE
-        // ============================================================
         if (isAirborne) {
             anim.steppingLeg    = -1;
             anim.isStopping     = false;
@@ -249,9 +246,7 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
             goto update_hips;
         }
 
-        // ============================================================
         // GROUNDED
-        // ============================================================
         {
             bool  aIsLeft  = anim.legA.footWorld.x < anim.legB.footWorld.x;
             float targetXA = bodyPos.x + (aIsLeft ? -3.0f :  3.0f);
@@ -270,7 +265,6 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
                 leg.footWorld.y = leg.plantedY;
             };
 
-            // ---- Step state machine ----
             if (wantsToWalk) {
                 anim.isStopping = false;
 
@@ -339,9 +333,6 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
                 }
             }
 
-            // ============================================================
-            // EXECUTE ACTIVE STEP
-            // ============================================================
             {
                 ProceduralLeg* stepLeg = (anim.steppingLeg == 0) ? &anim.legA : &anim.legB;
                 ProceduralLeg* plant   = (anim.steppingLeg == 0) ? &anim.legB : &anim.legA;
@@ -429,9 +420,6 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
             }
         }
 
-        // ============================================================
-        // HIP JOINTS
-        // ============================================================
         update_hips:
         {
             sf::Vector2f vbp(bodyPos.x, bodyPos.y + 8.0f + anim.bob.offsetY);
@@ -445,7 +433,7 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
         }
 
         // ============================================================
-        // ARMS / HANDS / WEAPON ROTATION
+        // ARMS / HANDS / SWING MECHANICS
         // ============================================================
         {
             float speedX = std::abs(b2Vel.x * M2P);
@@ -456,7 +444,6 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
             bool facingLeft = spriteComp.flipX;
             float swingVal  = std::sin(anim.armSwing);
 
-            // Invert the arm swing offset based on facing direction so "forward" is always synced
             float facingDir   = facingLeft ? -1.0f : 1.0f;
             float swingOffset = swingVal * 5.0f * facingDir; 
             float swingHeight = -std::pow(swingVal, 2) * 3.0f;
@@ -464,31 +451,89 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
             float frontBaseX = facingLeft ? -4.0f :  4.0f;
             float backBaseX  = facingLeft ?  4.0f : -4.0f;
 
-            if (isAirborne) {
-                anim.handA.offset.x = lerp(anim.handA.offset.x, frontBaseX, dt * 10.0f);
-                anim.handA.offset.y = lerp(anim.handA.offset.y, -6.0f, dt * 10.0f);
-                anim.handB.offset.x = lerp(anim.handB.offset.x, backBaseX, dt * 10.0f);
-                anim.handB.offset.y = lerp(anim.handB.offset.y, -6.0f, dt * 10.0f);
+            if (player.isSwinging) {
+                player.swingTimer += dt;
+                float t = clamp01(player.swingTimer / player.swingDuration);
+
+                // Auto-face the swing direction
+                spriteComp.flipX = (player.swingTarget.x < bodyPos.x);
+
+                if (t >= 0.5f && !player.swingEffectApplied) {
+                    player.swingEffectApplied = true;
+                    if (player.equippedWeapon && player.equippedWeapon->isWeapon) {
+                        Weapon* w = static_cast<Weapon*>(player.equippedWeapon);
+                        w->performSwingEffect(bodyPos, player.swingTarget, pw, *pw.getRigidBodySystem());
+                    }
+                }
+
+                if (t >= 1.0f) {
+                    player.isSwinging = false;
+                }
+
+                // 1. Get Forward / Targeting Directions
+                sf::Vector2f dir = player.swingTarget - bodyPos;
+                float dist = std::max(length(dir), 1.0f);
+                sf::Vector2f F = { dir.x / dist, dir.y / dist };
                 
-                anim.weaponAngle = facingLeft ? -90.0f : 90.0f; 
+                // 2. Derive Perp plane (relative to facing direction for symmetry)
+                float sign = spriteComp.flipX ? -1.0f : 1.0f;
+                sf::Vector2f Perp = { F.y * sign, -F.x * sign };
+
+                // 3. Define Parabola attributes
+                float r_val = player.swingRandomness; 
+                float half_width = 16.0f + r_val * 10.0f; 
+                float reach      = 22.0f + r_val * 10.0f;
+                float base_dist  = 2.0f;
+
+                // Create a smooth sweep traversing 1.0 -> -1.0
+                float s = std::cos(t * PI); 
+                
+                // 4. Parabolic projection using the derived local space
+                float x_local = s * half_width;
+                float y_local = reach * (1.0f - s * s);
+                anim.handB.offset = F * (base_dist + y_local) + Perp * x_local;
+
+                // 5. Normal calculation for Weapon Rotation (Equation: y = reach - a * x^2)
+                float a = reach / (half_width * half_width);
+                
+                // Construct the exact, rigid perpendicular normal of the drawn geometry curve
+                sf::Vector2f N_local(2.0f * a * x_local, 1.0f);
+                float n_len = std::hypot(N_local.x, N_local.y);
+                N_local.x /= n_len;
+                N_local.y /= n_len;
+                
+                // Return Normal geometry back to standard World space
+                sf::Vector2f N_world = Perp * N_local.x + F * N_local.y;
+                
+                // Adding + 90.0f perfectly realigns the math normal to your weapon's native UP orientation 
+                anim.weaponAngle = std::atan2(N_world.y, N_world.x) * 180.0f / PI + 90.0f;
+
+                // Reset front hand to normal
+                anim.handA.offset.x = lerp(anim.handA.offset.x, frontBaseX, dt * 15.0f);
+                anim.handA.offset.y = lerp(anim.handA.offset.y, 0.0f, dt * 15.0f);
+
             } else {
-                anim.handA.offset.x = lerp(anim.handA.offset.x, frontBaseX + swingOffset, dt * 20.0f);
-                anim.handA.offset.y = lerp(anim.handA.offset.y, swingHeight, dt * 20.0f);
-                anim.handB.offset.x = lerp(anim.handB.offset.x, backBaseX - swingOffset, dt * 20.0f);
-                anim.handB.offset.y = lerp(anim.handB.offset.y, swingHeight, dt * 20.0f);
+                if (isAirborne) {
+                    anim.handA.offset.x = lerp(anim.handA.offset.x, frontBaseX, dt * 10.0f);
+                    anim.handA.offset.y = lerp(anim.handA.offset.y, -6.0f, dt * 10.0f);
+                    anim.handB.offset.x = lerp(anim.handB.offset.x, backBaseX, dt * 10.0f);
+                    anim.handB.offset.y = lerp(anim.handB.offset.y, -6.0f, dt * 10.0f);
+                    
+                    anim.weaponAngle = facingLeft ? -90.0f : 90.0f; 
+                } else {
+                    anim.handA.offset.x = lerp(anim.handA.offset.x, frontBaseX + swingOffset, dt * 20.0f);
+                    anim.handA.offset.y = lerp(anim.handA.offset.y, swingHeight, dt * 20.0f);
+                    anim.handB.offset.x = lerp(anim.handB.offset.x, backBaseX - swingOffset, dt * 20.0f);
+                    anim.handB.offset.y = lerp(anim.handB.offset.y, swingHeight, dt * 20.0f);
 
-                // Calculate derivative of the parabola
-                float slopeB = 1.2f * swingVal;
-                float angleDeg = std::atan(slopeB) * 180.0f / PI;
+                    float slopeB = 1.2f * swingVal;
+                    float angleDeg = std::atan(slopeB) * 180.0f / PI;
 
-                // When flipping left, mirror the base angle but strictly track the identical tilt
-                anim.weaponAngle = facingLeft ? (-90.0f - angleDeg) : (90.0f + angleDeg);
+                    anim.weaponAngle = facingLeft ? (-90.0f - angleDeg) : (90.0f + angleDeg);
+                }
             }
         }
 
-        // ============================================================
-        // BODY HEIGHT CORRECTION
-        // ============================================================
         if (!isAirborne) {
             float avgFootY     = (anim.legA.footWorld.y + anim.legB.footWorld.y) * 0.5f;
             float desiredBodyY = avgFootY - 17.0f;
@@ -502,7 +547,6 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
     });
 }
 
-// ============================================================
 void EntitySystem::drawPixelatedHand(sf::RenderTarget& target, const sf::Vector2f& center, sf::Color col) {
     int cx = static_cast<int>(std::round(center.x));
     int cy = static_cast<int>(std::round(center.y));
@@ -523,7 +567,6 @@ void EntitySystem::drawPixelatedHand(sf::RenderTarget& target, const sf::Vector2
     target.draw(pixels);
 }
 
-// ============================================================
 void EntitySystem::drawPixelatedLeg(sf::RenderTarget& target, const sf::Vector2f& hip,
                                     const sf::Vector2f& foot, sf::Color col) {
     int x0 = static_cast<int>(std::round(hip.x)); int y0 = static_cast<int>(std::round(hip.y));
@@ -552,7 +595,6 @@ void EntitySystem::drawPixelatedLeg(sf::RenderTarget& target, const sf::Vector2f
     target.draw(pixels);
 }
 
-// ============================================================
 void EntitySystem::renderEntities(sf::RenderTarget& target) {
     auto view = registry.view<PlayerControllerComponent, PhysicsComponent, ProceduralAnimationComponent, SpriteSheetComponent>();
     view.each([&](auto, auto& player, auto& phys, auto& anim, auto& spriteComp) {
@@ -561,7 +603,6 @@ void EntitySystem::renderEntities(sf::RenderTarget& target) {
         sf::Vector2f bodyPos(b2Pos.x * M2P, b2Pos.y * M2P);
         sf::Vector2f vbp(bodyPos.x, bodyPos.y + 8.0f + anim.bob.offsetY);
 
-        // Front Hand (Direction of gaze - handA) rendered BEHIND
         drawPixelatedHand(target, vbp + anim.handA.offset, sf::Color(180, 180, 180));
 
         drawPixelatedLeg(target, vbp + anim.legA.hipOffset, anim.legA.footWorld, sf::Color::White);
@@ -573,17 +614,14 @@ void EntitySystem::renderEntities(sf::RenderTarget& target) {
             target.draw(*spriteComp.sprite);
         }
 
-        // Back Hand (Trailing hand - handB) rendered OVER the player
         drawPixelatedHand(target, vbp + anim.handB.offset, sf::Color::White);
 
-        // Render weapon perfectly matching the Back Hand
         if (player.equippedWeapon) {
             player.equippedWeapon->renderPixelated(target, vbp + anim.handB.offset, anim.weaponAngle, spriteComp.flipX);
         }
     });
 }
 
-// ============================================================
 sf::Vector2f EntitySystem::getPlayerPos() const {
     auto view = registry.view<PhysicsComponent>();
     for (auto [entity, phys] : view.each()) {
@@ -593,7 +631,6 @@ sf::Vector2f EntitySystem::getPlayerPos() const {
     return {0.f, 0.f};
 }
 
-// ============================================================
 void EntitySystem::killAndRagdollEntity(entt::entity e, ParticleWorld& pw, MaterialID mat) {
     auto* phys = registry.try_get<PhysicsComponent>(e);
     if (!phys) return;

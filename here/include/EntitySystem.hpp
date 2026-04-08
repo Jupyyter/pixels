@@ -23,12 +23,12 @@ public:
 
     entt::entity spawnPlayer(float x, float y, const std::string& texturePath = "");
 
+    void triggerSwing(sf::Vector2f targetWorldPos);
     void updateInput(float dt, RigidBodySystem& rbs, ParticleWorld& pw);
     void updateProceduralAnimations(float dt, ParticleWorld& particleWorld);
     void renderEntities(sf::RenderTarget& target);
 
     void killAndRagdollEntity(entt::entity e, ParticleWorld& particleWorld, MaterialID meatMaterial);
     
-    // Getter for rendering outlines in sandSim
     sf::Vector2f getPlayerPos() const;
 };

@@ -33,34 +33,6 @@ SandSimApp::~SandSimApp() {
     ImGui::SFML::Shutdown();
 }
 
-void SandSimApp::run() {
-    clock.restart();
-    frameClock.restart();
-
-    while (running && window.isOpen()) {
-        handleEvents();
-
-        if (currentState == GameState::PLAYING) {
-            if (isPanning) {
-                sf::Vector2i currentPos = sf::Mouse::getPosition(window);
-                sf::Vector2f delta = sf::Vector2f(lastMousePos - currentPos);
-                gameView.move(delta * currentZoom);
-                lastMousePos = currentPos;
-                constrainView();
-            } else if (!isMouseOverUI()) {
-                if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) || 
-                    sf::Mouse::isButtonPressed(sf::Mouse::Button::Right)) {
-                    handleMouseHeld();
-                } else {
-                    hasPreviousMousePos = false;
-                }
-            }
-        }
-
-        update();
-        render();
-    }
-}
 sf::Image scaleImageNearestNeighbor(const sf::Image& source, float scale) {
     if (scale == 1.0f) return source; 
     
@@ -80,6 +52,7 @@ sf::Image scaleImageNearestNeighbor(const sf::Image& source, float scale) {
     }
     return result;
 }
+
 void SandSimApp::constrainView() {
     sf::Vector2f viewSize = gameView.getSize();
     sf::Vector2f center = gameView.getCenter();
@@ -165,43 +138,88 @@ void SandSimApp::handleMenuEvents(const sf::Event& event) {
 void SandSimApp::handleGameEvents(const sf::Event& event) {
     if (const auto* key = event.getIf<sf::Event::KeyPressed>()) {
         if (key->code == sf::Keyboard::Key::Escape) returnToMenu();
+        if (key->code == sf::Keyboard::Key::Grave) {
+            isUIVisible = !isUIVisible;
+        }
     }
     else if (const auto* resize = event.getIf<sf::Event::Resized>()) {
         handleResize(resize->size.x, resize->size.y);
     }
     else if (const auto* mouseBtn = event.getIf<sf::Event::MouseButtonPressed>()) {
-        if (mouseBtn->button == sf::Mouse::Button::Left && !isMouseOverUI()) {
-            if (ui && world) {
-                sf::Vector2i mousePos = sf::Mouse::getPosition(window);
-                sf::Vector2f worldPos = window.mapPixelToCoords(mousePos, gameView);
-                
-                if (ui->getSpawnMode() == SpawnMode::RigidBody) {
-                    const sf::Image* srcImg = ui->getSelectedRigidBodyImage();
-                    if (srcImg) {
-                        float scale = ui->getRigidBodyScale();
-                        sf::Image scaled = scaleImageNearestNeighbor(*srcImg, scale);
-                        
-                        int startX = static_cast<int>(worldPos.x) - (scaled.getSize().x / 2);
-                        int startY = static_cast<int>(worldPos.y) - (scaled.getSize().y / 2);
-                        
-                        world->addRigidBodyFromSprite(scaled, startX, startY, ui->getCurrentMaterialID(), ui->getGlueToTerrain());
+        if (mouseBtn->button == sf::Mouse::Button::Left) {
+            sf::Vector2i mousePos = sf::Mouse::getPosition(window);
+            sf::Vector2f worldPos = window.mapPixelToCoords(mousePos, gameView);
+
+            if (isUIVisible) {
+                if (!isMouseOverUI() && ui && world) {
+                    if (ui->getSpawnMode() == SpawnMode::Image) {
+                        const sf::Image* srcImg = ui->getSelectedAssetImage();
+                        if (srcImg) {
+                            float scale = ui->getAssetScale();
+                            sf::Image scaled = scaleImageNearestNeighbor(*srcImg, scale);
+                            int startX = static_cast<int>(worldPos.x) - (scaled.getSize().x / 2);
+                            int startY = static_cast<int>(worldPos.y) - (scaled.getSize().y / 2);
+                            
+                            if (ui->getSpawnAsRigidBody()) world->addRigidBodyFromSprite(scaled, startX, startY, ui->getCurrentMaterialID(), ui->getGlueToTerrain());
+                            else world->addStructureFromSprite(scaled, startX, startY, ui->getCurrentMaterialID());
+                        }
                     }
-                } 
-                else if (ui->getSpawnMode() == SpawnMode::Weapon) {
-                    sf::Image img;
-                    if (img.loadFromFile("assets/images/weapon.png")) {
-                        world->addWeapon(img, static_cast<int>(worldPos.x), static_cast<int>(worldPos.y));
+                    else if (ui->getSpawnMode() == SpawnMode::Weapon) {
+                        const sf::Image* srcImg = ui->getSelectedWeaponImage();
+                        std::string wName = ui->getSelectedWeaponName();
+                        if (srcImg) {
+                            int startX = static_cast<int>(worldPos.x) - (srcImg->getSize().x / 2);
+                            int startY = static_cast<int>(worldPos.y) - (srcImg->getSize().y / 2);
+                            world->addWeapon(*srcImg, startX, startY, wName);
+                        }
+                    }
+                    else if (ui->getSpawnMode() == SpawnMode::Entity) {
+                        if (entitySystem && ui->getSelectedEntity() == EntityType::Player) {
+                            entitySystem->spawnPlayer(worldPos.x, worldPos.y, "assets/images/jhonnyIdle.png");
+                        }
                     }
                 }
-                else if (ui->getSpawnMode() == SpawnMode::Entity) {
-                    if (entitySystem && ui->getSelectedEntity() == EntityType::Player) {
-                        entitySystem->spawnPlayer(worldPos.x, worldPos.y, "assets/images/jhonnyIdle.png");
-                    }
+            } 
+            else {
+                // UI IS HIDDEN! Mouse clicks trigger swinging mechanics
+                if (entitySystem) {
+                    entitySystem->triggerSwing(worldPos);
                 }
             }
         }
     }
 }
+
+void SandSimApp::run() {
+    clock.restart();
+    frameClock.restart();
+
+    while (running && window.isOpen()) {
+        handleEvents();
+
+        if (currentState == GameState::PLAYING) {
+            if (isPanning) {
+                sf::Vector2i currentPos = sf::Mouse::getPosition(window);
+                sf::Vector2f delta = sf::Vector2f(lastMousePos - currentPos);
+                gameView.move(delta * currentZoom);
+                lastMousePos = currentPos;
+                constrainView();
+            } else if (isUIVisible && !isMouseOverUI()) {
+                if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) || sf::Mouse::isButtonPressed(sf::Mouse::Button::Right)) {
+                    handleMouseHeld();
+                } else {
+                    hasPreviousMousePos = false;
+                }
+            } else {
+                hasPreviousMousePos = false;
+            }
+        }
+
+        update();
+        render();
+    }
+}
+
 void SandSimApp::handleZoom(float delta, const sf::Vector2i& mousePos) {
     sf::Vector2f worldBefore = window.mapPixelToCoords(mousePos, gameView);
     float factor = (delta > 0) ? 0.9f : 1.1f;
@@ -240,12 +258,16 @@ void SandSimApp::update() {
     ImGui::SFML::Update(window, dt);
 
     if (currentState == GameState::PLAYING) {
-        if (ui) {
-            ui->update(window, dt, simulationRunning, frameTime);
-            if (renderer) {
-                renderer->setShowChunkBounds(ui->getShowChunkBounds());
-                renderer->setShowColliders(ui->getShowColliders());
-            }
+        sf::Vector2i mousePos = sf::Mouse::getPosition(window);
+        sf::Vector2f worldPos = window.mapPixelToCoords(mousePos, gameView);
+        
+        if (ui && isUIVisible) {
+            ui->update(window, dt, simulationRunning, frameTime, worldPos);
+        }
+        
+        if (ui && renderer) {
+            renderer->setShowChunkBounds(ui->getShowChunkBounds());
+            renderer->setShowColliders(ui->getShowColliders());
         }
         
         if (simulationRunning && world) {
@@ -262,6 +284,7 @@ void SandSimApp::update() {
         }
     }
 }
+
 void SandSimApp::render() {
     window.clear(sf::Color(0, 0, 0));
     
@@ -279,29 +302,22 @@ void SandSimApp::render() {
         border.setOutlineThickness(2.0f / currentZoom);
         window.draw(border);
 
-        if (world && renderer) {
-            renderer->render(window, *world);
-        }
+        if (world && renderer) renderer->render(window, *world);
 
         if (entitySystem) {
             world->getRigidBodySystem()->renderWeaponsOutline(window, entitySystem->getPlayerPos());
-            
-            // Only draw glued edge outlines if "Show Colliders" debug overlay is active
-            if (ui && ui->getShowColliders()) {
-                world->getRigidBodySystem()->renderGluedOutlines(window, *world);
-            }
-            
+            if (ui && ui->getShowColliders()) world->getRigidBodySystem()->renderGluedOutlines(window, *world);
             entitySystem->renderEntities(window);
         }
         
-        if (!isMouseOverUI() && !isPanning) {
+        if (isUIVisible && !isMouseOverUI() && !isPanning) {
             sf::Vector2f worldPos = window.mapPixelToCoords(sf::Mouse::getPosition(window), gameView);
             
-            if (ui->getSpawnMode() == SpawnMode::RigidBody) {
-                const sf::Texture* ghostTex = ui->getSelectedRigidBodyTexture();
+            if (ui->getSpawnMode() == SpawnMode::Image) {
+                const sf::Texture* ghostTex = ui->getSelectedAssetTexture();
                 if (ghostTex) {
                     sf::Sprite ghostSprite(*ghostTex);
-                    float scale = ui->getRigidBodyScale();
+                    float scale = ui->getAssetScale();
                     ghostSprite.setScale({scale, scale});
                     ghostSprite.setOrigin({ghostTex->getSize().x / 2.0f, ghostTex->getSize().y / 2.0f});
                     ghostSprite.setPosition(worldPos);
@@ -309,8 +325,19 @@ void SandSimApp::render() {
                     ghostSprite.setColor(sf::Color(255, 255, 255, 128)); 
                     window.draw(ghostSprite);
                 }
-            } 
-            else if (ui->getSpawnMode() == SpawnMode::Entity || ui->getSpawnMode() == SpawnMode::Weapon) {
+            }
+            else if (ui->getSpawnMode() == SpawnMode::Weapon) {
+                const sf::Texture* ghostTex = ui->getSelectedWeaponTexture();
+                if (ghostTex) {
+                    sf::Sprite ghostSprite(*ghostTex);
+                    ghostSprite.setOrigin({ghostTex->getSize().x / 2.0f, ghostTex->getSize().y / 2.0f});
+                    ghostSprite.setPosition(worldPos);
+                    
+                    ghostSprite.setColor(sf::Color(255, 255, 255, 128)); 
+                    window.draw(ghostSprite);
+                }
+            }
+            else if (ui->getSpawnMode() == SpawnMode::Entity) {
                 sf::RectangleShape brush({8.0f, 16.0f});
                 brush.setOrigin({4.0f, 8.0f});
                 brush.setPosition(worldPos);
@@ -329,10 +356,12 @@ void SandSimApp::render() {
         }
 
         window.setView(window.getDefaultView());
-        if (ui) ui->render(window); 
+        if (ui && isUIVisible) ui->render(window); 
     }
     
+    // FIX: This must always be called unconditionally to finish the ImGui Frame properly
     ImGui::SFML::Render(window);
+    
     window.display();
 }
 

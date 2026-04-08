@@ -61,6 +61,7 @@ struct Chunk {
     }
 };
 
+// --- CORRECTED PARTICLE CONTEXT ---
 struct ParticleContext {
     Chunk* chunk;
     uint32_t index;
@@ -97,7 +98,10 @@ public:
     void addRigidBodyFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat, bool glue = false);
     void addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, MaterialID mat, bool glue = false);
     
-    void addWeapon(const sf::Image& img, int startX, int startY);
+    void addStructureFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat);
+
+    // Multi-Weapon support passing weapon name explicitly
+    void addWeapon(const sf::Image& img, int startX, int startY, const std::string& name);
     void renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2f playerPos) const;
 
     void updateChunkPixel(Chunk* c, uint32_t localIdx, sf::Color color);

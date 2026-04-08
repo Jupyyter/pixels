@@ -1,12 +1,14 @@
 #include "RigidBody.hpp"
+#include "Weapon.hpp"
 #include <cmath>
 #include <unordered_set>
 #include <unordered_map>
 #include <vector>
+#include <algorithm>
 
 constexpr float PI = 3.14159265358979323846f;
 
-RigidBody::RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalParticle>& parts, b2Vec2 pos, float angle, b2Vec2 linVel, float angVel, bool glued, int sX, int sY) {
+RigidBody::RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalParticle>& parts, b2Vec2 pos, float angle, b2Vec2 linVel, float angVel, bool weapon, bool glued, int sX, int sY, sf::Vector2f customPivot, float angleOffset) {
     this->worldId = worldId;
     this->width = w;
     this->height = h;
@@ -14,6 +16,15 @@ RigidBody::RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalPar
     this->isGlued = glued;
     this->startX = sX;
     this->startY = sY;
+    this->isWeapon = weapon;
+    this->isIndestructible = weapon;
+    this->visualAngleOffset = angleOffset;
+    
+    if (customPivot.x == -1 && customPivot.y == -1) {
+        pivot = {width / 2.0f - 0.5f, height / 2.0f - 0.5f};
+    } else {
+        pivot = customPivot;
+    }
     
     particles.resize(w * h);
     for (auto& p : particles) p.active = false; 
@@ -35,7 +46,7 @@ RigidBody::RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalPar
         bdef.angularDamping = 2.0f;
         bdef.linearDamping = 0.2f;
         bdef.enableSleep = true;
-        bdef.isBullet = true; 
+        bdef.isBullet = true; // Essential for continuous collision detection (CCD)
         bodyId = b2CreateBody(worldId, &bdef);
 
         rebuildFixtures();
@@ -85,7 +96,7 @@ std::vector<std::vector<LocalParticle>> RigidBody::findIslands() {
     return islands;
 }
 
-RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int startY, MaterialID mat, bool weapon, bool glued) {
+RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int startY, MaterialID mat, bool weapon, bool glued, sf::Vector2f customPivot, float angleOffset) {
     this->worldId = worldId;
     width = img.getSize().x;
     height = img.getSize().y;
@@ -96,6 +107,13 @@ RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int st
     this->isGlued = glued;
     this->startX = startX;
     this->startY = startY;
+    this->visualAngleOffset = angleOffset;
+
+    if (customPivot.x == -1 && customPivot.y == -1) {
+        pivot = {width / 2.0f - 0.5f, height / 2.0f - 0.5f};
+    } else {
+        pivot = customPivot;
+    }
 
     particles.resize(width * height);
     for (auto& p : particles) p.active = false;
@@ -128,14 +146,14 @@ RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int st
         b2BodyDef bdef = b2DefaultBodyDef();
         bdef.type = b2_dynamicBody;
 
-        float centerX = static_cast<float>(startX) + width / 2.0f;
-        float centerY = static_cast<float>(startY) + height / 2.0f;
+        float centerX = static_cast<float>(startX) + pivot.x;
+        float centerY = static_cast<float>(startY) + pivot.y;
         bdef.position = {centerX * P2M, centerY * P2M};
 
         bdef.angularDamping = 2.0f; 
         bdef.linearDamping = 0.2f;  
         bdef.enableSleep = true;
-        bdef.isBullet = true; 
+        bdef.isBullet = true; // Essential for Continuous Collision Detection (CCD)
         bodyId = b2CreateBody(worldId, &bdef);
 
         rebuildFixtures();
@@ -159,14 +177,19 @@ void RigidBody::clearFromWorld(ParticleWorld& world) {
     drawnPixels.clear();
 }
 
-void RigidBody::renderPixelated(sf::RenderTarget& target, sf::Vector2f pos, float angleDeg, bool flipX, sf::Color overrideColor) {
+void RigidBody::renderPixelated(sf::RenderTarget& target, sf::Vector2f pos, float angleDeg, bool flipX, sf::Color overrideColor, bool applyVisualOffset) {
     sf::VertexArray va(sf::PrimitiveType::Triangles);
 
-    float rad = -angleDeg * PI / 180.0f;
+    float finalAngle = angleDeg;
+    if (applyVisualOffset) {
+        finalAngle += (flipX ? -visualAngleOffset : visualAngleOffset);
+    }
+
+    float rad = -finalAngle * PI / 180.0f;
     float cs  = std::cos(rad);
     float sn  = std::sin(rad);
 
-    float radius = std::max(width, height) * 0.7071f + 1.0f;
+    float radius = std::max(width, height) * 0.7071f + std::max(pivot.x, pivot.y) + 1.0f;
     int maxD = static_cast<int>(std::ceil(radius));
 
     for (int dy = -maxD; dy <= maxD; ++dy) {
@@ -176,8 +199,8 @@ void RigidBody::renderPixelated(sf::RenderTarget& target, sf::Vector2f pos, floa
 
             if (flipX) rx = -rx;
 
-            int lx = static_cast<int>(std::round(rx + width / 2.0f - 0.5f));
-            int ly = static_cast<int>(std::round(ry + height / 2.0f - 0.5f));
+            int lx = static_cast<int>(std::round(rx + pivot.x));
+            int ly = static_cast<int>(std::round(ry + pivot.y));
 
             if (lx >= 0 && lx < width && ly >= 0 && ly < height) {
                 const auto& p = particles[ly * width + lx];
@@ -200,6 +223,73 @@ void RigidBody::renderPixelated(sf::RenderTarget& target, sf::Vector2f pos, floa
     }
     
     if (va.getVertexCount() > 0) target.draw(va);
+}
+
+void RigidBody::rebuildFixtures() {
+    if (isGlued) return;
+
+    int shapeCount = b2Body_GetShapeCount(bodyId);
+    if (shapeCount > 0) {
+        std::vector<b2ShapeId> shapes(shapeCount);
+        b2Body_GetShapes(bodyId, shapes.data(), shapeCount);
+        for(int i = 0; i < shapeCount; ++i) {
+            b2DestroyShape(shapes[i], true); 
+        }
+    }
+
+    std::vector<bool> visited(width * height, false);
+    
+    // OPTIMIZED GREEDY RECTANGLE GENERATION
+    // This creates perfect axis-aligned rectangles which Box2D processes extremely fast
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            int idx = y * width + x;
+            
+            if (particles[idx].active && !visited[idx]) {
+                int w = 0;
+                while (x + w < width && particles[y * width + x + w].active && !visited[y * width + x + w]) w++;
+                
+                int h = 1;
+                bool canExpand = true;
+                while (y + h < height && canExpand) {
+                    for (int i = 0; i < w; ++i) {
+                        int nIdx = (y + h) * width + x + i;
+                        if (!particles[nIdx].active || visited[nIdx]) {
+                            canExpand = false;
+                            break;
+                        }
+                    }
+                    if (canExpand) h++;
+                }
+                
+                for (int j = 0; j < h; ++j) {
+                    for (int i = 0; i < w; ++i) {
+                        visited[(y + j) * width + x + i] = true;
+                    }
+                }
+                
+                float hx = (w / 2.0f) * P2M;
+                float hy = (h / 2.0f) * P2M;
+                
+                float cx = x + (w / 2.0f) - pivot.x;
+                float cy = y + (h / 2.0f) - pivot.y;
+                
+                b2Polygon box = b2MakeOffsetBox(hx, hy, {cx * P2M, cy * P2M}, b2MakeRot(0.0f));
+                
+                // CRITICAL FIX: Radius 0.0f stops "bumpy seams" between rectangles.
+                // It ensures flat walls act like perfect flat walls in the physics engine.
+                box.radius = 0.0f; 
+                
+                b2ShapeDef shapeDef = b2DefaultShapeDef();
+                shapeDef.density = 2.0f;     
+                shapeDef.material.friction = 0.1f;    
+                shapeDef.material.restitution = 0.0f; // Bouncy components easily glitch. Keep at 0.
+                
+                b2CreatePolygonShape(bodyId, &shapeDef, &box); 
+            }
+        }
+    }
+    needsFixtureRebuild = false;
 }
 
 void RigidBodySystem::renderDebug(sf::RenderTarget& target) const {
@@ -232,31 +322,6 @@ void RigidBodySystem::renderDebug(sf::RenderTarget& target) const {
                 sfShape.setOutlineColor(color);
                 sfShape.setOutlineThickness(thickness);
                 target.draw(sfShape);
-                
-            } else if (type == b2_circleShape) {
-                b2Circle circle = b2Shape_GetCircle(shapes[i]);
-                b2Vec2 worldCenter = b2TransformPoint(xf, circle.center);
-                
-                sf::CircleShape sfCircle(circle.radius * M2P);
-                sfCircle.setOrigin({circle.radius * M2P, circle.radius * M2P});
-                sfCircle.setPosition({worldCenter.x * M2P, worldCenter.y * M2P});
-                
-                sfCircle.setFillColor(sf::Color(color.r, color.g, color.b, 60));
-                sfCircle.setOutlineColor(color);
-                sfCircle.setOutlineThickness(thickness);
-                target.draw(sfCircle);
-                
-            } else if (type == b2_segmentShape) {
-                b2Segment segment = b2Shape_GetSegment(shapes[i]);
-                b2Vec2 p1 = b2TransformPoint(xf, segment.point1);
-                b2Vec2 p2 = b2TransformPoint(xf, segment.point2);
-                
-                sf::Vertex line[2];
-                line[0].position = sf::Vector2f(p1.x * M2P, p1.y * M2P);
-                line[0].color = color;
-                line[1].position = sf::Vector2f(p2.x * M2P, p2.y * M2P);
-                line[1].color = color;
-                target.draw(line, 2, sf::PrimitiveType::Lines);
             }
         }
     };
@@ -265,69 +330,33 @@ void RigidBodySystem::renderDebug(sf::RenderTarget& target) const {
     for (const auto& rb : bodies) drawBody(rb->bodyId, sf::Color::Green);
 }
 
-void RigidBody::rebuildFixtures() {
-    if (isGlued) return;
+void RigidBodySystem::addBody(std::unique_ptr<RigidBody> rb) {
+    bodies.push_back(std::move(rb));
+}
 
-    int shapeCount = b2Body_GetShapeCount(bodyId);
-    if (shapeCount > 0) {
-        std::vector<b2ShapeId> shapes(shapeCount);
-        b2Body_GetShapes(bodyId, shapes.data(), shapeCount);
-        for(int i = 0; i < shapeCount; ++i) {
-            b2DestroyShape(shapes[i], true); 
-        }
-    }
-
-    std::vector<bool> visited(width * height, false);
-    
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            int idx = y * width + x;
+void RigidBodySystem::applyMeleeHit(sf::Vector2f pos, sf::Vector2f dir, float range, float force, bool shatter, ParticleWorld& world) {
+    for (auto& rb : bodies) {
+        if (rb->isEquipped || rb->isGlued || rb->isIndestructible) continue;
+        
+        b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
+        sf::Vector2f wp(bp.x * M2P, bp.y * M2P);
+        float dist = std::hypot(wp.x - pos.x, wp.y - pos.y);
+        
+        if (dist <= range) {
+            sf::Vector2f toBody = {wp.x - pos.x, wp.y - pos.y};
+            float dot = (toBody.x * dir.x + toBody.y * dir.y) / dist;
             
-            if (particles[idx].active && !visited[idx]) {
-                int w = 0;
-                while (x + w < width && particles[y * width + x + w].active && !visited[y * width + x + w]) w++;
-                
-                int h = 1;
-                bool canExpand = true;
-                while (y + h < height && canExpand) {
-                    for (int i = 0; i < w; ++i) {
-                        int nIdx = (y + h) * width + x + i;
-                        if (!particles[nIdx].active || visited[nIdx]) {
-                            canExpand = false;
-                            break;
-                        }
-                    }
-                    if (canExpand) h++;
-                }
-                
-                for (int j = 0; j < h; ++j) {
-                    for (int i = 0; i < w; ++i) {
-                        visited[(y + j) * width + x + i] = true;
-                    }
-                }
-                
-                float radius = 0.02f;
-                float hx = (w / 2.0f) * P2M - radius;
-                float hy = (h / 2.0f) * P2M - radius;
-                if (hx < 0.01f) hx = 0.01f;
-                if (hy < 0.01f) hy = 0.01f;
-                
-                float cx = x + (w / 2.0f) - (width / 2.0f);
-                float cy = y + (h / 2.0f) - (height / 2.0f);
-                
-                b2Polygon box = b2MakeOffsetBox(hx, hy, {cx * P2M, cy * P2M}, b2MakeRot(0.0f));
-                box.radius = radius;
-                
-                b2ShapeDef shapeDef = b2DefaultShapeDef();
-                shapeDef.density = 2.0f;     
-                shapeDef.material.friction = 0.1f;    
-                shapeDef.material.restitution = 0.05f;
-                
-                b2CreatePolygonShape(bodyId, &shapeDef, &box); 
+            if (dot > 0.4f) { 
+                b2Body_ApplyLinearImpulseToCenter(rb->bodyId, {dir.x * force, dir.y * force}, true);
             }
         }
     }
-    needsFixtureRebuild = false;
+
+    if (shatter) {
+        for (float d = 0; d < range; d += 2.0f) {
+            world.eraseCircle(pos.x + dir.x * d, pos.y + dir.y * d, 4.0f);
+        }
+    }
 }
 
 RigidBodySystem::RigidBodySystem() {
@@ -397,8 +426,8 @@ void RigidBodySystem::addRigidBodyFromSprite(const sf::Image& img, int x, int y,
     bodies.push_back(std::move(rb));
 }
 
-void RigidBodySystem::addWeapon(const sf::Image& img, int x, int y) {
-    bodies.push_back(std::make_unique<RigidBody>(worldId, img, x, y, MaterialID::Sand, true, false));
+void RigidBodySystem::addWeapon(const sf::Image& img, int x, int y, const std::string& name) {
+    bodies.push_back(std::make_unique<Weapon>(worldId, img, x, y, name));
 }
 
 RigidBody* RigidBodySystem::getNearestWeapon(sf::Vector2f pos, float radius) {
@@ -430,14 +459,13 @@ void RigidBodySystem::renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2
             b2Transform xf = b2Body_GetTransform(rb->bodyId);
             float ang = std::atan2(xf.q.s, xf.q.c) * 180.f / PI;
             
-            rb->renderPixelated(target, wp + sf::Vector2f( 1,  0), ang, false, sf::Color::Red);
-            rb->renderPixelated(target, wp + sf::Vector2f(-1,  0), ang, false, sf::Color::Red);
-            rb->renderPixelated(target, wp + sf::Vector2f( 0,  1), ang, false, sf::Color::Red);
-            rb->renderPixelated(target, wp + sf::Vector2f( 0, -1), ang, false, sf::Color::Red);
+            rb->renderPixelated(target, wp + sf::Vector2f( 1,  0), ang, false, sf::Color::Red, false);
+            rb->renderPixelated(target, wp + sf::Vector2f(-1,  0), ang, false, sf::Color::Red, false);
+            rb->renderPixelated(target, wp + sf::Vector2f( 0,  1), ang, false, sf::Color::Red, false);
+            rb->renderPixelated(target, wp + sf::Vector2f( 0, -1), ang, false, sf::Color::Red, false);
         }
     }
 }
-
 
 void RigidBodySystem::renderGluedOutlines(sf::RenderTarget& target, ParticleWorld& world) const {
     sf::VertexArray va(sf::PrimitiveType::Lines);
@@ -488,10 +516,9 @@ void RigidBodySystem::renderGluedOutlines(sf::RenderTarget& target, ParticleWorl
         }
     }
     
-    if (va.getVertexCount() > 0) {
-        target.draw(va);
-    }
+    if (va.getVertexCount() > 0) target.draw(va);
 }
+
 void RigidBodySystem::clearFromWorld(ParticleWorld& world) {
     for (auto& rb : bodies) {
         rb->clearFromWorld(world);
@@ -512,6 +539,21 @@ void RigidBodySystem::clearFromWorld(ParticleWorld& world) {
 }
 
 void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
+    for (auto& rb : bodies) {
+        rb->update(dt, world);
+    }
+    
+    for (auto it = bodies.begin(); it != bodies.end(); ) {
+        if ((*it)->isDestroyed) {
+            if (b2Body_IsValid((*it)->bodyId)) {
+                b2DestroyBody((*it)->bodyId);
+            }
+            it = bodies.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
     std::unordered_set<ChunkCoord, ChunkCoordHash> overlappingChunks;
     
     for (auto& rb : bodies) {
@@ -561,17 +603,26 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
         }
     }
     
-    b2World_Step(worldId, dt, 8);
+    // CRITICAL FIX: Fixed Timestep Accumulator
+    // This stops objects from "tunneling" or warping into each other at high speeds
+    static float physicsAccumulator = 0.0f;
+    
+    // Cap DT to prevent the "spiral of death" if the game window is dragged/frozen
+    if (dt > 0.1f) dt = 0.1f; 
+    
+    physicsAccumulator += dt;
+    
+    // 120Hz Simulation Step. High precision for tiny pixel-perfect rigid bodies
+    const float FIXED_STEP = 1.0f / 120.0f; 
+    
+    while (physicsAccumulator >= FIXED_STEP) {
+        // 4 Substeps per 1/120th sec ensures hyper-stable physics
+        b2World_Step(worldId, FIXED_STEP, 4); 
+        physicsAccumulator -= FIXED_STEP;
+    }
 }
 
 void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
-    auto isBlocking = [&](int x, int y) {
-        BaseComponent* base = world.get<BaseComponent>(x, y);
-        if (!base || base->compMask == 0 || base->flags.isRigidBodyPart) return false;
-        Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
-        return logic && logic->getGroup() == MaterialGroup::ImmovableSolid;
-    };
-
     for (auto& rb : bodies) {
         if (rb->isEquipped || rb->isGlued) continue;
 
@@ -600,8 +651,8 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
                 float rx = dx * cs + dy * sn;
                 float ry = -dx * sn + dy * cs;
                 
-                int lx = static_cast<int>(std::round(rx * M2P + rb->width / 2.0f - 0.5f));
-                int ly = static_cast<int>(std::round(ry * M2P + rb->height / 2.0f - 0.5f));
+                int lx = static_cast<int>(std::round(rx * M2P + rb->pivot.x));
+                int ly = static_cast<int>(std::round(ry * M2P + rb->pivot.y));
                 
                 if (lx >= 0 && lx < rb->width && ly >= 0 && ly < rb->height) {
                     int localIdx = ly * rb->width + lx;
@@ -858,9 +909,7 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
                     }
                     
                     if (islandGlued) {
-                        auto newBody = std::make_unique<RigidBody>(worldId, newW, newH, newParts, b2Vec2({0,0}), 0.0f, b2Vec2({0,0}), 0.0f, true, rb->startX + minX, rb->startY + minY);
-                        newBody->isWeapon = rb->isWeapon;
-                        newBody->isIndestructible = rb->isIndestructible;
+                        auto newBody = std::make_unique<RigidBody>(worldId, newW, newH, newParts, b2Vec2({0,0}), 0.0f, b2Vec2({0,0}), 0.0f, false, true, rb->startX + minX, rb->startY + minY);
                         for (auto& p : newBody->particles) {
                             if (p.active) {
                                 newBody->drawnPixels.push_back({newBody->startX + p.localX, newBody->startY + p.localY, p.localY * newW + p.localX});
@@ -915,9 +964,7 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
                             };
                         }
                         
-                        auto newBody = std::make_unique<RigidBody>(worldId, newW, newH, newParts, newPos, currentAngle, newLinVel, angVel, false, 0, 0);
-                        newBody->isWeapon = rb->isWeapon;
-                        newBody->isIndestructible = rb->isIndestructible;
+                        auto newBody = std::make_unique<RigidBody>(worldId, newW, newH, newParts, newPos, currentAngle, newLinVel, angVel, false, false, 0, 0);
                         newBodies.push_back(std::move(newBody));
                     }
                 }
@@ -1102,10 +1149,11 @@ void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, Partic
     for (const auto& poly : polylines) {
         std::vector<IntPoint> simplified = simplify(poly, 0.8f);
         if (simplified.size() < 2) continue;
-
+        
         b2ShapeDef shapeDef = b2DefaultShapeDef();
         shapeDef.material.friction = 0.5f; 
 
+        // CORRECTED: Create segments for the lines and circles for the vertices
         for (size_t i = 0; i < simplified.size() - 1; ++i) {
             b2Segment segment = { 
                 {simplified[i].x * P2M, simplified[i].y * P2M}, 
@@ -1113,6 +1161,18 @@ void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, Partic
             };
             b2CreateSegmentShape(bodyId, &shapeDef, &segment);
             hasFixtures = true;
+        }
+
+        // Add frictionless circle "caps" to each vertex to prevent snagging
+        shapeDef.material.friction = 0.0f; // Caps must be frictionless
+        for (size_t i = 0; i < simplified.size(); ++i) {
+            // No caps on the first and last vertex of an open chain
+            if (simplified.front() == simplified.back() || (i > 0 && i < simplified.size() - 1)) {
+                 b2Circle circle;
+                 circle.center = {simplified[i].x * P2M, simplified[i].y * P2M};
+                 circle.radius = 0.01f; // A tiny radius to smooth the corner
+                 b2CreateCircleShape(bodyId, &shapeDef, &circle);
+            }
         }
     }
 
@@ -1122,7 +1182,6 @@ void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, Partic
         b2DestroyBody(bodyId);
     }
 }
-
 void RigidBodySystem::save(std::ostream& out) const {
     size_t count = bodies.size();
     out.write(reinterpret_cast<const char*>(&count), sizeof(count));
@@ -1148,7 +1207,14 @@ void RigidBodySystem::save(std::ostream& out) const {
         
         out.write(reinterpret_cast<const char*>(&rb->width), sizeof(int));
         out.write(reinterpret_cast<const char*>(&rb->height), sizeof(int));
+        
         out.write(reinterpret_cast<const char*>(&rb->isWeapon), sizeof(bool));
+        if (rb->isWeapon) {
+            Weapon* w = static_cast<Weapon*>(rb.get());
+            size_t len = w->weaponName.size();
+            out.write(reinterpret_cast<const char*>(&len), sizeof(size_t));
+            out.write(w->weaponName.c_str(), len);
+        }
         
         out.write(reinterpret_cast<const char*>(&rb->isGlued), sizeof(bool));
         out.write(reinterpret_cast<const char*>(&rb->startX), sizeof(int));
@@ -1184,6 +1250,14 @@ void RigidBodySystem::load(std::istream& in) {
         if (!in.read(reinterpret_cast<char*>(&isWeapon), sizeof(bool))) {
             isWeapon = false; 
         }
+        
+        std::string wName = "weapon";
+        if (isWeapon) {
+            size_t len = 0;
+            in.read(reinterpret_cast<char*>(&len), sizeof(size_t));
+            wName.resize(len);
+            in.read(&wName[0], len);
+        }
 
         bool isGlued = false;
         int sX = 0, sY = 0;
@@ -1200,19 +1274,23 @@ void RigidBodySystem::load(std::istream& in) {
             in.read(reinterpret_cast<char*>(parts.data()), pCount * sizeof(LocalParticle));
         }
         
-        auto newBody = std::make_unique<RigidBody>(worldId, w, h, parts, pos, angle, linVel, angVel, isGlued, sX, sY);
-        newBody->isWeapon = isWeapon;
-        newBody->isIndestructible = isWeapon;
-        
-        if (isGlued) {
-            for (auto& p : newBody->particles) {
-                if (p.active) {
-                    newBody->drawnPixels.push_back({sX + p.localX, sY + p.localY, p.localY * w + p.localX});
+        if (isWeapon) {
+            auto newBody = std::make_unique<Weapon>(worldId, w, h, parts, pos, angle, linVel, angVel, wName, isGlued, sX, sY);
+            if (isGlued) {
+                for (auto& p : newBody->particles) {
+                    if (p.active) newBody->drawnPixels.push_back({sX + p.localX, sY + p.localY, p.localY * w + p.localX});
                 }
             }
+            bodies.push_back(std::move(newBody));
+        } else {
+            auto newBody = std::make_unique<RigidBody>(worldId, w, h, parts, pos, angle, linVel, angVel, false, isGlued, sX, sY);
+            if (isGlued) {
+                for (auto& p : newBody->particles) {
+                    if (p.active) newBody->drawnPixels.push_back({sX + p.localX, sY + p.localY, p.localY * w + p.localX});
+                }
+            }
+            bodies.push_back(std::move(newBody));
         }
-
-        bodies.push_back(std::move(newBody));
     }
 }
 

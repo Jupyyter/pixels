@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <optional>
 
-class RigidBody; // Forward declare for weapon attachment
+class RigidBody;
 
 // Core Physics wrapper
 struct PhysicsComponent {
@@ -20,7 +20,15 @@ struct PlayerControllerComponent {
     bool isGrounded = false;
     
     bool ePressedLastFrame = false;
-    RigidBody* equippedWeapon = nullptr; // Pointer managed safely by RigidBodySystem
+    RigidBody* equippedWeapon = nullptr; 
+
+    // Swing mechanics
+    bool isSwinging = false;
+    float swingTimer = 0.0f;
+    float swingDuration = 0.25f;
+    bool swingEffectApplied = false;
+    sf::Vector2f swingTarget;
+    float swingRandomness = 0.0f;
 };
 
 // --- SPRITE SHEET ANIMATION ---
@@ -45,9 +53,6 @@ struct SpriteSheetComponent {
     bool  flipX             = false;
 };
 
-// ---------------------------------------------------------------------------
-// PROCEDURAL LEG & HAND
-// ---------------------------------------------------------------------------
 struct ProceduralLeg {
     sf::Vector2f hipOffset;
     sf::Vector2f footWorld;
@@ -62,9 +67,6 @@ struct ProceduralHand {
     sf::Vector2f offset; 
 };
 
-// ---------------------------------------------------------------------------
-// Body-bob state
-// ---------------------------------------------------------------------------
 struct BodyBobState {
     float offsetY   = 0.0f;
     float velocity  = 0.0f;
@@ -72,14 +74,11 @@ struct BodyBobState {
     float damping   = 12.0f;
 };
 
-// ---------------------------------------------------------------------------
-// Full procedural animation component
-// ---------------------------------------------------------------------------
 struct ProceduralAnimationComponent {
     ProceduralLeg  legA;
     ProceduralLeg  legB;
-    ProceduralHand handA; // Front Hand (Direction of gaze)
-    ProceduralHand handB; // Back Hand  (Trailing)
+    ProceduralHand handA; 
+    ProceduralHand handB; 
     BodyBobState   bob;
 
     int   steppingLeg  = -1;   
@@ -87,7 +86,7 @@ struct ProceduralAnimationComponent {
     bool  isStopping   = false;
 
     float armSwing    = 0.0f;
-    float weaponAngle = 90.0f; // Calculated dynamically via parabola derivative
+    float weaponAngle = 90.0f; 
 
     float strideDistance = 12.0f; 
     float stepLookahead  = 8.0f;  

@@ -672,6 +672,21 @@ void ParticleWorld::addRigidBodyFromSprite(const sf::Image& img, int startX, int
     }
 }
 
+void ParticleWorld::addStructureFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat) {
+    for (unsigned int y = 0; y < img.getSize().y; ++y) {
+        for (unsigned int x = 0; x < img.getSize().x; ++x) {
+            sf::Color col = img.getPixel(sf::Vector2u(x, y));
+            if (col.a > 0) {
+                int wx = startX + static_cast<int>(x);
+                int wy = startY + static_cast<int>(y);
+                
+                spawnParticle(mat, wx, wy);
+                setParticleColor(wx, wy, col); 
+            }
+        }
+    }
+}
+
 void ParticleWorld::addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, MaterialID mat, bool glue) {
     if (!rigidBodySystem) return;
 
@@ -705,9 +720,9 @@ void ParticleWorld::addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, Ma
     addRigidBodyFromSprite(img, cx, cy, mat, glue);
 }
 
-void ParticleWorld::addWeapon(const sf::Image& img, int startX, int startY) {
+void ParticleWorld::addWeapon(const sf::Image& img, int startX, int startY, const std::string& name) {
     if (rigidBodySystem) {
-        rigidBodySystem->addWeapon(img, startX, startY);
+        rigidBodySystem->addWeapon(img, startX, startY, name);
     }
 }
 

@@ -1,6 +1,6 @@
-obj/src/EntitySystem.o: src/EntitySystem.cpp include/EntitySystem.hpp \
- ../entt/entt.hpp ../2dbox/include/box2d/box2d.h \
- ../2dbox/include/box2d/base.h ../2dbox/include/box2d/collision.h \
+obj/src/Weapon.o: src/Weapon.cpp include/Weapon.hpp include/RigidBody.hpp \
+ ../2dbox/include/box2d/box2d.h ../2dbox/include/box2d/base.h \
+ ../2dbox/include/box2d/collision.h \
  ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
  ../2dbox/include/box2d/types.h ../SFML-3.0.0/include/SFML/Graphics.hpp \
  ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp \
@@ -79,11 +79,10 @@ obj/src/EntitySystem.o: src/EntitySystem.cpp include/EntitySystem.hpp \
  ../SFML-3.0.0/include/SFML/System/FileInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
- ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/EntityComponents.hpp \
- include/ParticleWorld.hpp include/Constants.hpp include/Random.hpp \
- include/Particles/Particle.hpp include/RigidBody.hpp include/Weapon.hpp
-include/EntitySystem.hpp:
-../entt/entt.hpp:
+ ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/ParticleWorld.hpp \
+ include/Constants.hpp include/Random.hpp include/Particles/Particle.hpp
+include/Weapon.hpp:
+include/RigidBody.hpp:
 ../2dbox/include/box2d/box2d.h:
 ../2dbox/include/box2d/base.h:
 ../2dbox/include/box2d/collision.h:
@@ -168,10 +167,7 @@ include/EntitySystem.hpp:
 ../SFML-3.0.0/include/SFML/System/InputStream.hpp:
 ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp:
 ../SFML-3.0.0/include/SFML/System/Sleep.hpp:
-include/EntityComponents.hpp:
 include/ParticleWorld.hpp:
 include/Constants.hpp:
 include/Random.hpp:
 include/Particles/Particle.hpp:
-include/RigidBody.hpp:
-include/Weapon.hpp:
