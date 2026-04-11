@@ -15,11 +15,13 @@ struct PhysicsComponent {
 
 // Player Input & Controller State
 struct PlayerControllerComponent {
-    float moveSpeed = 5.0f;
+    float moveSpeed = 7.0f;
     float jumpForce = -38.0f;
     bool isGrounded = false;
     
     bool ePressedLastFrame = false;
+    bool wPressedLastFrame = false;
+    
     RigidBody* equippedWeapon = nullptr; 
 
     // Swing mechanics
@@ -29,6 +31,10 @@ struct PlayerControllerComponent {
     bool swingEffectApplied = false;
     sf::Vector2f swingTarget;
     float swingRandomness = 0.0f;
+
+    // Landing recovery
+    float lastFallVelocity = 0.0f;
+    float landingTimer = 0.0f;
 };
 
 // --- SPRITE SHEET ANIMATION ---
@@ -92,4 +98,7 @@ struct ProceduralAnimationComponent {
     float stepLookahead  = 8.0f;  
     float stepArcHeight  = 5.0f;  
     float minStepRate    = 0.8f;  
+    
+    float downhillOffset = 0.0f;
+    
 };

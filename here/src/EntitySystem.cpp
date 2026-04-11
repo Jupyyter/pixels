@@ -91,30 +91,71 @@ void EntitySystem::triggerSwing(sf::Vector2f targetWorldPos) {
             player.swingTimer = 0.0f;
             player.swingEffectApplied = false;
             player.swingTarget = targetWorldPos;
-            // Generate a slightly randomized float between -0.2f and 0.2f to warp the parabola 
             player.swingRandomness = ((rand() % 100) / 100.0f) * 0.4f - 0.2f;
         }
     }
 }
 
 void EntitySystem::updateInput(float dt, RigidBodySystem& rbs, ParticleWorld& pw) {
-    auto view = registry.view<PlayerControllerComponent, PhysicsComponent, SpriteSheetComponent>();
-    view.each([&](auto, auto& player, auto& phys, auto& sprite) {
+    auto view = registry.view<PlayerControllerComponent, PhysicsComponent, SpriteSheetComponent, ProceduralAnimationComponent>();
+    view.each([&](auto, auto& player, auto& phys, auto& sprite, auto& anim) {
         b2Vec2 vel = b2Body_GetLinearVelocity(phys.bodyId);
         b2Vec2 pos = b2Body_GetPosition(phys.bodyId);
         sf::Vector2f bodyPos(pos.x * M2P, pos.y * M2P);
 
-        float desiredVelX = 0.0f;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) { desiredVelX = -player.moveSpeed; if (!player.isSwinging) sprite.flipX = true;  }
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) { desiredVelX =  player.moveSpeed; if (!player.isSwinging) sprite.flipX = false; }
-        vel.x = lerp(vel.x, desiredVelX, dt * 8.0f);
+        float dir = 0.0f;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) dir = -1.0f;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) dir =  1.0f;
+        
+        float speedFactor = 1.0f;
+        
+        if (player.isGrounded && dir != 0.0f) {
+            float maxDx = 0.0f;
+            int maxLook = static_cast<int>(std::ceil(anim.stepLookahead));
+            float baseCastFrom = bodyPos.y - TARGET_CAST_UP;
+            
+            float minFootY = bodyPos.y + 12.0f; 
+            float maxFootY = bodyPos.y + 22.0f; 
 
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W) && player.isGrounded)
+            for (int i = 1; i <= maxLook; ++i) {
+                float testX = bodyPos.x + dir * i;
+                float gY = groundCastY(testX, baseCastFrom, TARGET_CAST_UP + TARGET_CAST_DOWN, pw);
+                
+                if (gY < minFootY || gY > maxFootY) break;
+                maxDx = static_cast<float>(i);
+            }
+            
+            speedFactor = maxDx / anim.stepLookahead;
+            if (speedFactor > 1.0f) speedFactor = 1.0f;
+        }
+
+        float desiredVelX = dir * player.moveSpeed * speedFactor;
+        
+        if (!player.isSwinging) {
+            if (dir < 0.0f) sprite.flipX = true;
+            else if (dir > 0.0f) sprite.flipX = false;
+        }
+
+        if (player.landingTimer > 0.0f) {
+            player.landingTimer -= dt;
+            desiredVelX *= 0.1f; 
+        }
+
+        if (player.isGrounded) {
+            vel.x = lerp(vel.x, desiredVelX, dt * 8.0f);
+        }
+
+        // Single press jump (Locked if holding, or recovering)
+        bool wPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W);
+        if (wPressed && !player.wPressedLastFrame && player.isGrounded && player.landingTimer <= 0.0f) {
             vel.y = player.jumpForce;
+        }
+        player.wPressedLastFrame = wPressed;
 
-        if      (!player.isGrounded)     sprite.currentState = "Jump";
-        else if (std::abs(vel.x) > 1.0f) sprite.currentState = "Walk";
-        else                              sprite.currentState = "Idle";
+        if      (!player.isGrounded)         sprite.currentState = "Jump";
+        else if (player.landingTimer > 0.0f) sprite.currentState = "Idle";
+        else if (std::abs(vel.x) > 1.0f)     sprite.currentState = "Walk";
+        else                                 sprite.currentState = "Idle";
 
         b2Body_SetLinearVelocity(phys.bodyId, vel);
 
@@ -172,14 +213,57 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
             float castFrom = bodyPos.y - TARGET_CAST_UP;
             return groundCastY(worldX, castFrom, TARGET_CAST_UP + TARGET_CAST_DOWN, pw);
         };
+        
+        auto getSafeTarget = [&](float lookOffset) -> sf::Vector2f {
+            float dir = lookOffset > 0 ? 1.0f : (lookOffset < 0 ? -1.0f : 0.0f);
+            float maxDist = std::abs(lookOffset);
+            float bestX = bodyPos.x;
+            float baseCastFrom = bodyPos.y - TARGET_CAST_UP;
+            
+            float bestY = groundCastY(bodyPos.x, baseCastFrom, TARGET_CAST_UP + TARGET_CAST_DOWN, pw);
+            if (bestY >= NO_GROUND) bestY = bodyPos.y + 17.0f;
+
+            if (maxDist < 0.1f) return {bestX, bestY};
+
+            float minFootY = bodyPos.y + 12.0f;
+            float maxFootY = bodyPos.y + 22.0f; 
+
+            for (int i = 1; i <= static_cast<int>(std::ceil(maxDist)); ++i) {
+                float testX = bodyPos.x + dir * i;
+                float ty = groundCastY(testX, baseCastFrom, TARGET_CAST_UP + TARGET_CAST_DOWN, pw);
+                
+                if (ty < minFootY) break;
+                if (ty > maxFootY) break;
+                
+                bestX = testX;
+                bestY = ty;
+            }
+            return {bestX, bestY};
+        };
 
         float centerGroundY = castForTarget(bodyPos.x);
         float distToGround = (centerGroundY >= NO_GROUND) ? 1000.0f : (centerGroundY - bodyPos.y);
 
-        bool isAirborne  = (b2Vel.y < -5.0f) || (distToGround > 24.0f);
-        bool wantsToWalk = std::abs(b2Vel.x) > 0.5f && !isAirborne;
+        bool wasGrounded = player.isGrounded;
+        float airThreshold = (!wasGrounded && b2Vel.y > 0.0f) ? 18.0f : 28.0f;
+        bool isAirborne  = (b2Vel.y < -5.0f) || (distToGround > airThreshold);
+
+        if (isAirborne && b2Vel.y > 0.0f) {
+            player.lastFallVelocity = b2Vel.y;
+        }
 
         player.isGrounded = !isAirborne;
+
+        if (!wasGrounded && player.isGrounded) {
+            if (player.lastFallVelocity > 25.0f) {
+                player.landingTimer = std::min(0.5f, (player.lastFallVelocity - 25.0f) * 0.015f);
+            } else {
+                player.landingTimer = 0.0f;
+            }
+            player.lastFallVelocity = 0.0f;
+        }
+
+        bool wantsToWalk = std::abs(b2Vel.x) > 0.1f && !isAirborne && (player.landingTimer <= 0.0f);
 
         auto castNearFoot = [&](float worldX, float footY) -> float {
             float castFrom = footY - FOOT_CAST_UP;
@@ -236,14 +320,75 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
             anim.legA.isPlanted = false;
             anim.legB.isPlanted = false;
 
-            bool aIsLeft = anim.legA.footWorld.x < anim.legB.footWorld.x;
-            ProceduralLeg& legL = aIsLeft ? anim.legA : anim.legB;
-            ProceduralLeg& legR = aIsLeft ? anim.legB : anim.legA;
-            legL.footWorld = lerpV(legL.footWorld, {bodyPos.x - 3.0f, bodyPos.y + 16.0f}, dt * 8.0f);
-            legR.footWorld = lerpV(legR.footWorld, {bodyPos.x + 3.0f, bodyPos.y + 16.0f}, dt * 8.0f);
+            anim.legA.hipOffset = {-2.0f, 0.0f}; 
+            anim.legB.hipOffset = { 2.0f, 0.0f}; 
+
+            bool facingLeft = spriteComp.flipX;
+            ProceduralLeg* frontLeg = facingLeft ? &anim.legA : &anim.legB;
+            ProceduralLeg* backLeg  = facingLeft ? &anim.legB : &anim.legA;
+
+            float vx = b2Vel.x;
+            float vy = b2Vel.y;
+
+            // FREEZE ROTATION ANGLE DURING APEX
+            // By capping the effective Y velocity used for the rotation calculation,
+            // we stop the "split" at the top of the jump where the Y velocity gets close to 0.
+            float angleVy = vy;
+            if (angleVy > -15.0f && angleVy <= 0.0f) angleVy = -15.0f;
+            else if (angleVy > 0.0f && angleVy < 15.0f) angleVy = 15.0f;
+
+            float signY = (angleVy < 0.0f) ? -1.0f : 1.0f;
+            float dx = vx * signY;
+            float dy = std::abs(angleVy);
+            if (dx == 0.0f && dy == 0.0f) dy = 1.0f;
+
+            float baseAngle = std::atan2(dx, dy); 
+
+            float maxAngle = 60.0f * PI / 180.0f;
+            if (baseAngle > maxAngle)  baseAngle = maxAngle;
+            if (baseAngle < -maxAngle) baseAngle = -maxAngle;
+
+            float frontAngle, backAngle;
+            // Still use ACTUAL `vy` to map relational reaching/pushing
+            if (vy < 0.0f) {
+                backAngle  = baseAngle;
+                frontAngle = -baseAngle;
+            } else {
+                frontAngle = baseAngle;
+                backAngle  = -baseAngle;
+            }
+
+            float mappedVy = vy;
+            if (mappedVy < -15.0f) mappedVy = -15.0f;
+            if (mappedVy >  15.0f) mappedVy =  15.0f;
+
+            float t = (mappedVy + 15.0f) / 30.0f; 
+            
+            float frontLen = 1.0f + 8.0f * t;
+            float backLen  = 9.0f - 8.0f * t;
+
+            sf::Vector2f vbp(bodyPos.x, bodyPos.y + 8.0f + anim.bob.offsetY);
+            
+            sf::Vector2f frontDir(std::sin(frontAngle), std::cos(frontAngle));
+            sf::Vector2f backDir(std::sin(backAngle),   std::cos(backAngle));
+
+            frontLeg->footWorld = vbp + frontLeg->hipOffset + frontDir * frontLen;
+            backLeg->footWorld  = vbp + backLeg->hipOffset  + backDir  * backLen;
+
+            // PREVENT LEGS FROM CLIPPING GROUND DURING LIFT-OFF OR LOW JUMPS
+            auto preventGroundPenetration = [&](ProceduralLeg* leg) {
+                float gY = castNearFoot(leg->footWorld.x, leg->footWorld.y);
+                if (gY < NO_GROUND && leg->footWorld.y > gY) {
+                    leg->footWorld.y = gY; // Clamps foot to surface, allowing visual knee "compression"
+                }
+            };
+            preventGroundPenetration(frontLeg);
+            preventGroundPenetration(backLeg);
+
             anim.legA.footTarget = anim.legA.footWorld;
             anim.legB.footTarget = anim.legB.footWorld;
-            goto update_hips;
+
+            goto end_hips;
         }
 
         // GROUNDED
@@ -280,10 +425,7 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
                     sl->isPlanted = false;
 
                     float look = movingRight ? anim.stepLookahead : -anim.stepLookahead;
-                    float tx   = bodyPos.x + look;
-                    float ty   = castForTarget(tx);
-                    if (ty >= NO_GROUND) ty = bodyPos.y + 17.0f;
-                    sl->footTarget = {tx, ty};
+                    sl->footTarget = getSafeTarget(look);
 
                     if (!pl->isPlanted) plantLeg(*pl);
                 }
@@ -316,9 +458,8 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
                         sl->footStart  = sl->footWorld;
                         sl->isPlanted  = false;
                         float tx = (anim.steppingLeg == 0) ? targetXA : targetXB;
-                        float ty = castForTarget(tx);
-                        if (ty >= NO_GROUND) ty = bodyPos.y + 17.0f;
-                        sl->footTarget = {tx, ty};
+                        
+                        sl->footTarget = getSafeTarget(tx - bodyPos.x);
 
                         if (!pl->isPlanted) plantLeg(*pl);
                     } else {
@@ -339,18 +480,18 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
 
                 if (plant->isPlanted) enforcePlant(*plant);
 
-                float idealX;
+                float idealLook;
                 if (anim.isStopping) {
-                    idealX = (anim.steppingLeg == 0) ? targetXA : targetXB;
+                    float tx = (anim.steppingLeg == 0) ? targetXA : targetXB;
+                    idealLook = tx - bodyPos.x;
                 } else {
-                    float look = b2Vel.x > 0 ? anim.stepLookahead : -anim.stepLookahead;
-                    idealX = bodyPos.x + look;
+                    idealLook = b2Vel.x > 0 ? anim.stepLookahead : -anim.stepLookahead;
                 }
-                float idealY = castForTarget(idealX);
-                if (idealY >= NO_GROUND) idealY = bodyPos.y + 17.0f;
+                
+                sf::Vector2f safeIdeal = getSafeTarget(idealLook);
 
-                stepLeg->footTarget.x = lerp(stepLeg->footTarget.x, idealX, dt * 20.0f);
-                stepLeg->footTarget.y = lerp(stepLeg->footTarget.y, idealY, dt * 20.0f);
+                stepLeg->footTarget.x = lerp(stepLeg->footTarget.x, safeIdeal.x, dt * 20.0f);
+                stepLeg->footTarget.y = lerp(stepLeg->footTarget.y, safeIdeal.y, dt * 20.0f);
 
                 float terrainDelta = std::abs(stepLeg->footTarget.y - stepLeg->footStart.y);
                 float dynamicArc   = anim.stepArcHeight + std::min(terrainDelta * 0.5f, 8.0f);
@@ -380,10 +521,9 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
 
                             nl->footStart  = nl->footWorld;
                             nl->isPlanted  = false;
+                            
                             float tx = (anim.steppingLeg == 0) ? targetXA : targetXB;
-                            float ty = castForTarget(tx);
-                            if (ty >= NO_GROUND) ty = bodyPos.y + 17.0f;
-                            nl->footTarget = {tx, ty};
+                            nl->footTarget = getSafeTarget(tx - bodyPos.x);
 
                             if (!pl->isPlanted) plantLeg(*pl);
                         } else {
@@ -400,10 +540,7 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
                         nl->isPlanted  = false;
 
                         float look2 = b2Vel.x > 0 ? anim.stepLookahead : -anim.stepLookahead;
-                        float tx2   = bodyPos.x + look2;
-                        float ty2   = castForTarget(tx2);
-                        if (ty2 >= NO_GROUND) ty2 = bodyPos.y + 17.0f;
-                        nl->footTarget = {tx2, ty2};
+                        nl->footTarget = getSafeTarget(look2);
                     }
 
                 } else {
@@ -431,6 +568,7 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
             updateHip(anim.legA);
             updateHip(anim.legB);
         }
+        end_hips:
 
         // ============================================================
         // ARMS / HANDS / SWING MECHANICS
@@ -537,8 +675,28 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
         if (!isAirborne) {
             float avgFootY     = (anim.legA.footWorld.y + anim.legB.footWorld.y) * 0.5f;
             float desiredBodyY = avgFootY - 17.0f;
+            
+            // Lookahead slope detection to organically lower the player body when walking downhill!
+            float dirX = (b2Vel.x > 0.1f) ? 1.0f : ((b2Vel.x < -0.1f) ? -1.0f : 0.0f);
+            float targetDownhill = 0.0f;
+            
+            if (dirX != 0.0f) {
+                float gHere = castForTarget(bodyPos.x);
+                float gAhead = castForTarget(bodyPos.x + dirX * anim.stepLookahead);
+                if (gHere < NO_GROUND && gAhead < NO_GROUND) {
+                    float diff = gAhead - gHere; 
+                    if (diff > 0.0f) { // Ground is sloping down
+                        targetDownhill = std::min(3.0f, diff * 0.8f);
+                    }
+                }
+            }
+            
+            // Smoothly lerp to preventing snapping and physically lower the rigidBody Y bounds
+            anim.downhillOffset = lerp(anim.downhillOffset, targetDownhill, dt * 10.0f);
+            desiredBodyY += anim.downhillOffset;
+            
             float bodyError    = desiredBodyY - bodyPos.y;
-            float desiredVy_P  = std::max(-80.0f, std::min(40.0f, bodyError * 18.0f));
+            float desiredVy_P  = std::max(-80.0f, std::min(80.0f, bodyError * 18.0f)); 
             
             b2Vec2 v = b2Body_GetLinearVelocity(phys.bodyId);
             v.y = lerp(v.y, desiredVy_P * P2M, dt * 25.0f); 
