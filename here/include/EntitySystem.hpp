@@ -24,7 +24,7 @@ public:
     entt::entity spawnPlayer(float x, float y, const std::string& texturePath = "");
 
     void triggerSwing(sf::Vector2f targetWorldPos);
-    void updateInput(float dt, RigidBodySystem& rbs, ParticleWorld& pw);
+    void updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& rbs, ParticleWorld& pw);
     void updateProceduralAnimations(float dt, ParticleWorld& particleWorld);
     void renderEntities(sf::RenderTarget& target);
 

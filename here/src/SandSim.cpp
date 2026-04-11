@@ -168,9 +168,14 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
                         const sf::Image* srcImg = ui->getSelectedWeaponImage();
                         std::string wName = ui->getSelectedWeaponName();
                         if (srcImg) {
-                            int startX = static_cast<int>(worldPos.x) - (srcImg->getSize().x / 2);
-                            int startY = static_cast<int>(worldPos.y) - (srcImg->getSize().y / 2);
-                            world->addWeapon(*srcImg, startX, startY, wName);
+                            float wScale = 1.0f;
+                            if (wName.find("Revolver") != std::string::npos || wName.find("Submachine") != std::string::npos) {
+                                wScale = 0.25f;
+                            }
+                            sf::Image scaled = scaleImageNearestNeighbor(*srcImg, wScale);
+                            int startX = static_cast<int>(worldPos.x) - (scaled.getSize().x / 2);
+                            int startY = static_cast<int>(worldPos.y) - (scaled.getSize().y / 2);
+                            world->addWeapon(scaled, startX, startY, wName);
                         }
                     }
                     else if (ui->getSpawnMode() == SpawnMode::Entity) {
@@ -189,7 +194,6 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
         }
     }
 }
-
 void SandSimApp::run() {
     clock.restart();
     frameClock.restart();
@@ -276,7 +280,7 @@ void SandSimApp::update() {
             world->updateCameraBounds(center.x, center.y, size.x, size.y);
 
             if (entitySystem) {
-                entitySystem->updateInput(dt.asSeconds(), *world->getRigidBodySystem(), *world);
+                entitySystem->updateInput(dt.asSeconds(), worldPos, *world->getRigidBodySystem(), *world);
                 entitySystem->updateProceduralAnimations(dt.asSeconds(), *world);
             }
 
@@ -284,7 +288,6 @@ void SandSimApp::update() {
         }
     }
 }
-
 void SandSimApp::render() {
     window.clear(sf::Color(0, 0, 0));
     
@@ -328,8 +331,14 @@ void SandSimApp::render() {
             }
             else if (ui->getSpawnMode() == SpawnMode::Weapon) {
                 const sf::Texture* ghostTex = ui->getSelectedWeaponTexture();
+                std::string wName = ui->getSelectedWeaponName();
                 if (ghostTex) {
                     sf::Sprite ghostSprite(*ghostTex);
+                    float wScale = 1.0f;
+                    if (wName.find("Revolver") != std::string::npos || wName.find("Submachine") != std::string::npos) {
+                        wScale = 0.25f;
+                    }
+                    ghostSprite.setScale({wScale, wScale});
                     ghostSprite.setOrigin({ghostTex->getSize().x / 2.0f, ghostTex->getSize().y / 2.0f});
                     ghostSprite.setPosition(worldPos);
                     

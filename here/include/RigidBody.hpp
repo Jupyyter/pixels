@@ -43,6 +43,7 @@ public:
     bool needsFixtureRebuild;
 
     bool isWeapon = false;
+    bool isGun = false;
     bool isEquipped = false;
     bool isIndestructible = false;
     

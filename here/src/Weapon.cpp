@@ -78,10 +78,13 @@ sf::Vector2f Weapon::getWeaponPivot(const std::string& name, int w, int h) {
         return {7.0f, h / 2.0f - 0.5f}; 
     } else if (name == "spear") {
         return {15.0f, h / 2.0f - 0.5f}; 
+    } else if (name.find("Revolver") != std::string::npos) {
+        return {10.0f * 0.25f, 23.0f * 0.25f};
+    } else if (name.find("Submachine") != std::string::npos) {
+        return {22.0f * 0.25f, 17.0f * 0.25f};
     }
     return {w / 2.0f - 0.5f, h / 2.0f - 0.5f};
 }
-
 float Weapon::getWeaponVisualOffset(const std::string& name) {
     if (name == "sword" || name == "spear") {
         return -90.0f;
@@ -92,11 +95,17 @@ float Weapon::getWeaponVisualOffset(const std::string& name) {
 Weapon::Weapon(b2WorldId worldId, const sf::Image& img, int startX, int startY, const std::string& name)
     : RigidBody(worldId, img, startX, startY, MaterialID::Sand, true, false, getWeaponPivot(name, img.getSize().x, img.getSize().y), getWeaponVisualOffset(name)), weaponName(name)
 {
+    if (name.find("Revolver") != std::string::npos || name.find("Submachine") != std::string::npos) {
+        isGun = true;
+    }
 }
 
 Weapon::Weapon(b2WorldId worldId, int w, int h, const std::vector<LocalParticle>& parts, b2Vec2 pos, float angle, b2Vec2 linVel, float angVel, const std::string& name, bool glued, int sX, int sY)
     : RigidBody(worldId, w, h, parts, pos, angle, linVel, angVel, true, glued, sX, sY, getWeaponPivot(name, w, h), getWeaponVisualOffset(name)), weaponName(name)
 {
+    if (name.find("Revolver") != std::string::npos || name.find("Submachine") != std::string::npos) {
+        isGun = true;
+    }
 }
 
 void Weapon::performSwingEffect(sf::Vector2f playerPos, sf::Vector2f targetPos, ParticleWorld& world, RigidBodySystem& rbs) {

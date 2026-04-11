@@ -47,14 +47,23 @@ void UI::loadWeaponAssets() {
     std::string folderPath = "assets/images/weapons";
     if (!std::filesystem::exists(folderPath)) std::filesystem::create_directories(folderPath);
     
-    for (const auto& entry : std::filesystem::directory_iterator(folderPath)) {
+    // Use recursive_directory_iterator to ensure we look inside the /revolver/ and /submachine/ folders
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(folderPath)) {
         if (entry.is_regular_file()) {
             std::string path = entry.path().string();
             std::string ext = entry.path().extension().string();
             
             if (ext == ".png" || ext == ".jpg" || ext == ".bmp") {
+                std::string stem = entry.path().stem().string();
+                
+                // Exclude ONLY the animation sprite sheets.
+                // The animations contain "[SHOOT", while the base sprites just contain "[width x height]".
+                if (stem.find("[SHOOT") != std::string::npos) {
+                    continue; 
+                }
+                
                 ImageAsset asset;
-                asset.name = entry.path().stem().string();
+                asset.name = stem;
                 asset.path = path;
                 
                 if (asset.image.loadFromFile(path)) {
@@ -66,7 +75,6 @@ void UI::loadWeaponAssets() {
         }
     }
 }
-
 const sf::Image* UI::getSelectedAssetImage() const {
     if (imageAssets.empty() || selectedAssetIndex < 0 || selectedAssetIndex >= imageAssets.size()) return nullptr;
     return &imageAssets[selectedAssetIndex].image;

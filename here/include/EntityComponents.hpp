@@ -14,6 +14,7 @@ struct PhysicsComponent {
 };
 
 // Player Input & Controller State
+// Player Input & Controller State
 struct PlayerControllerComponent {
     float moveSpeed = 7.0f;
     float jumpForce = -38.0f;
@@ -31,6 +32,10 @@ struct PlayerControllerComponent {
     bool swingEffectApplied = false;
     sf::Vector2f swingTarget;
     float swingRandomness = 0.0f;
+
+    // Aim mechanics
+    bool isAiming = false;
+    sf::Vector2f aimTarget;
 
     // Landing recovery
     float lastFallVelocity = 0.0f;
