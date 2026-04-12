@@ -3,6 +3,7 @@
 #include <cmath>
 #include <iostream>
 #include <cstdlib>
+#include <SFML/Window/Mouse.hpp>
 
 constexpr float PI       = 3.14159265358979323846f;
 constexpr float NO_GROUND = 1e9f;
@@ -99,7 +100,6 @@ void EntitySystem::triggerSwing(sf::Vector2f targetWorldPos) {
     }
 }
 
-
 void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& rbs, ParticleWorld& pw) {
     auto view = registry.view<PlayerControllerComponent, PhysicsComponent, SpriteSheetComponent, ProceduralAnimationComponent>();
     view.each([&](auto, auto& player, auto& phys, auto& sprite, auto& anim) {
@@ -111,12 +111,39 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) dir = -1.0f;
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) dir =  1.0f;
         
-        // Aiming Logic
-        if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Right) && player.equippedWeapon) {
+        // Aiming and Shooting Logic
+        bool rightClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
+        bool leftClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
+
+        if (rightClick && player.equippedWeapon) {
             player.isAiming = true;
             player.aimTarget = mouseWorldPos;
+            
+            if (player.equippedWeapon->isGun) {
+                Weapon* w = static_cast<Weapon*>(player.equippedWeapon);
+                
+                if (player.fireTimer <= 0.0f) {
+                    // Check if they are allowed to shoot based on Semi-Auto rules
+                    bool canShoot = w->semiAuto ? (leftClick && !player.leftClickPressedLastFrame) : leftClick;
+                    
+                    if (canShoot) {
+                        // Reconstruct rendering hand position
+                        sf::Vector2f vbp(bodyPos.x, bodyPos.y + 8.0f + anim.bob.offsetY);
+                        sf::Vector2f handPos = vbp + anim.handB.offset;
+                        
+                        w->fire(handPos, player.aimTarget, anim.weaponAngle, sprite.flipX, rbs, pw);
+                        player.fireTimer = w->fireRate;
+                    }
+                }
+            }
         } else {
             player.isAiming = false;
+        }
+        
+        player.leftClickPressedLastFrame = leftClick;
+        
+        if (player.fireTimer > 0.0f) {
+            player.fireTimer -= dt;
         }
         
         float speedFactor = 1.0f;

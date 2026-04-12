@@ -1,5 +1,7 @@
 #include "Weapon.hpp"
-
+#ifndef PI
+constexpr float PI = 3.14159265358979323846f;
+#endif
 // ==========================================
 // WHEEL IMPLEMENTATION
 // ==========================================
@@ -9,7 +11,6 @@ Wheel::Wheel(b2WorldId worldId, const sf::Image& img, int startX, int startY)
     isIndestructible = true;
     isWeapon = false;
     
-    // Convert box physics body to a proper circle for smooth rolling
     if (b2Body_IsValid(bodyId)) {
         int shapeCount = b2Body_GetShapeCount(bodyId);
         if (shapeCount > 0) {
@@ -38,35 +39,114 @@ void Wheel::update(float dt, ParticleWorld& world) {
 
     b2Vec2 vel = b2Body_GetLinearVelocity(bodyId);
     
-    // Ignore the very first frame to avoid self-detonation on spawn
     if (lastVel.x == 0.0f && lastVel.y == 0.0f) {
         lastVel = vel;
         return;
     }
 
     if (explosionTimer < 0.0f) {
-        // Compute delta velocity (Impact)
         float dvx = lastVel.x - vel.x;
         float dvy = lastVel.y - vel.y;
         float dvSq = dvx * dvx + dvy * dvy;
 
-        // Adjusted threshold: lower than 500 because the wheel is slower now.
-        // 300 represents a sudden drop of ~17 m/s in velocity.
         if (dvSq > 300.0f) { 
-            explosionTimer = 0.17f; // Start countdown
+            explosionTimer = 0.17f; 
         }
         lastVel = vel;
     } else {
         explosionTimer -= dt;
         if (explosionTimer <= 0.0f) {
             b2Vec2 pos = b2Body_GetPosition(bodyId);
-            
-            // --- BIGGER EXPLOSION ---
-            // Radius increased from 40 to 70, strength from 50 to 80
             world.triggerExplosion(pos.x * M2P, pos.y * M2P, 70, 80);
-            
             isDestroyed = true;
         }
+    }
+}
+
+// ==========================================
+// BULLET IMPLEMENTATION
+// ==========================================
+Bullet::Bullet(b2WorldId worldId, const sf::Image& img, int startX, int startY, float angleDeg, float speed)
+    : RigidBody(worldId, img, startX, startY, MaterialID::Stone, false, false) 
+{
+    isWeapon = false;
+    isGun = false;
+    isIndestructible = true; // Prevent crumbling on impact
+    
+    b2Body_SetTransform(bodyId, {startX * P2M, startY * P2M}, b2MakeRot(angleDeg * PI / 180.0f));
+    float vx = std::cos(angleDeg * PI / 180.0f) * speed;
+    float vy = std::sin(angleDeg * PI / 180.0f) * speed;
+    
+    b2Body_SetLinearVelocity(bodyId, {vx, vy});
+    b2Body_SetGravityScale(bodyId, 0.0f); // Make it fire straight like a laser
+}
+
+void Bullet::update(float dt, ParticleWorld& world) {
+    if (!b2Body_IsValid(bodyId)) return;
+
+    bool shouldExplode = false;
+    
+    // Condition 1: Large velocity change (collision with physics solids)
+    b2Vec2 vel = b2Body_GetLinearVelocity(bodyId);
+    if (lastVel.x != 0.0f || lastVel.y != 0.0f) {
+        float dvx = lastVel.x - vel.x;
+        float dvy = lastVel.y - vel.y;
+        float dvSq = dvx * dvx + dvy * dvy;
+        if (dvSq > 1000.0f) {
+            shouldExplode = true;
+        }
+    }
+    lastVel = vel;
+
+    // Condition 2: Lifetime expiry
+    lifeTime -= dt;
+    if (lifeTime <= 0.0f) {
+        shouldExplode = true;
+    }
+
+    // Condition 3: Overlap with destructible particles (if not already exploding)
+    if (!shouldExplode) {
+        b2Transform transform = b2Body_GetTransform(bodyId);
+        float cs = transform.q.c;
+        float sn = transform.q.s;
+
+        // Iterate through the bullet's own local particles to find their world positions
+        for (const auto& p : particles) {
+            if (p.active) {
+                // Transform local particle coords to world space
+                // local coords are relative to top-left, so we must offset by pivot for rotation
+                float rx = (p.localX - pivot.x) * P2M;
+                float ry = (p.localY - pivot.y) * P2M;
+                
+                float world_x_m = transform.p.x + (rx * cs - ry * sn);
+                float world_y_m = transform.p.y + (rx * sn + ry * cs);
+
+                int world_x_p = static_cast<int>(world_x_m * M2P);
+                int world_y_p = static_cast<int>(world_y_m * M2P);
+
+                BaseComponent* base = world.get<BaseComponent>(world_x_p, world_y_p);
+                // Check if the cell contains a particle that is NOT part of another rigid body
+                if (base && base->compMask != 0 && !base->flags.isRigidBodyPart) {
+                    Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
+                    if (logic) {
+                        MaterialGroup group = logic->getGroup();
+                        if (group == MaterialGroup::MovableSolid || group == MaterialGroup::Liquid) {
+                            shouldExplode = true;
+                            break; // Found a particle, no need to check others
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (shouldExplode) {
+        b2Vec2 pos = b2Body_GetPosition(bodyId);
+        int radius = static_cast<int>(std::max(width, height) * 1.5f);
+        if (radius < 4) radius = 4;
+        
+        world.triggerExplosion(pos.x * M2P, pos.y * M2P, radius, 30);
+        isDestroyed = true;
     }
 }
 
@@ -85,6 +165,7 @@ sf::Vector2f Weapon::getWeaponPivot(const std::string& name, int w, int h) {
     }
     return {w / 2.0f - 0.5f, h / 2.0f - 0.5f};
 }
+
 float Weapon::getWeaponVisualOffset(const std::string& name) {
     if (name == "sword" || name == "spear") {
         return -90.0f;
@@ -92,20 +173,75 @@ float Weapon::getWeaponVisualOffset(const std::string& name) {
     return 0.0f;
 }
 
+void Weapon::setupGunProperties() {
+    if (weaponName.find("Revolver") != std::string::npos) {
+        isGun = true;
+        semiAuto = true;
+        fireRate = 0.0f; 
+        barrelOffset = {12.5f, -3.75f};
+    } else if (weaponName.find("Submachine") != std::string::npos) {
+        isGun = true;
+        semiAuto = false;
+        fireRate = 0.1f; // Fast automatic rate
+        barrelOffset = {13.5f, -1.25f};
+    }
+}
+
 Weapon::Weapon(b2WorldId worldId, const sf::Image& img, int startX, int startY, const std::string& name)
     : RigidBody(worldId, img, startX, startY, MaterialID::Sand, true, false, getWeaponPivot(name, img.getSize().x, img.getSize().y), getWeaponVisualOffset(name)), weaponName(name)
 {
-    if (name.find("Revolver") != std::string::npos || name.find("Submachine") != std::string::npos) {
-        isGun = true;
-    }
+    setupGunProperties();
 }
 
 Weapon::Weapon(b2WorldId worldId, int w, int h, const std::vector<LocalParticle>& parts, b2Vec2 pos, float angle, b2Vec2 linVel, float angVel, const std::string& name, bool glued, int sX, int sY)
     : RigidBody(worldId, w, h, parts, pos, angle, linVel, angVel, true, glued, sX, sY, getWeaponPivot(name, w, h), getWeaponVisualOffset(name)), weaponName(name)
 {
-    if (name.find("Revolver") != std::string::npos || name.find("Submachine") != std::string::npos) {
-        isGun = true;
+    setupGunProperties();
+}
+
+void Weapon::fire(sf::Vector2f handPos, sf::Vector2f targetPos, float weaponAngle, bool flipX, RigidBodySystem& rbs, ParticleWorld& world) {
+    static sf::Image bulletImg;
+    static bool bulletLoaded = false;
+    
+    // Load the bullet image only once
+    if (!bulletLoaded) {
+        if (!bulletImg.loadFromFile("assets/images/weapons/Bullet.png")) {
+            bulletImg.resize({4, 2}, sf::Color::Yellow);
+        }
+        bulletLoaded = true;
     }
+
+    // Convert local barrel position to mapped world rotation coordinates
+    float finalAngle = weaponAngle + (flipX ? -visualAngleOffset : visualAngleOffset);
+    float rad = finalAngle * PI / 180.0f;
+    
+    float ox = barrelOffset.x;
+    float oy = barrelOffset.y;
+    if (flipX) ox = -ox;
+    
+    float cs = std::cos(rad);
+    float sn = std::sin(rad);
+    
+    float world_dx = ox * cs - oy * sn;
+    float world_dy = ox * sn + oy * cs;
+    
+    sf::Vector2f barrelPos = {handPos.x + world_dx, handPos.y + world_dy};
+
+    // Calculate final aim trajectory
+    sf::Vector2f dir = targetPos - barrelPos;
+    float dist = std::hypot(dir.x, dir.y);
+    if (dist > 0.001f) {
+        dir.x /= dist;
+        dir.y /= dist;
+    } else {
+        dir = {flipX ? -1.0f : 1.0f, 0.0f};
+    }
+    
+    float shootAngle = std::atan2(dir.y, dir.x) * 180.0f / PI;
+
+    // Spawn the bullet, moving at a smooth, visible speed of 150 m/s
+    auto bullet = std::make_unique<Bullet>(worldId, bulletImg, static_cast<int>(barrelPos.x), static_cast<int>(barrelPos.y), shootAngle, 150.0f);
+    rbs.addBody(std::move(bullet));
 }
 
 void Weapon::performSwingEffect(sf::Vector2f playerPos, sf::Vector2f targetPos, ParticleWorld& world, RigidBodySystem& rbs) {
@@ -127,8 +263,6 @@ void Weapon::performSwingEffect(sf::Vector2f playerPos, sf::Vector2f targetPos, 
             int wx = static_cast<int>(spawnPos.x) - wheelImg.getSize().x / 2;
             int wy = static_cast<int>(spawnPos.y) - wheelImg.getSize().y / 2;
             
-            // --- SLOWER WHEEL ---
-            // Reduced from 120.0f to 65.0f for better control/visibility
             b2Vec2 initVel = {dir.x * 65.0f, dir.y * 65.0f}; 
             
             auto wheel = std::make_unique<Wheel>(worldId, wheelImg, wx, wy);
