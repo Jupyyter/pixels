@@ -177,7 +177,7 @@ void RigidBody::clearFromWorld(ParticleWorld& world) {
     drawnPixels.clear();
 }
 
-void RigidBody::renderPixelated(sf::RenderTarget& target, sf::Vector2f pos, float angleDeg, bool flipX, sf::Color overrideColor, bool applyVisualOffset) {
+void RigidBody::renderPixelated(sf::RenderTarget& target, sf::Vector2f pos, float angleDeg, bool flipX, sf::Color overrideColor, bool applyVisualOffset, float scale) {
     sf::VertexArray va(sf::PrimitiveType::Triangles);
 
     float finalAngle = angleDeg;
@@ -205,15 +205,16 @@ void RigidBody::renderPixelated(sf::RenderTarget& target, sf::Vector2f pos, floa
             if (lx >= 0 && lx < width && ly >= 0 && ly < height) {
                 const auto& p = particles[ly * width + lx];
                 if (p.active) {
-                    float px = pos.x + dx;
-                    float py = pos.y + dy;
+                    // Multiply offset and quad sizes by scale!
+                    float px = pos.x + dx * scale;
+                    float py = pos.y + dy * scale;
 
                     sf::Color col = (overrideColor == sf::Color::Transparent) ? p.base.color : overrideColor;
 
                     sf::Vector2f tl(px, py);
-                    sf::Vector2f tr(px + 1.0f, py);
-                    sf::Vector2f br(px + 1.0f, py + 1.0f);
-                    sf::Vector2f bl(px, py + 1.0f);
+                    sf::Vector2f tr(px + scale, py);
+                    sf::Vector2f br(px + scale, py + scale);
+                    sf::Vector2f bl(px, py + scale);
 
                     va.append(sf::Vertex{tl, col}); va.append(sf::Vertex{tr, col}); va.append(sf::Vertex{br, col});
                     va.append(sf::Vertex{tl, col}); va.append(sf::Vertex{br, col}); va.append(sf::Vertex{bl, col});
@@ -624,7 +625,7 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
 
 void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
     for (auto& rb : bodies) {
-        if (rb->isEquipped || rb->isGlued) continue;
+        if (rb->isEquipped || rb->isGlued || rb->hasCustomRendering) continue;
 
         rb->drawnPixels.clear();
         
@@ -1305,4 +1306,9 @@ void RigidBodySystem::clearAll() {
     }
     chunkBodies.clear();
     orphanedPixels.clear();
+}
+void RigidBodySystem::renderEffects(sf::RenderTarget& target) const {
+    for (const auto& rb : bodies) {
+        rb->renderEffects(target);
+    }
 }

@@ -77,6 +77,10 @@ struct ProceduralLeg {
 
 struct ProceduralHand {
     sf::Vector2f offset; 
+    sf::Vector2f recoilPos = {0.0f, 0.0f};
+    sf::Vector2f recoilVel = {0.0f, 0.0f};
+    float recoilAngle = 0.0f;
+    float recoilAngularVel = 0.0f;
 };
 
 struct BodyBobState {
@@ -107,4 +111,9 @@ struct ProceduralAnimationComponent {
     
     float downhillOffset = 0.0f;
     
+    // NEW: Physics-Based Recoil/Spring State
+    float recoilAngle = 0.0f;
+    float recoilAngleVel = 0.0f;
+    sf::Vector2f recoilOffset = {0.0f, 0.0f};
+    sf::Vector2f recoilVelocity = {0.0f, 0.0f};
 };

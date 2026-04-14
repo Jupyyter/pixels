@@ -127,12 +127,40 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
                     bool canShoot = w->semiAuto ? (leftClick && !player.leftClickPressedLastFrame) : leftClick;
                     
                     if (canShoot) {
-                        // Reconstruct rendering hand position
                         sf::Vector2f vbp(bodyPos.x, bodyPos.y + 8.0f + anim.bob.offsetY);
-                        sf::Vector2f handPos = vbp + anim.handB.offset;
                         
-                        w->fire(handPos, player.aimTarget, anim.weaponAngle, sprite.flipX, rbs, pw);
+                        // Spawn bullets exactly out of the recoiled hand
+                        sf::Vector2f handPos = vbp + anim.handB.offset + anim.handB.recoilPos;
+                        float currentWeaponAngle = anim.weaponAngle + anim.handB.recoilAngle;
+                        
+                        w->fire(handPos, player.aimTarget, currentWeaponAngle, sprite.flipX, rbs, pw);
                         player.fireTimer = w->fireRate;
+
+                        // Calculate raw trajectory based on flipped orientations
+                        float wFinalAngle = currentWeaponAngle + (sprite.flipX ? -w->visualAngleOffset : w->visualAngleOffset);
+                        float wRad = wFinalAngle * PI / 180.0f;
+                        float dX = std::cos(wRad) * (sprite.flipX ? -1.0f : 1.0f);
+                        float dY = std::sin(wRad) * (sprite.flipX ? -1.0f : 1.0f);
+                        sf::Vector2f shootDir(dX, dY);
+                        
+                        // Push the hand joint back MUCH more violently
+                        float backwardForce = w->recoilForce * 120.0f;
+                        anim.handB.recoilVel -= shootDir * backwardForce;
+                        
+                        // Apply a highly randomized lateral push to make the hand bounce away unpredictably
+                        sf::Vector2f perpDir(-shootDir.y, shootDir.x);
+                        float randLateral = ((std::rand() % 100) / 100.0f - 0.5f) * backwardForce * 1.5f;
+                        anim.handB.recoilVel += perpDir * randLateral;
+                        
+                        // Kick the rotation extremely violently to random angles compounding previous bounces
+                        anim.handB.recoilAngularVel += ((std::rand() % 100) / 100.0f - 0.5f) * w->visualRecoilAngle * 80.0f;
+
+                        // Apply a consistent, subtle kick to the player's core body at all times
+                        float playerKickMult = 0.5f;
+                        float mass = b2Body_GetMass(phys.bodyId);
+                        
+                        vel.x += (-shootDir.x * w->recoilForce * playerKickMult) / mass;
+                        vel.y += (-shootDir.y * w->recoilForce * playerKickMult) / mass;
                     }
                 }
             }
@@ -658,6 +686,14 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
                         Weapon* w = static_cast<Weapon*>(player.equippedWeapon);
                         w->performSwingEffect(bodyPos, player.swingTarget, pw, *pw.getRigidBodySystem());
                     }
+
+                    // During a melee swing, the joint violently pushes the hand forward toward the target! 
+                    sf::Vector2f dir = player.swingTarget - bodyPos;
+                    float dist = std::max(length(dir), 1.0f);
+                    sf::Vector2f norm = { dir.x / dist, dir.y / dist };
+                    
+                    anim.handB.recoilVel += norm * 250.0f; 
+                    anim.handB.recoilAngularVel += ((std::rand() % 100) / 100.0f - 0.5f) * 800.0f;
                 }
 
                 if (t >= 1.0f) {
@@ -789,6 +825,41 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
             }
         }
 
+        // Update Hand B Joint Spring Physics (Used to bounce back from recoils)
+        float stiffness = 120.0f;
+        float damping = 8.0f;
+        
+        // Pull back towards 0,0 but swirl into circles naturally because it's slightly unhinged
+        sf::Vector2f springForce = -stiffness * anim.handB.recoilPos - damping * anim.handB.recoilVel;
+        sf::Vector2f swirlForce = {-anim.handB.recoilPos.y, anim.handB.recoilPos.x};
+        springForce += swirlForce * 20.0f;
+        
+        anim.handB.recoilVel += springForce * dt;
+        anim.handB.recoilPos += anim.handB.recoilVel * dt;
+        
+        // Cap the extreme visual breaks so the hand doesn't literally fly off the screen 
+        float maxRecoilDist = 35.0f;
+        float distSq = anim.handB.recoilPos.x * anim.handB.recoilPos.x + anim.handB.recoilPos.y * anim.handB.recoilPos.y;
+        if (distSq > maxRecoilDist * maxRecoilDist) {
+            float dist = std::sqrt(distSq);
+            anim.handB.recoilPos.x = (anim.handB.recoilPos.x / dist) * maxRecoilDist;
+            anim.handB.recoilPos.y = (anim.handB.recoilPos.y / dist) * maxRecoilDist;
+        }
+
+        // Apply a consistent, subtle physical drag to the player body from the hand spring
+        float playerDragMult = 0.02f;
+        b2Vec2 dragPlayerForce = {-springForce.x * playerDragMult, -springForce.y * playerDragMult};
+        b2Body_ApplyForceToCenter(phys.bodyId, dragPlayerForce, true);
+        
+        // Angular spring bounce
+        float angSpringForce = -stiffness * anim.handB.recoilAngle - damping * anim.handB.recoilAngularVel;
+        anim.handB.recoilAngularVel += angSpringForce * dt;
+        anim.handB.recoilAngle += anim.handB.recoilAngularVel * dt;
+
+        // Cap rotation offset
+        if (anim.handB.recoilAngle > 90.0f) anim.handB.recoilAngle = 90.0f;
+        if (anim.handB.recoilAngle < -90.0f) anim.handB.recoilAngle = -90.0f;
+
         if (!isAirborne) {
             float avgFootY     = (anim.legA.footWorld.y + anim.legB.footWorld.y) * 0.5f;
             float desiredBodyY = avgFootY - 17.0f;
@@ -887,10 +958,13 @@ void EntitySystem::renderEntities(sf::RenderTarget& target) {
             target.draw(*spriteComp.sprite);
         }
 
-        drawPixelatedHand(target, vbp + anim.handB.offset, sf::Color::White);
+        // Visually render the Hand and Weapon exactly on the recoiled bouncing path and angle
+        drawPixelatedHand(target, vbp + anim.handB.offset + anim.handB.recoilPos, sf::Color::White);
 
         if (player.equippedWeapon) {
-            player.equippedWeapon->renderPixelated(target, vbp + anim.handB.offset, anim.weaponAngle, spriteComp.flipX);
+            float renderAngle = anim.weaponAngle + anim.handB.recoilAngle;
+            sf::Vector2f renderHandPos = vbp + anim.handB.offset + anim.handB.recoilPos;
+            player.equippedWeapon->renderPixelated(target, renderHandPos, renderAngle, spriteComp.flipX);
         }
     });
 }

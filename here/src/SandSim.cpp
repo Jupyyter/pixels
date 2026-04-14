@@ -305,12 +305,17 @@ void SandSimApp::render() {
         border.setOutlineThickness(2.0f / currentZoom);
         window.draw(border);
 
+        // This draws all the pixels of the world (including the standard bullet rasterizations)
         if (world && renderer) renderer->render(window, *world);
 
         if (entitySystem) {
             world->getRigidBodySystem()->renderWeaponsOutline(window, entitySystem->getPlayerPos());
             if (ui && ui->getShowColliders()) world->getRigidBodySystem()->renderGluedOutlines(window, *world);
+            
             entitySystem->renderEntities(window);
+            
+            // NEW: Render the solid yellow-orange trace/geometry exactly over the world!
+            world->getRigidBodySystem()->renderEffects(window);
         }
         
         if (isUIVisible && !isMouseOverUI() && !isPanning) {
@@ -368,12 +373,9 @@ void SandSimApp::render() {
         if (ui && isUIVisible) ui->render(window); 
     }
     
-    // FIX: This must always be called unconditionally to finish the ImGui Frame properly
     ImGui::SFML::Render(window);
-    
     window.display();
 }
-
 void SandSimApp::startGame(const std::string& worldFile) {
     world = std::make_unique<ParticleWorld>(VIEW_WIDTH, VIEW_HEIGHT, worldFile);
     
