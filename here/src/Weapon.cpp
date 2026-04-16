@@ -117,12 +117,10 @@ void Bullet::update(float dt, ParticleWorld& world) {
     
     sf::Vector2f currentPos(pos.x * M2P, pos.y * M2P);
 
-    // --- NEW TRAIL LOGIC ---
-    // Increase age of existing trail history
+    // --- TRAIL LOGIC ---
     for (auto& node : pathHistory) {
         node.age += dt;
     }
-    // Remove nodes that are older than 0.10 seconds
     while (!pathHistory.empty() && pathHistory.back().age > BULLET_TRAIL_DURATION) {
         pathHistory.pop_back();
     }
@@ -132,7 +130,7 @@ void Bullet::update(float dt, ParticleWorld& world) {
             sf::Vector2f lastPos = pathHistory.front().pos;
             float dist = std::hypot(currentPos.x - lastPos.x, currentPos.y - lastPos.y);
             
-            float step = 2.0f; // Interpolate: Spawn a copy every 2 pixels!
+            float step = 2.0f; 
             if (dist > step) {
                 int steps = static_cast<int>(dist / step);
                 for (int i = 1; i <= steps; ++i) {
@@ -149,13 +147,15 @@ void Bullet::update(float dt, ParticleWorld& world) {
     }
     // -----------------------
     
-    // Condition 1: Large velocity change (collision with physics solids)
+    // Condition 1: Velocity change (collision with physics solids)
     if (lastVel.x != 0.0f || lastVel.y != 0.0f) {
         float dvx = lastVel.x - vel.x;
         float dvy = lastVel.y - vel.y;
         float dvSq = dvx * dvx + dvy * dvy;
         
-        if (dvSq > 2000.0f) {
+        // FIX: Lowered drastically from 2000.0f to 20.0f. 
+        // Now, hitting even a lightweight rigid body will trigger detonation immediately!
+        if (dvSq > 20.0f) {
             shouldExplode = true;
         }
     }
@@ -188,7 +188,10 @@ void Bullet::update(float dt, ParticleWorld& world) {
         
         while (true) {
             BaseComponent* base = world.get<BaseComponent>(cx, cy);
-            if (base && base->compMask != 0 && !base->flags.isRigidBodyPart) {
+            
+            // FIX: Removed `!base->flags.isRigidBodyPart`. 
+            // Now the raycast will catch thin rigid bodies rasterized into the world!
+            if (base && base->compMask != 0) {
                 Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
                 if (logic) {
                     MaterialGroup group = logic->getGroup();
@@ -211,10 +214,12 @@ void Bullet::update(float dt, ParticleWorld& world) {
     if (shouldExplode) {
         lastPos = {hitX * P2M, hitY * P2M}; 
         
-        int radius = static_cast<int>(std::max(width, height) * 1.5f);
-        if (radius < 4) radius = 4;
+        // FIX: Halved the visual explosion radius (0.75 instead of 1.5)
+        int radius = static_cast<int>(std::max(width, height) * 0.75f);
+        if (radius < 2) radius = 2; // Lowered minimum size constraint
         
-        world.triggerExplosion(hitX, hitY, radius, 30);
+        // FIX: Halved the physical push strength (15 instead of 30)
+        world.triggerExplosion(hitX, hitY, radius, 15);
         isDestroyed = true;
     } else {
         lastPos = pos;
@@ -356,10 +361,12 @@ void Weapon::fire(sf::Vector2f handPos, sf::Vector2f targetPos, float weaponAngl
     
     while(true) {
         BaseComponent* base = world.get<BaseComponent>(cx, cy);
-        if (base && base->compMask != 0 && !base->flags.isRigidBodyPart) {
+        
+        // FIX: Removed `!base->flags.isRigidBodyPart` here as well
+        if (base && base->compMask != 0) {
             Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
             if (logic && logic->getGroup() != MaterialGroup::Gas) {
-                break; // Hit terrain, clamp the barrel here
+                break; // Hit terrain or rigid body, clamp the barrel here
             }
         }
         

@@ -1038,7 +1038,33 @@ namespace {
         return result;
     }
 }
-
+// Add this anywhere in rigidbody.cpp
+void RigidBodySystem::applyBlastImpulse(float x, float y, float radius, float strength) {
+    for (auto& rb : bodies) {
+        if (rb->isEquipped || rb->isGlued) continue; // Don't throw the map or equipped weapons
+        
+        b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
+        sf::Vector2f wp(bp.x * M2P, bp.y * M2P);
+        float dist = std::hypot(wp.x - x, wp.y - y);
+        
+        // Slightly reduced the physical blast reach so things don't jump from miles away
+        float blastRadius = radius * 2.0f; 
+        
+        if (dist <= blastRadius && dist > 0.1f) {
+            sf::Vector2f toBody = {wp.x - x, wp.y - y};
+            toBody.x /= dist;
+            toBody.y /= dist;
+            
+            // Get the mass so tiny broken fragments don't fly away at the speed of light
+            float mass = b2Body_GetMass(rb->bodyId);
+            
+            // Push calculation: Mass * Strength * Tuning Variable * Distance Falloff
+            float push = strength * 1.5f * mass * (1.0f - (dist / blastRadius));
+            
+            b2Body_ApplyLinearImpulseToCenter(rb->bodyId, {toBody.x * push, toBody.y * push}, true);
+        }
+    }
+}
 void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, ParticleWorld& world) {
     uint64_t currentHash = 0;
     if (chunk) {

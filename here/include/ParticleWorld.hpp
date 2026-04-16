@@ -73,13 +73,17 @@ struct ParticleContext {
     ThermalComponent* thermal;
     DurabilityComponent* durability;
 };
-
+struct ExplosionEvent {
+    int x, y, radius, strength;
+};
 class ParticleWorld {
 private:
     sf::FloatRect simulationBounds;
     sf::FloatRect renderBounds;
     std::vector<std::uint8_t> pixelBuffer; 
     
+std::vector<ExplosionEvent> pendingExplosions;
+
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> chunks;
 
     mutable Chunk* cacheChunk[64] = {nullptr};

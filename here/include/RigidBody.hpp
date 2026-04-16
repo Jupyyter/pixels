@@ -108,7 +108,8 @@ public:
     void renderEffects(sf::RenderTarget& target) const;
 
     void applyMeleeHit(sf::Vector2f pos, sf::Vector2f dir, float range, float force, bool shatter, ParticleWorld& world);
-    
+    void applyBlastImpulse(float x, float y, float radius, float strength);
+
     void clearFromWorld(ParticleWorld& world);
     void stepPhysics(float dt, ParticleWorld& world);
     void rasterizeToWorld(ParticleWorld& world);

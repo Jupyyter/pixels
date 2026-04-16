@@ -291,7 +291,16 @@ void ParticleWorld::update(float deltaTime)
         rigidBodySystem->stepPhysics(deltaTime, *this); 
         rigidBodySystem->rasterizeToWorld(*this);       
     }
-
+// Now that rigid bodies have been rasterized, explosions will blow holes in them!
+    for (const auto& exp : pendingExplosions) {
+        if (rigidBodySystem) {
+            rigidBodySystem->applyBlastImpulse(static_cast<float>(exp.x), static_cast<float>(exp.y), static_cast<float>(exp.radius), static_cast<float>(exp.strength));
+        }
+        Explosion boom(*this, exp.x, exp.y, exp.radius, exp.strength);
+        boom.enact();
+    }
+    pendingExplosions.clear();
+    // ---------------------------------------------
     frameCounter++;
     bool dir = (frameCounter % 2) == 0;
 
@@ -513,8 +522,7 @@ void ParticleWorld::updateCameraBounds(float centerX, float centerY, float viewW
 }
 
 void ParticleWorld::triggerExplosion(int x, int y, int radius, int strength) {
-    Explosion boom(*this, x, y, radius, strength);
-    boom.enact();
+    pendingExplosions.push_back({x, y, radius, strength});
 }
 
 void ParticleWorld::addParticleCircle(int centerX, int centerY, float radius, MaterialID materialType) {
