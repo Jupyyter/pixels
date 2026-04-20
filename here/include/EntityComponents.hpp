@@ -23,6 +23,9 @@ struct PlayerControllerComponent {
     bool wPressedLastFrame = false;
     bool leftClickPressedLastFrame = false;
     
+    bool fPressedLastFrame = false;
+    bool isRagdoll = false;
+     float uprightStunTimer = 0.0f;
     RigidBody* equippedWeapon = nullptr; 
 
     // Swing mechanics
@@ -73,6 +76,7 @@ struct ProceduralLeg {
     float plantedX = 0.0f;
     float plantedY = 0.0f;
     bool  isPlanted = false;
+    b2BodyId ragdollBodyId = b2_nullBodyId;
 };
 
 struct ProceduralHand {
@@ -81,6 +85,7 @@ struct ProceduralHand {
     sf::Vector2f recoilVel = {0.0f, 0.0f};
     float recoilAngle = 0.0f;
     float recoilAngularVel = 0.0f;
+    b2BodyId ragdollBodyId = b2_nullBodyId;
 };
 
 struct BodyBobState {
