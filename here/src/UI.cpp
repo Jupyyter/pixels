@@ -219,6 +219,16 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
     }
     else {
         ImGui::SliderFloat("Brush Radius", &selectionRadius, MIN_SELECTION_RADIUS, MAX_SELECTION_RADIUS);
+        
+        ImGui::Spacing();
+        ImGui::Text("Brush Shape");
+        int shape = static_cast<int>(brushShape);
+        ImGui::RadioButton("Circle", &shape, static_cast<int>(BrushShape::Circle)); ImGui::SameLine();
+        ImGui::RadioButton("Square", &shape, static_cast<int>(BrushShape::Square));
+        brushShape = static_cast<BrushShape>(shape);
+        
+        ImGui::Spacing();
+        ImGui::Checkbox("Line Mode (Drag to draw)", &useLineMode);
     }
 
     ImGui::Separator();

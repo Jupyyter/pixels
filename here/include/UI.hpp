@@ -10,6 +10,9 @@ class ParticleWorld;
 enum class SpawnMode { Particles, Image, Entity, Weapon };
 enum class EntityType { Player };
 
+// Brush Shapes
+enum class BrushShape { Circle, Square };
+
 // Struct to hold loaded image assets (Used for Rigid Bodies, Structures, and Weapons)
 struct ImageAsset {
     std::string name;
@@ -31,6 +34,8 @@ public:
 
     SpawnMode getSpawnMode() const { return spawnMode; }
     EntityType getSelectedEntity() const { return currentEntity; }
+    BrushShape getBrushShape() const { return brushShape; }
+    bool getUseLineMode() const { return useLineMode; }
     
     // Unified Asset Getters
     float getAssetScale() const { return assetScale; }
@@ -58,6 +63,8 @@ private:
     
     SpawnMode spawnMode = SpawnMode::Particles;
     EntityType currentEntity = EntityType::Player;
+    BrushShape brushShape = BrushShape::Circle;
+    bool useLineMode = false;
     
     // Unified Assets list (Structures + Rigid Bodies)
     std::vector<ImageAsset> imageAssets;

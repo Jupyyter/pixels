@@ -252,7 +252,9 @@ public:
     void clear();
     void triggerExplosion(int x, int y, int radius, int strength);
     void addParticleCircle(int centerX, int centerY, float radius, MaterialID materialType);
+    void addParticleSquare(int centerX, int centerY, float radius, MaterialID materialType);
     void eraseCircle(int centerX, int centerY, float radius);
+    void eraseSquare(int centerX, int centerY, float radius);
     void updatePixelColor(int x, int y, const sf::Color& color); 
 
     bool saveWorld(const std::string& baseFilename = "world");

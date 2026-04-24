@@ -524,7 +524,6 @@ void ParticleWorld::updateCameraBounds(float centerX, float centerY, float viewW
 void ParticleWorld::triggerExplosion(int x, int y, int radius, int strength) {
     pendingExplosions.push_back({x, y, radius, strength});
 }
-
 void ParticleWorld::addParticleCircle(int centerX, int centerY, float radius, MaterialID materialType) {
     int r = (int)std::ceil(radius);
     for (int dy = -r; dy <= r; ++dy) {
@@ -536,6 +535,15 @@ void ParticleWorld::addParticleCircle(int centerX, int centerY, float radius, Ma
     }
 }
 
+void ParticleWorld::addParticleSquare(int centerX, int centerY, float radius, MaterialID materialType) {
+    int r = (int)std::ceil(radius);
+    for (int dy = -r; dy <= r; ++dy) {
+        for (int dx = -r; dx <= r; ++dx) {
+            spawnParticle(materialType, centerX + dx, centerY + dy);
+        }
+    }
+}
+
 void ParticleWorld::eraseCircle(int centerX, int centerY, float radius) {
     int r = (int)std::ceil(radius);
     for (int dy = -r; dy <= r; ++dy) {
@@ -543,6 +551,15 @@ void ParticleWorld::eraseCircle(int centerX, int centerY, float radius) {
             if (dx * dx + dy * dy <= radius * radius) {
                 removeParticle(centerX + dx, centerY + dy);
             }
+        }
+    }
+}
+
+void ParticleWorld::eraseSquare(int centerX, int centerY, float radius) {
+    int r = (int)std::ceil(radius);
+    for (int dy = -r; dy <= r; ++dy) {
+        for (int dx = -r; dx <= r; ++dx) {
+            removeParticle(centerX + dx, centerY + dy);
         }
     }
 }

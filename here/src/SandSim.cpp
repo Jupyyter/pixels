@@ -4,6 +4,12 @@
 #include <iostream>
 #include <imgui.h>
 #include <imgui-SFML.h>
+#include <vector>
+
+static bool g_isDraggingLine = false;
+static bool g_isDraggingEraseLine = false;
+static sf::Vector2f g_lineStartPos;
+static sf::Vector2f g_lineCurrentPos;
 
 constexpr float CAMERA_MARGIN = 50.0f; 
 
@@ -194,6 +200,7 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
         }
     }
 }
+
 void SandSimApp::run() {
     clock.restart();
     frameClock.restart();
@@ -213,9 +220,25 @@ void SandSimApp::run() {
                     handleMouseHeld();
                 } else {
                     hasPreviousMousePos = false;
+                    if (g_isDraggingLine && ui && ui->getUseLineMode()) {
+                        addParticlesLine(g_lineStartPos, g_lineCurrentPos);
+                        g_isDraggingLine = false;
+                    }
+                    if (g_isDraggingEraseLine && ui && ui->getUseLineMode()) {
+                        eraseParticlesLine(g_lineStartPos, g_lineCurrentPos);
+                        g_isDraggingEraseLine = false;
+                    }
                 }
             } else {
                 hasPreviousMousePos = false;
+                if (g_isDraggingLine && ui && ui->getUseLineMode()) {
+                    addParticlesLine(g_lineStartPos, g_lineCurrentPos);
+                    g_isDraggingLine = false;
+                }
+                if (g_isDraggingEraseLine && ui && ui->getUseLineMode()) {
+                    eraseParticlesLine(g_lineStartPos, g_lineCurrentPos);
+                    g_isDraggingEraseLine = false;
+                }
             }
         }
 
@@ -288,6 +311,7 @@ void SandSimApp::update() {
         }
     }
 }
+
 void SandSimApp::render() {
     window.clear(sf::Color(0, 0, 0));
     
@@ -314,7 +338,7 @@ void SandSimApp::render() {
             
             entitySystem->renderEntities(window);
             
-            // NEW: Render the solid yellow-orange trace/geometry exactly over the world!
+            // Render the solid yellow-orange trace/geometry exactly over the world!
             world->getRigidBodySystem()->renderEffects(window);
         }
         
@@ -359,13 +383,94 @@ void SandSimApp::render() {
                 window.draw(brush);
             }
             else { 
-                sf::CircleShape brush(ui->getSelectionRadius());
-                brush.setOrigin({ui->getSelectionRadius(), ui->getSelectionRadius()});
-                brush.setPosition(worldPos);
-                brush.setFillColor(sf::Color(255, 255, 255, 40));
-                brush.setOutlineColor(sf::Color(255, 255, 255, 180));
-                brush.setOutlineThickness(1.0f / currentZoom);
-                window.draw(brush);
+                auto drawPixelatedArea = [&](sf::Vector2f startP, sf::Vector2f endP, float radius, BrushShape shape, bool isLine) {
+                    int r = static_cast<int>(std::ceil(radius));
+                    int steps = 0;
+                    float dx = 0, dy = 0;
+                    
+                    if (isLine) {
+                        dx = endP.x - startP.x;
+                        dy = endP.y - startP.y;
+                        float dist = std::sqrt(dx*dx + dy*dy);
+                        float stepSize = std::max(1.0f, radius * 0.5f);
+                        steps = static_cast<int>(std::ceil(dist / stepSize));
+                    }
+                    
+                    int minX = static_cast<int>(std::floor(std::min(startP.x, endP.x))) - r - 1;
+                    int maxX = static_cast<int>(std::floor(std::max(startP.x, endP.x))) + r + 1;
+                    int minY = static_cast<int>(std::floor(std::min(startP.y, endP.y))) - r - 1;
+                    int maxY = static_cast<int>(std::floor(std::max(startP.y, endP.y))) + r + 1;
+                    
+                    int w = maxX - minX + 1;
+                    int h = maxY - minY + 1;
+                    
+                    // Safety check to prevent massive memory allocation on wild drags
+                    if (w > 2000 || h > 2000 || w <= 0 || h <= 0) return; 
+                    
+                    std::vector<bool> grid(w * h, false);
+                    
+                    for(int i = 0; i <= steps; ++i) {
+                        float t = (steps > 0) ? (float)i / steps : 0.f;
+                        int cx = static_cast<int>(std::floor(startP.x + t * dx));
+                        int cy = static_cast<int>(std::floor(startP.y + t * dy));
+                        
+                        for (int bdy = -r; bdy <= r; ++bdy) {
+                            for (int bdx = -r; bdx <= r; ++bdx) {
+                                if (shape == BrushShape::Circle && (bdx*bdx + bdy*bdy > radius*radius)) continue;
+                                int gx = cx + bdx - minX;
+                                int gy = cy + bdy - minY;
+                                if (gx >= 0 && gx < w && gy >= 0 && gy < h) {
+                                    grid[gy * w + gx] = true;
+                                }
+                            }
+                        }
+                    }
+                    
+                    sf::VertexArray vaFill(sf::PrimitiveType::Triangles);
+                    sf::VertexArray vaOutline(sf::PrimitiveType::Triangles);
+                    sf::Color fillCol(255, 255, 255, 40);
+                    sf::Color outlineCol(255, 255, 255, 180);
+                    
+                    auto addQuad = [&](sf::VertexArray& va, int px, int py, sf::Color col) {
+                        sf::Vector2f tl(px, py);
+                        sf::Vector2f tr(px + 1, py);
+                        sf::Vector2f br(px + 1, py + 1);
+                        sf::Vector2f bl(px, py + 1);
+                        va.append({tl, col}); va.append({tr, col}); va.append({br, col});
+                        va.append({tl, col}); va.append({br, col}); va.append({bl, col});
+                    };
+                    
+                    for (int y = 0; y < h; ++y) {
+                        for (int x = 0; x < w; ++x) {
+                            if (grid[y * w + x]) {
+                                bool isOutline = false;
+                                if (x == 0 || x == w - 1 || y == 0 || y == h - 1) {
+                                    isOutline = true;
+                                } else if (!grid[y * w + (x - 1)] || !grid[y * w + (x + 1)] || !grid[(y - 1) * w + x] || !grid[(y + 1) * w + x]) {
+                                    isOutline = true;
+                                }
+                                
+                                int worldPx = minX + x;
+                                int worldPy = minY + y;
+                                
+                                if (isOutline) {
+                                    addQuad(vaOutline, worldPx, worldPy, outlineCol);
+                                } else {
+                                    addQuad(vaFill, worldPx, worldPy, fillCol);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (vaFill.getVertexCount() > 0) window.draw(vaFill);
+                    if (vaOutline.getVertexCount() > 0) window.draw(vaOutline);
+                };
+
+                if (ui->getUseLineMode() && (g_isDraggingLine || g_isDraggingEraseLine)) {
+                    drawPixelatedArea(g_lineStartPos, g_lineCurrentPos, ui->getSelectionRadius(), ui->getBrushShape(), true);
+                } else {
+                    drawPixelatedArea(worldPos, worldPos, ui->getSelectionRadius(), ui->getBrushShape(), false);
+                }
             }
         }
 
@@ -376,6 +481,7 @@ void SandSimApp::render() {
     ImGui::SFML::Render(window);
     window.display();
 }
+
 void SandSimApp::startGame(const std::string& worldFile) {
     world = std::make_unique<ParticleWorld>(VIEW_WIDTH, VIEW_HEIGHT, worldFile);
     
@@ -395,6 +501,8 @@ void SandSimApp::returnToMenu() {
     entitySystem.reset(); 
     world.reset();
     ui.reset();
+    g_isDraggingLine = false;
+    g_isDraggingEraseLine = false;
     currentState = GameState::MENU;
 }
 
@@ -404,17 +512,34 @@ void SandSimApp::handleMouseHeld() {
     sf::Vector2i mousePos = sf::Mouse::getPosition(window);
     sf::Vector2f worldPos = window.mapPixelToCoords(mousePos, gameView);
     
-    if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
-        if (hasPreviousMousePos) addParticlesLine(previousMouseWorldPos, worldPos);
-        else addParticles(worldPos);
-        previousMouseWorldPos = worldPos;
-        hasPreviousMousePos = true;
-    } 
-    else if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Right)) {
-        if (hasPreviousMousePos) eraseParticlesLine(previousMouseWorldPos, worldPos);
-        else eraseParticles(worldPos);
-        previousMouseWorldPos = worldPos;
-        hasPreviousMousePos = true;
+    if (ui->getUseLineMode()) {
+        if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
+            if (!g_isDraggingLine) {
+                g_isDraggingLine = true;
+                g_lineStartPos = worldPos;
+            }
+            g_lineCurrentPos = worldPos;
+        }
+        else if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Right)) {
+            if (!g_isDraggingEraseLine) {
+                g_isDraggingEraseLine = true;
+                g_lineStartPos = worldPos;
+            }
+            g_lineCurrentPos = worldPos;
+        }
+    } else {
+        if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
+            if (hasPreviousMousePos) addParticlesLine(previousMouseWorldPos, worldPos);
+            else addParticles(worldPos);
+            previousMouseWorldPos = worldPos;
+            hasPreviousMousePos = true;
+        } 
+        else if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Right)) {
+            if (hasPreviousMousePos) eraseParticlesLine(previousMouseWorldPos, worldPos);
+            else eraseParticles(worldPos);
+            previousMouseWorldPos = worldPos;
+            hasPreviousMousePos = true;
+        }
     }
 }
 
@@ -425,13 +550,23 @@ void SandSimApp::addParticles(const sf::Vector2f& worldPos) {
             int radius = static_cast<int>(ui->getSelectionRadius());
             world->triggerExplosion(static_cast<int>(worldPos.x), static_cast<int>(worldPos.y), radius, 20);
         } else {
-            world->addParticleCircle(worldPos.x, worldPos.y, ui->getSelectionRadius(), currentMat);
+            if (ui->getBrushShape() == BrushShape::Square) {
+                world->addParticleSquare(worldPos.x, worldPos.y, ui->getSelectionRadius(), currentMat);
+            } else {
+                world->addParticleCircle(worldPos.x, worldPos.y, ui->getSelectionRadius(), currentMat);
+            }
         }
     }
 }
 
 void SandSimApp::eraseParticles(const sf::Vector2f& worldPos) {
-    if (world && ui) world->eraseCircle(worldPos.x, worldPos.y, ui->getSelectionRadius());
+    if (world && ui) {
+        if (ui->getBrushShape() == BrushShape::Square) {
+            world->eraseSquare(worldPos.x, worldPos.y, ui->getSelectionRadius());
+        } else {
+            world->eraseCircle(worldPos.x, worldPos.y, ui->getSelectionRadius());
+        }
+    }
 }
 
 void SandSimApp::addParticlesLine(const sf::Vector2f& start, const sf::Vector2f& end) {
