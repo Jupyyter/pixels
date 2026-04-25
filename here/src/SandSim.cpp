@@ -209,6 +209,10 @@ void SandSimApp::run() {
         handleEvents();
 
         if (currentState == GameState::PLAYING) {
+            if (!window.hasFocus()) {
+                isPanning = false; // Reset panning if window loses focus
+            }
+
             if (isPanning) {
                 sf::Vector2i currentPos = sf::Mouse::getPosition(window);
                 sf::Vector2f delta = sf::Vector2f(lastMousePos - currentPos);
@@ -216,7 +220,8 @@ void SandSimApp::run() {
                 lastMousePos = currentPos;
                 constrainView();
             } else if (isUIVisible && !isMouseOverUI()) {
-                if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) || sf::Mouse::isButtonPressed(sf::Mouse::Button::Right)) {
+                // Ensure the window has focus before reacting to global mouse clicks
+                if (window.hasFocus() && (sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) || sf::Mouse::isButtonPressed(sf::Mouse::Button::Right))) {
                     handleMouseHeld();
                 } else {
                     hasPreviousMousePos = false;
@@ -342,7 +347,7 @@ void SandSimApp::render() {
             world->getRigidBodySystem()->renderEffects(window);
         }
         
-        if (isUIVisible && !isMouseOverUI() && !isPanning) {
+        if (isUIVisible && !isMouseOverUI() && !isPanning && window.hasFocus()) {
             sf::Vector2f worldPos = window.mapPixelToCoords(sf::Mouse::getPosition(window), gameView);
             
             if (ui->getSpawnMode() == SpawnMode::Image) {
