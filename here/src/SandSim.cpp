@@ -185,8 +185,11 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
                         }
                     }
                     else if (ui->getSpawnMode() == SpawnMode::Entity) {
-                        if (entitySystem && ui->getSelectedEntity() == EntityType::Player) {
-                            entitySystem->spawnPlayer(worldPos.x, worldPos.y, "assets/images/jhonnyIdle.png");
+                        if (entitySystem) {
+                            std::string path = ui->getSelectedEntityPath();
+                            if (!path.empty()) {
+                                entitySystem->spawnEntity(worldPos.x, worldPos.y, path, ui->getSpawnAsPlayer());
+                            }
                         }
                     }
                 }
@@ -343,6 +346,10 @@ void SandSimApp::render() {
             
             entitySystem->renderEntities(window);
             
+            if (ui && ui->getShowColliders()) {
+                entitySystem->renderDebug(window);
+            }
+            
             // Render the solid yellow-orange trace/geometry exactly over the world!
             world->getRigidBodySystem()->renderEffects(window);
         }
@@ -381,11 +388,23 @@ void SandSimApp::render() {
                 }
             }
             else if (ui->getSpawnMode() == SpawnMode::Entity) {
-                sf::RectangleShape brush({8.0f, 16.0f});
-                brush.setOrigin({4.0f, 8.0f});
-                brush.setPosition(worldPos);
-                brush.setFillColor(sf::Color(255, 0, 0, 100));
-                window.draw(brush);
+                const sf::Texture* ghostTex = ui->getSelectedEntityTexture();
+                if (ghostTex) {
+                    sf::Sprite ghostSprite(*ghostTex);
+                    int w = std::min(32u, ghostTex->getSize().x);
+                    int h = std::min(32u, ghostTex->getSize().y);
+                    ghostSprite.setTextureRect(sf::IntRect({0, 0}, {w, h}));
+                    ghostSprite.setOrigin({15.5f, 25.0f}); 
+                    ghostSprite.setPosition(worldPos);
+                    ghostSprite.setColor(sf::Color(255, 255, 255, 128)); 
+                    window.draw(ghostSprite);
+                } else {
+                    sf::RectangleShape brush({8.0f, 16.0f});
+                    brush.setOrigin({4.0f, 8.0f});
+                    brush.setPosition(worldPos);
+                    brush.setFillColor(sf::Color(255, 0, 0, 100));
+                    window.draw(brush);
+                }
             }
             else { 
                 auto drawPixelatedArea = [&](sf::Vector2f startP, sf::Vector2f endP, float radius, BrushShape shape, bool isLine) {

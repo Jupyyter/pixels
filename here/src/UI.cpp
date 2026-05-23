@@ -8,6 +8,7 @@
 UI::UI(sf::RenderWindow& window, ParticleWorld* worldPtr) : world(worldPtr) {
     loadImageAssets();
     loadWeaponAssets();
+    loadEntityAssets();
 }
 
 void UI::loadImageAssets() {
@@ -75,6 +76,31 @@ void UI::loadWeaponAssets() {
         }
     }
 }
+
+void UI::loadEntityAssets() {
+    entityAssets.clear();
+    std::string folderPath = "assets/images/entities";
+    if (!std::filesystem::exists(folderPath)) std::filesystem::create_directories(folderPath);
+    
+    for (const auto& entry : std::filesystem::directory_iterator(folderPath)) {
+        if (entry.is_regular_file()) {
+            std::string path = entry.path().string();
+            std::string ext = entry.path().extension().string();
+            
+            if (ext == ".png" || ext == ".jpg" || ext == ".bmp") {
+                ImageAsset asset;
+                asset.name = entry.path().stem().string();
+                asset.path = path;
+                
+                if (asset.image.loadFromFile(path)) {
+                    if (asset.texture.loadFromImage(asset.image)) {
+                        entityAssets.push_back(std::move(asset));
+                    }
+                }
+            }
+        }
+    }
+}
 const sf::Image* UI::getSelectedAssetImage() const {
     if (imageAssets.empty() || selectedAssetIndex < 0 || selectedAssetIndex >= imageAssets.size()) return nullptr;
     return &imageAssets[selectedAssetIndex].image;
@@ -98,6 +124,26 @@ const sf::Texture* UI::getSelectedWeaponTexture() const {
 std::string UI::getSelectedWeaponName() const {
     if (weaponAssets.empty() || selectedWeaponIndex < 0 || selectedWeaponIndex >= weaponAssets.size()) return "weapon";
     return weaponAssets[selectedWeaponIndex].name;
+}
+
+const sf::Image* UI::getSelectedEntityImage() const {
+    if (entityAssets.empty() || selectedEntityIndex < 0 || selectedEntityIndex >= entityAssets.size()) return nullptr;
+    return &entityAssets[selectedEntityIndex].image;
+}
+
+const sf::Texture* UI::getSelectedEntityTexture() const {
+    if (entityAssets.empty() || selectedEntityIndex < 0 || selectedEntityIndex >= entityAssets.size()) return nullptr;
+    return &entityAssets[selectedEntityIndex].texture;
+}
+
+std::string UI::getSelectedEntityName() const {
+    if (entityAssets.empty() || selectedEntityIndex < 0 || selectedEntityIndex >= entityAssets.size()) return "";
+    return entityAssets[selectedEntityIndex].name;
+}
+
+std::string UI::getSelectedEntityPath() const {
+    if (entityAssets.empty() || selectedEntityIndex < 0 || selectedEntityIndex >= entityAssets.size()) return "";
+    return entityAssets[selectedEntityIndex].path;
 }
 
 
@@ -187,11 +233,36 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
         }
     } 
     else if (spawnMode == SpawnMode::Entity) {
-        ImGui::Text("Entity Spawner");
-        int ent = static_cast<int>(currentEntity);
-        ImGui::RadioButton("Player", &ent, static_cast<int>(EntityType::Player));
-        currentEntity = static_cast<EntityType>(ent);
-    } 
+        ImGui::Text("Entity Assets Gallery");
+        ImGui::Checkbox("Is Player", &spawnAsPlayer);
+        if (entityAssets.empty()) {
+            ImGui::TextColored(ImVec4(1, 0, 0, 1), "No images found in assets/images/entities/");
+        } else {
+            int columns = std::max(1, static_cast<int>(ImGui::GetWindowWidth() / 80.0f));
+            if (ImGui::BeginTable("##entitygrid", columns)) {
+                for (size_t i = 0; i < entityAssets.size(); ++i) {
+                    ImGui::TableNextColumn();
+                    bool selected = (selectedEntityIndex == i);
+                    
+                    if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.8f, 0.0f, 0.5f)); 
+                    
+                    std::string btnId = "##ent" + std::to_string(i);
+                    sf::Sprite thumb(entityAssets[i].texture);
+                    int w = std::min(32u, entityAssets[i].texture.getSize().x);
+                    int h = std::min(32u, entityAssets[i].texture.getSize().y);
+                    thumb.setTextureRect(sf::IntRect({0, 0}, {w, h}));
+                    
+                    if (ImGui::ImageButton(btnId.c_str(), thumb, sf::Vector2f(60, 60))) {
+                        selectedEntityIndex = i;
+                    }
+                    
+                    if (selected) ImGui::PopStyleColor();
+                    ImGui::TextWrapped("%s", entityAssets[i].name.c_str());
+                }
+                ImGui::EndTable();
+            }
+        }
+    }
     else if (spawnMode == SpawnMode::Weapon) {
         ImGui::Text("Weapon Assets Gallery");
         if (weaponAssets.empty()) {

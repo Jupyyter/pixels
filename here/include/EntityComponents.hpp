@@ -5,8 +5,24 @@
 #include <string>
 #include <unordered_map>
 #include <optional>
+#include <vector>
 
 class RigidBody;
+
+struct AINode {
+    sf::Vector2f pos;
+    std::vector<int> neighbors;
+};
+
+// NEW: Path node structure to carry explicit jump/fall instructions
+struct PathNodeData {
+    sf::Vector2f pos;
+    bool isJump = false;
+    bool isFall = false;
+    bool isJumpTakeoff = false;
+    float requiredVx = 0.0f;
+    
+};
 
 // Core Physics wrapper
 struct PhysicsComponent {
@@ -15,6 +31,18 @@ struct PhysicsComponent {
 
 // Player Input & Controller State
 struct PlayerControllerComponent {
+    bool isPlayer = true;
+    
+    // AI fields
+    bool hasTarget = false;
+    sf::Vector2f targetPos;
+    std::vector<PathNodeData> path;
+    int pathIndex = 0;
+
+    float pathRecalcTimer = 0.0f;
+    float stuckTimer = 0.0f;
+    sf::Vector2f lastPos = {0.0f, 0.0f};
+
     float moveSpeed = 7.0f;
     float jumpForce = -38.0f;
     bool isGrounded = false;
@@ -25,7 +53,7 @@ struct PlayerControllerComponent {
     
     bool fPressedLastFrame = false;
     bool isRagdoll = false;
-     float uprightStunTimer = 0.0f;
+    float uprightStunTimer = 0.0f;
     RigidBody* equippedWeapon = nullptr; 
 
     // Swing mechanics

@@ -8,7 +8,6 @@ class ParticleWorld;
 
 // Spawn Modes
 enum class SpawnMode { Particles, Image, Entity, Weapon };
-enum class EntityType { Player };
 
 // Brush Shapes
 enum class BrushShape { Circle, Square };
@@ -33,7 +32,6 @@ public:
     bool isMouseOverUI() const; 
 
     SpawnMode getSpawnMode() const { return spawnMode; }
-    EntityType getSelectedEntity() const { return currentEntity; }
     BrushShape getBrushShape() const { return brushShape; }
     bool getUseLineMode() const { return useLineMode; }
     
@@ -47,13 +45,19 @@ public:
     const sf::Texture* getSelectedWeaponTexture() const;
     std::string getSelectedWeaponName() const;
 
+    // Entity Getters
+    const sf::Image* getSelectedEntityImage() const;
+    const sf::Texture* getSelectedEntityTexture() const;
+    std::string getSelectedEntityName() const;
+    std::string getSelectedEntityPath() const;
+
     // Spawning properties
     bool getSpawnAsRigidBody() const { return spawnAsRigidBody; }
     bool getGlueToTerrain() const { return glueToTerrain; }
     
     bool getShowChunkBounds() const { return showChunkBounds; }
     bool getShowColliders() const { return showColliders; }
-
+bool getSpawnAsPlayer() const { return spawnAsPlayer; }
 private:
     bool showChunkBounds = false;
     bool showColliders = false;
@@ -62,7 +66,6 @@ private:
     float selectionRadius = DEFAULT_SELECTION_RADIUS;
     
     SpawnMode spawnMode = SpawnMode::Particles;
-    EntityType currentEntity = EntityType::Player;
     BrushShape brushShape = BrushShape::Circle;
     bool useLineMode = false;
     
@@ -72,12 +75,17 @@ private:
     float assetScale = 1.0f;
     bool spawnAsRigidBody = false;
     bool glueToTerrain = false;
-
+bool spawnAsPlayer = true;
     // Weapons Assets
     std::vector<ImageAsset> weaponAssets;
     int selectedWeaponIndex = 0;
+    
+    // Entity Assets
+    std::vector<ImageAsset> entityAssets;
+    int selectedEntityIndex = 0;
 
     void loadImageAssets();
     void loadWeaponAssets();
+    void loadEntityAssets();
     void drawMaterialTabs();
 };
