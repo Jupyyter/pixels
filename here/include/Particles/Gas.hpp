@@ -26,7 +26,6 @@ class Steam : public Gas {
 public:
     Steam() : Gas(MaterialID::Steam, 1.0f, 1.8f) {} 
     void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
-    // Updated signature: takes direct pointers
     void checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) override;
 };
 
@@ -34,6 +33,7 @@ class FlammableGas : public Gas {
 public:
     FlammableGas() : Gas(MaterialID::FlammableGas, 1.0f, 1.8f) {}
     void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
+    void checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) override;
 };
 
 class Spark : public Gas {
@@ -55,4 +55,5 @@ class Smoke : public Gas {
 public:
     Smoke() : Gas(MaterialID::Smoke, 0.8f, 1.2f) {}
     void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
+    void checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) override;
 };

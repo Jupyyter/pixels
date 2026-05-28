@@ -7,22 +7,17 @@ Gas::Gas(MaterialID id, float buoy, float chaos)
     : Particle(id), buoyancy(buoy), chaosLevel(chaos) {}
 
 void Gas::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    // 1. Spawns the BaseComponent (Sets the color)
     Particle::onSpawn(index, x, y, world);
     
-    // 2. Adds the Gas-specific components
     world.add<KinematicsComponent>(x, y, KinematicsComponent(sf::Vector2f(0, 0), 0.0f, 0.0f, true, 0));
     world.add<FluidComponent>(x, y, FluidComponent(1, 1));
 }
 
 void Gas::update(const ParticleContext& ctx, float dt, ParticleWorld& world) 
 {
-    // Important: Refresh kinematics from world if ctx version is null 
-    // (This happens if this is the first particle with kinematics in this chunk)
     auto* kin = ctx.kinematics ? &ctx.kinematics[ctx.index] : world.get<KinematicsComponent>(ctx.x, ctx.y);
     if (!kin) return;
 
-    // Standard Gas Physics
     kin->velocity.y = std::clamp(kin->velocity.y - (GRAVITY * dt * buoyancy), -5.0f, 2.0f);
     kin->velocity.x += Random::randFloat(-chaosLevel, chaosLevel);
     kin->velocity.x = std::clamp(kin->velocity.x, -3.0f, 3.0f);
@@ -60,7 +55,6 @@ void Gas::update(const ParticleContext& ctx, float dt, ParticleWorld& world)
         return false;
     };
 
-    // Movement Logic
     if (!isPathBlocked(targetX, targetY) && tryMove(targetX, targetY)) {}
     else if (tryMove(curX, curY - 1)) {
         if (auto* k = world.getFast<KinematicsComponent>(ctx, curX, curY)) k->velocity.y *= 0.5f;
@@ -75,7 +69,6 @@ void Gas::update(const ParticleContext& ctx, float dt, ParticleWorld& world)
         }
     }
 
-    // FINALIZATION
     auto* finalBase = world.getFast<BaseComponent>(ctx, curX, curY);
     if (!finalBase || finalBase->compMask == 0) return;
 
@@ -88,7 +81,6 @@ void Gas::update(const ParticleContext& ctx, float dt, ParticleWorld& world)
 
     world.updateParticleColor(world.computeIndex(curX, curY), curX, curY);
     
-    // Virtual behaviors
     if (finalBase->flags.isIgnited) {
         auto* therm = world.getFast<ThermalComponent>(ctx, curX, curY);
         applyHeatToNeighborsIfIgnited(finalBase, therm, curX, curY, world);
@@ -113,10 +105,9 @@ bool Gas::actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY, in
 
     if (targetBase && targetBase->compMask != 0) {
         if (actOnOther(myBase, myX, myY, targetBase, targetX, targetY, world)) return true;
-        if (targetBase->compMask == 0) targetBase = nullptr; // target died
+        if (targetBase->compMask == 0) targetBase = nullptr; 
     }
 
-    // Move into empty space
     if (!targetBase || targetBase->compMask == 0) {
         if (isFinal) {
             world.moveParticle(myX, myY, targetX, targetY);
@@ -125,7 +116,6 @@ bool Gas::actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY, in
         return false;
     }
 
-    // Interaction with other particles
     Particle* logic = MaterialRegistry[static_cast<int>(targetBase->id)];
     if (!logic) return true;
 
@@ -134,8 +124,6 @@ bool Gas::actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY, in
             swapGasForDensities(ctx, world, myX, myY, targetX, targetY);
             return false; 
         }
-        // GAS MIXING: If we didn't swap based on density, 
-        // give a small chance to swap anyway so gas isn't static.
         else if (Random::randFloat(0,1) > 0.8f) {
             world.swapParticles(myX, myY, targetX, targetY);
             myX = targetX; myY = targetY;
@@ -168,7 +156,9 @@ void Gas::swapGasForDensities(const ParticleContext& ctx, ParticleWorld& world, 
 void Steam::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     Gas::onSpawn(index, x, y, world);
     if (auto* f = world.get<FluidComponent>(x, y)) f->density = 5;
-    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(1000, 3000), 0));
+    
+    // Decreased significantly allowing immediate transformations naturally quicker 
+    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(200, 500), 0));
 }
 
 void Steam::checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) {
@@ -183,9 +173,31 @@ void Steam::checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, 
 
 void FlammableGas::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     Gas::onSpawn(index, x, y, world);
-    world.add<ThermalComponent>(x, y, ThermalComponent(0, 10, 0, 0));
-    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(3000, 3500), 0));
+    // Explicit extreme thermal propagation causing explosions optimally
+    world.add<ThermalComponent>(x, y, ThermalComponent(0, 100, 30, 2));
+    
+    // Default Lifespan threshold for standard dispersion limitations allowing visual flair structurally  
+    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(40, 150), 0));
 }
+
+void FlammableGas::checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) {
+    if (!dur) return;
+
+    // Fast Flame consumption tracker elegantly evaporating exactly
+    if (base && base->flags.isIgnited) {
+        dur->health -= 2;
+
+        if (dur->health <= 0) {
+            // Provides dynamic satisfying popping during detonations occasionally purely cleanly effectively properly accurately gracefully
+            if (Random::randFloat(0, 1) > 0.7f) {
+                dieAndReplace(x, y, MaterialID::Smoke, world);
+            } else {
+                die(x, y, world); // Pure clean flame vapor disappear completely functionally beautifully intuitively stably effectively naturally
+            }
+        }
+    }
+}
+
 
 void Spark::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     Gas::onSpawn(index, x, y, world);
@@ -210,7 +222,6 @@ bool Spark::actOnNeighbor(const ParticleContext& ctx, int tx, int ty, int& mx, i
         auto* tTherm = world.get<ThermalComponent>(tx, ty);
         logic->receiveHeat(targetBase, tTherm, tx, ty, 10, world);
         
-        // Spark dies on impact with non-gas
         if (logic->getGroup() != MaterialGroup::Gas) {
             die(mx, my, world);
             return true;
@@ -251,10 +262,19 @@ bool ExplosionSpark::actOnNeighbor(const ParticleContext& ctx, int tx, int ty, i
 void Smoke::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     Gas::onSpawn(index, x, y, world);
     if (auto* f = world.get<FluidComponent>(x, y)) f->density = 3;
-    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(450, 700), 0));
+    
+    // Rapid expiration allows for clear sight cleanly 
+    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(100, 250), 0));
 }
 
-// --- GLOBAL STATIC INSTANCES (Required for Registry Population) ---
+void Smoke::checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) {
+    // Simply fades implicitly organically correctly
+    if (dur && --dur->health <= 0) {
+        die(x, y, world); 
+    }
+}
+
+// --- GLOBAL STATIC INSTANCES ---
 static Steam steam_instance;
 static FlammableGas flammablegas_instance;
 static Spark spark_instance;
