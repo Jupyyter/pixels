@@ -8,6 +8,36 @@
 
 constexpr float PI = 3.14159265358979323846f;
 
+void RigidBodySystem::eraseInRadius(sf::Vector2f center, float radius) {
+    for (auto& rb : bodies) {
+        if (rb->isGlued) continue; 
+        b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
+        float wp_x = bp.x * M2P;
+        float wp_y = bp.y * M2P;
+        float max_extent = std::max(rb->width, rb->height); 
+        float dist = std::hypot(wp_x - center.x, wp_y - center.y);
+        
+        if (dist <= radius + (max_extent * 0.707f)) {
+            rb->isDestroyed = true;
+        }
+    }
+}
+
+void RigidBodySystem::eraseInSquare(sf::Vector2f center, float radius) {
+    for (auto& rb : bodies) {
+        if (rb->isGlued) continue;
+        b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
+        float wp_x = bp.x * M2P;
+        float wp_y = bp.y * M2P;
+        float max_extent = std::max(rb->width, rb->height);
+        
+        if (std::abs(wp_x - center.x) <= radius + max_extent * 0.5f && 
+            std::abs(wp_y - center.y) <= radius + max_extent * 0.5f) {
+            rb->isDestroyed = true;
+        }
+    }
+}
+
 RigidBody::RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalParticle>& parts, b2Vec2 pos, float angle, b2Vec2 linVel, float angVel, bool weapon, bool glued, int sX, int sY, sf::Vector2f customPivot, float angleOffset) {
     this->worldId = worldId;
     this->width = w;
@@ -46,7 +76,7 @@ RigidBody::RigidBody(b2WorldId worldId, int w, int h, const std::vector<LocalPar
         bdef.angularDamping = 2.0f;
         bdef.linearDamping = 0.2f;
         bdef.enableSleep = true;
-        bdef.isBullet = true; // Essential for continuous collision detection (CCD)
+        bdef.isBullet = true; 
         bodyId = b2CreateBody(worldId, &bdef);
 
         rebuildFixtures();
@@ -153,7 +183,7 @@ RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int st
         bdef.angularDamping = 2.0f; 
         bdef.linearDamping = 0.2f;  
         bdef.enableSleep = true;
-        bdef.isBullet = true; // Essential for Continuous Collision Detection (CCD)
+        bdef.isBullet = true; 
         bodyId = b2CreateBody(worldId, &bdef);
 
         rebuildFixtures();
@@ -205,7 +235,6 @@ void RigidBody::renderPixelated(sf::RenderTarget& target, sf::Vector2f pos, floa
             if (lx >= 0 && lx < width && ly >= 0 && ly < height) {
                 const auto& p = particles[ly * width + lx];
                 if (p.active) {
-                    // Multiply offset and quad sizes by scale!
                     float px = pos.x + dx * scale;
                     float py = pos.y + dy * scale;
 
@@ -240,8 +269,6 @@ void RigidBody::rebuildFixtures() {
 
     std::vector<bool> visited(width * height, false);
     
-    // OPTIMIZED GREEDY RECTANGLE GENERATION
-    // This creates perfect axis-aligned rectangles which Box2D processes extremely fast
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             int idx = y * width + x;
@@ -276,15 +303,12 @@ void RigidBody::rebuildFixtures() {
                 float cy = y + (h / 2.0f) - pivot.y;
                 
                 b2Polygon box = b2MakeOffsetBox(hx, hy, {cx * P2M, cy * P2M}, b2MakeRot(0.0f));
-                
-                // CRITICAL FIX: Radius 0.0f stops "bumpy seams" between rectangles.
-                // It ensures flat walls act like perfect flat walls in the physics engine.
                 box.radius = 0.0f; 
                 
                 b2ShapeDef shapeDef = b2DefaultShapeDef();
                 shapeDef.density = 2.0f;     
                 shapeDef.material.friction = 0.1f;    
-                shapeDef.material.restitution = 0.0f; // Bouncy components easily glitch. Keep at 0.
+                shapeDef.material.restitution = 0.0f;
                 
                 b2CreatePolygonShape(bodyId, &shapeDef, &box); 
             }
@@ -604,20 +628,14 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
         }
     }
     
-    // CRITICAL FIX: Fixed Timestep Accumulator
-    // This stops objects from "tunneling" or warping into each other at high speeds
     static float physicsAccumulator = 0.0f;
     
-    // Cap DT to prevent the "spiral of death" if the game window is dragged/frozen
     if (dt > 0.1f) dt = 0.1f; 
     
     physicsAccumulator += dt;
-    
-    // 120Hz Simulation Step. High precision for tiny pixel-perfect rigid bodies
     const float FIXED_STEP = 1.0f / 120.0f; 
     
     while (physicsAccumulator >= FIXED_STEP) {
-        // 4 Substeps per 1/120th sec ensures hyper-stable physics
         b2World_Step(worldId, FIXED_STEP, 4); 
         physicsAccumulator -= FIXED_STEP;
     }
@@ -1038,16 +1056,14 @@ namespace {
         return result;
     }
 }
-// Add this anywhere in rigidbody.cpp
 void RigidBodySystem::applyBlastImpulse(float x, float y, float radius, float strength) {
     for (auto& rb : bodies) {
-        if (rb->isEquipped || rb->isGlued) continue; // Don't throw the map or equipped weapons
+        if (rb->isEquipped || rb->isGlued) continue; 
         
         b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
         sf::Vector2f wp(bp.x * M2P, bp.y * M2P);
         float dist = std::hypot(wp.x - x, wp.y - y);
         
-        // Slightly reduced the physical blast reach so things don't jump from miles away
         float blastRadius = radius * 2.0f; 
         
         if (dist <= blastRadius && dist > 0.1f) {
@@ -1055,10 +1071,7 @@ void RigidBodySystem::applyBlastImpulse(float x, float y, float radius, float st
             toBody.x /= dist;
             toBody.y /= dist;
             
-            // Get the mass so tiny broken fragments don't fly away at the speed of light
             float mass = b2Body_GetMass(rb->bodyId);
-            
-            // Push calculation: Mass * Strength * Tuning Variable * Distance Falloff
             float push = strength * 1.5f * mass * (1.0f - (dist / blastRadius));
             
             b2Body_ApplyLinearImpulseToCenter(rb->bodyId, {toBody.x * push, toBody.y * push}, true);
@@ -1180,7 +1193,6 @@ void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, Partic
         b2ShapeDef shapeDef = b2DefaultShapeDef();
         shapeDef.material.friction = 0.5f; 
 
-        // CORRECTED: Create segments for the lines and circles for the vertices
         for (size_t i = 0; i < simplified.size() - 1; ++i) {
             b2Segment segment = { 
                 {simplified[i].x * P2M, simplified[i].y * P2M}, 
@@ -1190,14 +1202,12 @@ void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, Partic
             hasFixtures = true;
         }
 
-        // Add frictionless circle "caps" to each vertex to prevent snagging
-        shapeDef.material.friction = 0.0f; // Caps must be frictionless
+        shapeDef.material.friction = 0.0f; 
         for (size_t i = 0; i < simplified.size(); ++i) {
-            // No caps on the first and last vertex of an open chain
             if (simplified.front() == simplified.back() || (i > 0 && i < simplified.size() - 1)) {
                  b2Circle circle;
                  circle.center = {simplified[i].x * P2M, simplified[i].y * P2M};
-                 circle.radius = 0.01f; // A tiny radius to smooth the corner
+                 circle.radius = 0.01f; 
                  b2CreateCircleShape(bodyId, &shapeDef, &circle);
             }
         }

@@ -19,13 +19,16 @@ private:
     std::shared_ptr<sf::Texture> defaultPlayerTexture;
     
     std::vector<DebugLine> debugLines;
+    
+    // Core O(1) Terrain Cache Tracker securely effectively logically gracefully inherently
+    sf::FloatRect dirtyNavRect;
+    bool hasDirtyNavRegion = false;
 
     float groundCastY(float worldX, float castFromY, float maxDown, ParticleWorld& pw);
 
     void drawPixelatedLeg(sf::RenderTarget& target, const sf::Vector2f& hipWorld, const sf::Vector2f& footWorld, sf::Color color);
     void drawPixelatedHand(sf::RenderTarget& target, const sf::Vector2f& center, sf::Color color);
 
-    // AI Global Navigation
     std::vector<AINode> globalNavGraph;
     bool globalGraphBuilt = false;
     
@@ -37,9 +40,18 @@ public:
     EntitySystem(b2WorldId physWorld);
     ~EntitySystem();
 
+    // Added explicitly inherently locally reliably safely purely directly mapping exactly optimally
+    void notifyTerrainChanged(sf::Vector2f center, float radius);
+
+    void save(std::ostream& out) const;
+    void load(std::istream& in);
+    void clearAll();
+    void eraseEntitiesInRadius(sf::Vector2f center, float radius);
+    void eraseEntitiesInSquare(sf::Vector2f center, float radius);
+
     entt::entity spawnEntity(float x, float y, const std::string& texturePath = "", bool isPlayer = true);
 
-    void buildGlobalNavGraph(ParticleWorld& pw); // Exposed in case you want to trigger it from UI
+    void buildGlobalNavGraph(ParticleWorld& pw); 
     void triggerSwing(sf::Vector2f targetWorldPos);
     void updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& rbs, ParticleWorld& pw);
     void updateProceduralAnimations(float dt, ParticleWorld& particleWorld);

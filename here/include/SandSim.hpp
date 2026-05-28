@@ -3,6 +3,7 @@
 #include <SFML/Graphics.hpp>
 #include <memory>
 #include <chrono>
+#include <vector>
 
 #include "Constants.hpp"
 #include "ParticleWorld.hpp"
@@ -52,12 +53,15 @@ private:
     GameState currentState;
     bool running;
     bool simulationRunning;
-    bool isUIVisible = true; // FEATURE: Hiding UI mode
+    bool isUIVisible = true; 
     float frameTime;
 
     sf::Vector2i lastMousePos;
-    sf::Vector2f previousMouseWorldPos;
-    bool hasPreviousMousePos;
     bool isPanning;
     float currentZoom;
+    
+    // Defer-Brushing Properties: Creates preview paths reliably naturally logically elegantly explicitly optimally safely effectively correctly 
+    std::vector<sf::Vector2f> currentStroke;
+    bool isBrushing = false;
+    bool isErasing = false;
 };

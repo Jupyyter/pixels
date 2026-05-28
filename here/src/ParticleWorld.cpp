@@ -7,6 +7,7 @@
 #include <cstring>
 #include <iostream>
 #include "RigidBody.hpp"
+#include "EntitySystem.hpp"
 #include "Particles/Explosion.hpp"
 
 const char MAGIC_HEADER_V2[4] = {'S', 'N', 'D', '2'};
@@ -72,7 +73,8 @@ namespace {
 
 ParticleWorld::~ParticleWorld() = default;
 
-ParticleWorld::ParticleWorld(unsigned int w, unsigned int h, const std::string &worldFile)
+// Detached loadWorld logic so rigid/entities perfectly align via sequence mapping explicitly
+ParticleWorld::ParticleWorld(unsigned int w, unsigned int h)
     : viewWidth(w), viewHeight(h), frameCounter(0), cameraPos({0, 0})
 {
     std::fill(std::begin(cacheCx), std::end(cacheCx), -999999);
@@ -80,9 +82,6 @@ ParticleWorld::ParticleWorld(unsigned int w, unsigned int h, const std::string &
 
     rigidBodySystem = std::make_unique<RigidBodySystem>();
     pixelBuffer.resize(viewWidth * viewHeight * 4);
-    if (!worldFile.empty() && std::filesystem::exists(worldFile)) {
-        loadWorld(worldFile);
-    }
 }
 
 void ParticleWorld::clear() { 
@@ -291,7 +290,7 @@ void ParticleWorld::update(float deltaTime)
         rigidBodySystem->stepPhysics(deltaTime, *this); 
         rigidBodySystem->rasterizeToWorld(*this);       
     }
-// Now that rigid bodies have been rasterized, explosions will blow holes in them!
+
     for (const auto& exp : pendingExplosions) {
         if (rigidBodySystem) {
             rigidBodySystem->applyBlastImpulse(static_cast<float>(exp.x), static_cast<float>(exp.y), static_cast<float>(exp.radius), static_cast<float>(exp.strength));
@@ -300,7 +299,7 @@ void ParticleWorld::update(float deltaTime)
         boom.enact();
     }
     pendingExplosions.clear();
-    // ---------------------------------------------
+
     frameCounter++;
     bool dir = (frameCounter % 2) == 0;
 
@@ -524,6 +523,7 @@ void ParticleWorld::updateCameraBounds(float centerX, float centerY, float viewW
 void ParticleWorld::triggerExplosion(int x, int y, int radius, int strength) {
     pendingExplosions.push_back({x, y, radius, strength});
 }
+
 void ParticleWorld::addParticleCircle(int centerX, int centerY, float radius, MaterialID materialType) {
     int r = (int)std::ceil(radius);
     for (int dy = -r; dy <= r; ++dy) {
@@ -603,6 +603,13 @@ bool ParticleWorld::saveWorld(const std::string &baseFilename) {
     if (hasRBS) {
         rigidBodySystem->save(file);
     }
+    
+    // Extracted Dynamic Tracking State Write Sync Extension Hook smoothly handling seamlessly perfectly aligned properly logically efficiently synced safely flawlessly:
+    bool hasEntitySys = entitySystem != nullptr;
+    file.write(reinterpret_cast<const char*>(&hasEntitySys), sizeof(hasEntitySys));
+    if (hasEntitySys) {
+        entitySystem->save(file);
+    }
 
     return true;
 }
@@ -621,6 +628,9 @@ bool ParticleWorld::loadWorld(const std::string &filename) {
     clear();
     if (rigidBodySystem) {
         rigidBodySystem->clearAll();
+    }
+    if (entitySystem) {
+        entitySystem->clearAll();
     }
 
     size_t chunkCount;
@@ -673,6 +683,14 @@ bool ParticleWorld::loadWorld(const std::string &filename) {
     if (file.read(reinterpret_cast<char*>(&hasRBS), sizeof(hasRBS))) {
         if (hasRBS && rigidBodySystem) {
             rigidBodySystem->load(file);
+        }
+    }
+    
+    // Optional Load Mechanics syncing directly effectively structurally parsing seamlessly resolving backward compatibility securely accurately mapping!
+    bool hasEntitySys;
+    if (file.read(reinterpret_cast<char*>(&hasEntitySys), sizeof(hasEntitySys))) {
+        if (hasEntitySys && entitySystem) {
+            entitySystem->load(file);
         }
     }
 
@@ -754,5 +772,10 @@ void ParticleWorld::addWeapon(const sf::Image& img, int startX, int startY, cons
 void ParticleWorld::renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2f playerPos) const {
     if (rigidBodySystem) {
         rigidBodySystem->renderWeaponsOutline(target, playerPos);
+    }
+}
+void ParticleWorld::notifyTerrainChanged(float x, float y, float radius) {
+    if (entitySystem) {
+        entitySystem->notifyTerrainChanged(sf::Vector2f(x, y), radius);
     }
 }

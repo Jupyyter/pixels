@@ -14,7 +14,6 @@ struct AINode {
     std::vector<int> neighbors;
 };
 
-// NEW: Path node structure to carry explicit jump/fall instructions
 struct PathNodeData {
     sf::Vector2f pos;
     bool isJump = false;
@@ -24,16 +23,13 @@ struct PathNodeData {
     
 };
 
-// Core Physics wrapper
 struct PhysicsComponent {
     b2BodyId bodyId;
 };
 
-// Player Input & Controller State
 struct PlayerControllerComponent {
     bool isPlayer = true;
     
-    // AI fields
     bool hasTarget = false;
     sf::Vector2f targetPos;
     std::vector<PathNodeData> path;
@@ -42,6 +38,14 @@ struct PlayerControllerComponent {
     float pathRecalcTimer = 0.0f;
     float stuckTimer = 0.0f;
     sf::Vector2f lastPos = {0.0f, 0.0f};
+
+    sf::Vector2f homePos = {0.0f, 0.0f};
+    bool homePosSet = false;
+    float idleWaitTimer = 0.0f;
+    bool isWandering = false;
+    float wanderDir = 0.0f;
+    float wanderTimer = 0.0f;
+    float physicsStuckTimer = 0.0f;
 
     float moveSpeed = 7.0f;
     float jumpForce = -38.0f;
@@ -56,7 +60,6 @@ struct PlayerControllerComponent {
     float uprightStunTimer = 0.0f;
     RigidBody* equippedWeapon = nullptr; 
 
-    // Swing mechanics
     bool isSwinging = false;
     float swingTimer = 0.0f;
     float swingDuration = 0.25f;
@@ -64,17 +67,14 @@ struct PlayerControllerComponent {
     sf::Vector2f swingTarget;
     float swingRandomness = 0.0f;
 
-    // Aim mechanics
     bool isAiming = false;
     sf::Vector2f aimTarget;
     float fireTimer = 0.0f;
 
-    // Landing recovery
     float lastFallVelocity = 0.0f;
     float landingTimer = 0.0f;
 };
 
-// --- SPRITE SHEET ANIMATION ---
 struct AnimationState {
     int startFrame;
     int frameCount;
@@ -84,6 +84,7 @@ struct AnimationState {
 struct SpriteSheetComponent {
     std::shared_ptr<sf::Texture> texture;
     std::optional<sf::Sprite> sprite;
+    std::string texturePath = ""; // Essential logic anchor to restore textures accurately on loaded files dynamically globally! 
 
     int frameWidth  = 32;
     int frameHeight = 32;
@@ -144,7 +145,6 @@ struct ProceduralAnimationComponent {
     
     float downhillOffset = 0.0f;
     
-    // NEW: Physics-Based Recoil/Spring State
     float recoilAngle = 0.0f;
     float recoilAngleVel = 0.0f;
     sf::Vector2f recoilOffset = {0.0f, 0.0f};

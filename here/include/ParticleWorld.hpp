@@ -11,10 +11,10 @@
 #include "Random.hpp"
 #include "Particles/Particle.hpp" 
 
-// Forward Declarations
 class Particle; 
 class RigidBodySystem;
 enum class RigidBodyShape;
+class EntitySystem; // Forward declare for binding hook correctly!
 
 const uint32_t INVALID_INDEX = 0xFFFFFFFF;
 
@@ -25,7 +25,6 @@ constexpr uint8_t COMP_DURABILITY = 1 << 2;
 constexpr uint8_t COMP_THERMAL    = 1 << 3; 
 constexpr uint8_t COMP_FLUID      = 1 << 4; 
 
-// --- CHUNK DEFINITION ---
 struct Chunk {
     BaseComponent base[CHUNK_AREA];
 
@@ -61,7 +60,6 @@ struct Chunk {
     }
 };
 
-// --- CORRECTED PARTICLE CONTEXT ---
 struct ParticleContext {
     Chunk* chunk;
     uint32_t index;
@@ -73,17 +71,17 @@ struct ParticleContext {
     ThermalComponent* thermal;
     DurabilityComponent* durability;
 };
+
 struct ExplosionEvent {
     int x, y, radius, strength;
 };
+
 class ParticleWorld {
 private:
     sf::FloatRect simulationBounds;
     sf::FloatRect renderBounds;
     std::vector<std::uint8_t> pixelBuffer; 
-    
-std::vector<ExplosionEvent> pendingExplosions;
-
+    std::vector<ExplosionEvent> pendingExplosions;
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> chunks;
 
     mutable Chunk* cacheChunk[64] = {nullptr};
@@ -95,8 +93,15 @@ std::vector<ExplosionEvent> pendingExplosions;
     uint32_t frameCounter;
 
     std::unique_ptr<RigidBodySystem> rigidBodySystem;
+    EntitySystem* entitySystem = nullptr; 
 
 public:
+    ParticleWorld(unsigned int w, unsigned int h);
+    ~ParticleWorld();
+    
+    // Extensibility hook providing sequence independent binding!
+    void setEntitySystem(EntitySystem* sys) { entitySystem = sys; }
+    
     RigidBodySystem* getRigidBodySystem() const { return rigidBodySystem.get(); }
     void renderDebugColliders(sf::RenderTarget& target) const;
     void addRigidBodyFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat, bool glue = false);
@@ -104,7 +109,6 @@ public:
     
     void addStructureFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat);
 
-    // Multi-Weapon support passing weapon name explicitly
     void addWeapon(const sf::Image& img, int startX, int startY, const std::string& name);
     void renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2f playerPos) const;
 
@@ -113,9 +117,8 @@ public:
     Chunk* getOrCreateChunk(int x, int y);
     Chunk* getChunk(int x, int y) const;
     std::unordered_map<uint32_t, MaterialID> containerPayloads;
-    ParticleWorld(unsigned int w, unsigned int h, const std::string& worldFile = "");
-    ~ParticleWorld();
-
+    void notifyTerrainChanged(float x, float y, float radius);
+    
     inline uint32_t computeLocalIndex(int x, int y) const {
         return ((y & 63) << 6) | (x & 63); 
     }

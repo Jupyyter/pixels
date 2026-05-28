@@ -63,7 +63,7 @@ public:
     
     virtual ~RigidBody() = default;
 
-    virtual void update(float dt, ParticleWorld& world) {} // Called every step
+    virtual void update(float dt, ParticleWorld& world) {} 
     
     void rebuildFixtures();
     std::vector<std::vector<LocalParticle>> findIslands();
@@ -72,7 +72,6 @@ public:
     
     virtual void renderPixelated(sf::RenderTarget& target, sf::Vector2f pos, float angleDeg, bool flipX, sf::Color overrideColor = sf::Color::Transparent, bool applyVisualOffset = true, float scale = 1.0f);
     
-    // NEW: Render solid tracking shapes over the screen
     virtual void renderEffects(sf::RenderTarget& target) {}
 };
 
@@ -92,6 +91,10 @@ public:
     void save(std::ostream& out) const;
     void load(std::istream& in);
     void clearAll();
+    
+    void eraseInRadius(sf::Vector2f center, float radius);
+    void eraseInSquare(sf::Vector2f center, float radius);
+    
     RigidBodySystem();
     ~RigidBodySystem();
 
@@ -104,7 +107,6 @@ public:
     void renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2f playerPos);
     void renderGluedOutlines(sf::RenderTarget& target, ParticleWorld& world) const;
     
-    // NEW: Calls renderEffects for all RigidBodies
     void renderEffects(sf::RenderTarget& target) const;
 
     void applyMeleeHit(sf::Vector2f pos, sf::Vector2f dir, float range, float force, bool shatter, ParticleWorld& world);

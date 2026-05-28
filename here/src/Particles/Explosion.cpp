@@ -40,6 +40,7 @@ void Explosion::enact()
 
         castRay(destX, destY, cache, boxSize, maxReach);
     }
+    world.notifyTerrainChanged(static_cast<float>(centerX), static_cast<float>(centerY), static_cast<float>(maxReach) + 15.0f);
 }
 void Explosion::castRay(int destX, int destY, std::vector<uint8_t> &cache, int boxSize, int maxReach)
 {

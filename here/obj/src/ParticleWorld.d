@@ -81,7 +81,8 @@ obj/src/ParticleWorld.o: src/ParticleWorld.cpp include/ParticleWorld.hpp \
  ../2dbox/include/box2d/box2d.h ../2dbox/include/box2d/base.h \
  ../2dbox/include/box2d/collision.h \
  ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
- ../2dbox/include/box2d/types.h include/Particles/Explosion.hpp
+ ../2dbox/include/box2d/types.h include/EntitySystem.hpp ../entt/entt.hpp \
+ include/EntityComponents.hpp include/Particles/Explosion.hpp
 include/ParticleWorld.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp:
@@ -171,4 +172,7 @@ include/RigidBody.hpp:
 ../2dbox/include/box2d/math_functions.h:
 ../2dbox/include/box2d/id.h:
 ../2dbox/include/box2d/types.h:
+include/EntitySystem.hpp:
+../entt/entt.hpp:
+include/EntityComponents.hpp:
 include/Particles/Explosion.hpp:
