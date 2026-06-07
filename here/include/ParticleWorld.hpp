@@ -24,6 +24,7 @@ constexpr uint8_t COMP_KINEMATICS = 1 << 1;
 constexpr uint8_t COMP_DURABILITY = 1 << 2; 
 constexpr uint8_t COMP_THERMAL    = 1 << 3; 
 constexpr uint8_t COMP_FLUID      = 1 << 4; 
+constexpr uint8_t COMP_PLATFORM   = 1 << 5;
 
 struct Chunk {
     BaseComponent base[CHUNK_AREA];

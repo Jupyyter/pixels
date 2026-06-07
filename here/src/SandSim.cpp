@@ -226,7 +226,6 @@ void SandSimApp::run() {
                 if (holdingButton) {
                     handleMouseHeld();
                 } else {
-                    // Deferred Evaluation processing bounds optimally automatically gracefully accurately perfectly securely securely exactly natively logically cleanly smoothly seamlessly purely appropriately successfully effectively efficiently organically safely intuitively smartly gracefully appropriately stably:
                     auto processFinalizationStroke = [&]() {
                         if (!currentStroke.empty() && world) {
                             float minX = currentStroke[0].x, maxX = currentStroke[0].x;
@@ -459,13 +458,22 @@ void SandSimApp::render() {
                     auto applyStamp = [&](sf::Vector2f pos) {
                         int cx = static_cast<int>(std::floor(pos.x));
                         int cy = static_cast<int>(std::floor(pos.y));
-                        for (int bdy = -ir; bdy <= ir; ++bdy) {
-                            for (int bdx = -ir; bdx <= ir; ++bdx) {
-                                if (shape == BrushShape::Circle && (bdx*bdx + bdy*bdy > radius*radius)) continue;
-                                int gx = cx + bdx - gridMinX;
-                                int gy = cy + bdy - gridMinY;
-                                if (gx >= 0 && gx < w && gy >= 0 && gy < h) {
-                                    grid[gy * w + gx] = true;
+                        
+                        if (shape == BrushShape::Platform) {
+                            int gx = cx - gridMinX;
+                            int gy = cy - gridMinY;
+                            if (gx >= 0 && gx < w && gy >= 0 && gy < h) {
+                                grid[gy * w + gx] = true;
+                            }
+                        } else {
+                            for (int bdy = -ir; bdy <= ir; ++bdy) {
+                                for (int bdx = -ir; bdx <= ir; ++bdx) {
+                                    if (shape == BrushShape::Circle && (bdx*bdx + bdy*bdy > radius*radius)) continue;
+                                    int gx = cx + bdx - gridMinX;
+                                    int gy = cy + bdy - gridMinY;
+                                    if (gx >= 0 && gx < w && gy >= 0 && gy < h) {
+                                        grid[gy * w + gx] = true;
+                                    }
                                 }
                             }
                         }
@@ -480,7 +488,7 @@ void SandSimApp::render() {
                             float dx = endP.x - startP.x;
                             float dy = endP.y - startP.y;
                             float dist = std::sqrt(dx*dx + dy*dy);
-                            float stepSize = std::max(1.0f, radius * 0.5f);
+                            float stepSize = (shape == BrushShape::Platform) ? 0.5f : std::max(1.0f, radius * 0.5f);
                             int steps = static_cast<int>(std::ceil(dist / stepSize));
 
                             for(int i = 0; i <= steps; ++i) {
@@ -529,7 +537,6 @@ void SandSimApp::render() {
                     if (vaOutline.getVertexCount() > 0) window.draw(vaOutline);
                 };
 
-                // Correct display based strictly cleanly cleanly logically accurately perfectly functionally dynamically seamlessly gracefully cleanly cleanly purely naturally natively inherently securely!
                 if (ui->getUseLineMode()) {
                     if (g_isDraggingLine || g_isDraggingEraseLine) {
                         drawPixelatedStroke({g_lineStartPos, g_lineCurrentPos}, ui->getSelectionRadius(), ui->getBrushShape());
@@ -636,7 +643,13 @@ void SandSimApp::addParticles(const sf::Vector2f& worldPos) {
             int radius = static_cast<int>(ui->getSelectionRadius());
             world->triggerExplosion(static_cast<int>(worldPos.x), static_cast<int>(worldPos.y), radius, 20);
         } else {
-            if (ui->getBrushShape() == BrushShape::Square) {
+            if (ui->getBrushShape() == BrushShape::Platform) {
+                int px = static_cast<int>(std::round(worldPos.x));
+                int py = static_cast<int>(std::round(worldPos.y));
+                world->spawnParticle(currentMat, px, py);
+                BaseComponent* base = world->get<BaseComponent>(px, py);
+                if (base) base->compMask |= COMP_PLATFORM;
+            } else if (ui->getBrushShape() == BrushShape::Square) {
                 world->addParticleSquare(worldPos.x, worldPos.y, ui->getSelectionRadius(), currentMat);
             } else {
                 world->addParticleCircle(worldPos.x, worldPos.y, ui->getSelectionRadius(), currentMat);
@@ -674,8 +687,24 @@ void SandSimApp::addParticlesLine(const sf::Vector2f& start, const sf::Vector2f&
          }
          return;
     }
+    
     float dx = end.x - start.x, dy = end.y - start.y;
     float dist = std::sqrt(dx*dx + dy*dy);
+    
+    if (ui->getBrushShape() == BrushShape::Platform) {
+        float stepSize = 0.5f;
+        int steps = static_cast<int>(std::ceil(dist / stepSize));
+        for(int i=0; i<=steps; ++i) {
+            float t = (steps > 0) ? (float)i/steps : 0.f;
+            int px = static_cast<int>(std::round(start.x + t*dx));
+            int py = static_cast<int>(std::round(start.y + t*dy));
+            world->spawnParticle(currentMat, px, py);
+            BaseComponent* base = world->get<BaseComponent>(px, py);
+            if (base) base->compMask |= COMP_PLATFORM;
+        }
+        return;
+    }
+
     float stepSize = std::max(1.0f, ui->getSelectionRadius() * 0.5f);
     int steps = static_cast<int>(std::ceil(dist / stepSize));
     for(int i=0; i<=steps; ++i) {

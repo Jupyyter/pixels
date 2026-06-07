@@ -24,7 +24,7 @@ private:
     sf::FloatRect dirtyNavRect;
     bool hasDirtyNavRegion = false;
 
-    float groundCastY(float worldX, float castFromY, float maxDown, ParticleWorld& pw);
+    float groundCastY(float worldX, float castFromY, float maxDown, ParticleWorld& pw, bool ignorePlatforms = false, float bodyPosY = -1000.0f);
 
     void drawPixelatedLeg(sf::RenderTarget& target, const sf::Vector2f& hipWorld, const sf::Vector2f& footWorld, sf::Color color);
     void drawPixelatedHand(sf::RenderTarget& target, const sf::Vector2f& center, sf::Color color);
@@ -32,7 +32,7 @@ private:
     std::vector<AINode> globalNavGraph;
     bool globalGraphBuilt = false;
     
-    bool isSolid(int cx, int cy, ParticleWorld& pw);
+    bool isSolid(int cx, int cy, ParticleWorld& pw, bool ignorePlatforms = false);
     int getClosestNode(sf::Vector2f pos);
     std::vector<PathNodeData> findPath(sf::Vector2f start, sf::Vector2f target);
 sf::Vector2f resolveTargetPos(sf::Vector2f clickPos, ParticleWorld& pw);

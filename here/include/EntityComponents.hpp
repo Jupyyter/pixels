@@ -55,6 +55,7 @@ struct PlayerControllerComponent {
     bool wPressedLastFrame = false;
     bool leftClickPressedLastFrame = false;
     
+    bool sPressed = false;
     bool fPressedLastFrame = false;
     bool isRagdoll = false;
     float uprightStunTimer = 0.0f;

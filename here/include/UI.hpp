@@ -10,7 +10,7 @@ class ParticleWorld;
 enum class SpawnMode { Particles, Image, Entity, Weapon };
 
 // Brush Shapes
-enum class BrushShape { Circle, Square };
+enum class BrushShape { Circle, Square, Platform };
 
 // Struct to hold loaded image assets (Used for Rigid Bodies, Structures, and Weapons)
 struct ImageAsset {

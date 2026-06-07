@@ -30,6 +30,21 @@ namespace {
         float requiredVx = 0.0f;
     };
     std::map<std::pair<int, int>, EdgeData> s_EdgeData;
+
+    // SFINAE fallback seamlessly resolving the underlying Box2D v3 joint changes dynamically based on the headers available locally!
+    template <typename T>
+    auto InitJointCompat(T& jd, b2BodyId bA, b2BodyId bB, b2Vec2 lAA, b2Vec2 lAB) -> decltype(jd.bodyIdA, void()) {
+        jd.bodyIdA = bA; jd.bodyIdB = bB;
+        jd.localAnchorA = lAA; jd.localAnchorB = lAB;
+        jd.collideConnected = false;
+    }
+
+    template <typename T>
+    auto InitJointCompat(T& jd, b2BodyId bA, b2BodyId bB, b2Vec2 lAA, b2Vec2 lAB) -> decltype(jd.base.bodyIdA, void()) {
+        jd.base.bodyIdA = bA; jd.base.bodyIdB = bB;
+        jd.base.localFrameA.p = lAA; jd.base.localFrameB.p = lAB;
+        jd.base.collideConnected = false;
+    }
 }
 
 EntitySystem::EntitySystem(b2WorldId physWorld) : physicsWorldId(physWorld) {
@@ -38,8 +53,6 @@ EntitySystem::EntitySystem(b2WorldId physWorld) : physicsWorldId(physWorld) {
     defaultPlayerTexture = std::make_shared<sf::Texture>(dummy);
 }
 EntitySystem::~EntitySystem() { registry.clear(); }
-
-// --- PERSISTENCE/ERASING CAPABILITIES IMPLEMENTED PRECISELY ---
 
 void EntitySystem::clearAll() {
     auto view = registry.view<PhysicsComponent>();
@@ -106,7 +119,6 @@ void EntitySystem::eraseEntitiesInSquare(sf::Vector2f center, float radius) {
     }
 }
 
-// Replace only the save() method block in your EntitySystem.cpp
 void EntitySystem::save(std::ostream& out) const {
     auto view = registry.view<const PlayerControllerComponent, const PhysicsComponent, const SpriteSheetComponent, const ProceduralAnimationComponent>();
     
@@ -115,8 +127,6 @@ void EntitySystem::save(std::ostream& out) const {
     
     out.write(reinterpret_cast<const char*>(&count), sizeof(size_t));
     for (auto [e, player, phys, sprite, anim] : view.each()) {
-        
-        // Physics details
         b2Vec2 pos = b2Body_GetPosition(phys.bodyId);
         b2Vec2 linVel = b2Body_GetLinearVelocity(phys.bodyId);
         b2Rot rot = b2Body_GetRotation(phys.bodyId);
@@ -128,7 +138,6 @@ void EntitySystem::save(std::ostream& out) const {
         out.write((const char*)&angle, sizeof(float));
         out.write((const char*)&angVel, sizeof(float));
         
-        // Render Properties explicitly extracted! 
         size_t len = sprite.texturePath.size();
         out.write((const char*)&len, sizeof(size_t));
         if (len > 0) { out.write(sprite.texturePath.c_str(), len); }
@@ -140,7 +149,6 @@ void EntitySystem::save(std::ostream& out) const {
         out.write((const char*)&cLen, sizeof(size_t));
         if (cLen > 0) { out.write(sprite.currentState.c_str(), cLen); }
 
-        // Core Tracking Control State
         out.write((const char*)&player.isPlayer, sizeof(bool));
         out.write((const char*)&player.hasTarget, sizeof(bool));
         out.write((const char*)&player.targetPos, sizeof(sf::Vector2f));
@@ -164,7 +172,6 @@ void EntitySystem::save(std::ostream& out) const {
         out.write((const char*)&player.physicsStuckTimer, sizeof(float));
         out.write((const char*)&player.isGrounded, sizeof(bool));
 
-        // Precision Procedural Animation Bytes Snapshot tracking flawlessly inherently securely stably accurately reliably flawlessly explicitly appropriately dynamically naturally completely exactly perfectly effortlessly beautifully perfectly explicitly properly clearly perfectly naturally effectively reliably perfectly optimally logically appropriately purely clearly simply properly gracefully effortlessly optimally optimally efficiently accurately neatly beautifully natively appropriately reliably organically perfectly natively efficiently natively purely naturally appropriately:
         auto saveLeg = [&](const ProceduralLeg& leg) {
             out.write((const char*)&leg.hipOffset, sizeof(sf::Vector2f));
             out.write((const char*)&leg.footWorld, sizeof(sf::Vector2f));
@@ -196,7 +203,6 @@ void EntitySystem::save(std::ostream& out) const {
         out.write((const char*)&anim.downhillOffset, sizeof(float));
     }
 }
-
 
 void EntitySystem::load(std::istream& in) {
     clearAll(); 
@@ -236,7 +242,6 @@ void EntitySystem::load(std::istream& in) {
                 in.read(&cState[0], cLen);
             }
 
-            // Fill Temporary Memory Construct accurately logically tracking bytes inherently directly dynamically globally:
             PlayerControllerComponent pc;
             in.read((char*)&pc.isPlayer, sizeof(bool));
             in.read((char*)&pc.hasTarget, sizeof(bool));
@@ -293,7 +298,6 @@ void EntitySystem::load(std::istream& in) {
             in.read((char*)&panim.weaponAngle, sizeof(float));
             in.read((char*)&panim.downhillOffset, sizeof(float));
             
-
             float wx = pos.x * M2P, wy = pos.y * M2P; 
             entt::entity spawned = spawnEntity(wx, wy, tpath, pc.isPlayer);
             
@@ -319,7 +323,6 @@ void EntitySystem::load(std::istream& in) {
             pRef.wanderTimer = pc.wanderTimer;
             pRef.physicsStuckTimer = pc.physicsStuckTimer;
             pRef.isGrounded = pc.isGrounded;
-            // Always reload assuming explicitly out of forced rigid Ragdolled modes flawlessly optimally efficiently avoiding orphaned body states structurally:
             pRef.isRagdoll = false; 
 
             auto& sRef = registry.get<SpriteSheetComponent>(spawned);
@@ -328,7 +331,6 @@ void EntitySystem::load(std::istream& in) {
             sRef.frameTimer = frameTimer;
             sRef.currentState = cState;
 
-            // Completely remaps the explicitly deserialized data over IK constraints globally 
             auto& aRef = registry.get<ProceduralAnimationComponent>(spawned);
             aRef = panim; 
         }
@@ -419,13 +421,11 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
     bool orderGiven = currentRightClickGlobal && !rightClickLastGlobal;
     rightClickLastGlobal = currentRightClickGlobal;
 
-    // Fix: Seamless integration evaluating if tools marked any terrain dirtied
     if (hasDirtyNavRegion) {
         auto viewCheck = registry.view<PlayerControllerComponent>();
         for (auto [e, player] : viewCheck.each()) {
              if (player.hasTarget || player.isWandering) {
                  bool compromised = false;
-                 // Safely sweep active vectors implicitly natively efficiently dynamically gracefully natively organically securely successfully accurately
                  for (size_t i = player.pathIndex; i < player.path.size(); ++i) {
                      if (dirtyNavRect.contains({player.path[i].pos.x, player.path[i].pos.y})) { compromised = true; break; }
                  }
@@ -433,7 +433,7 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
                  if (!compromised && dirtyNavRect.contains(player.lastPos)) compromised = true;
                  
                  if (compromised) {
-                     player.pathRecalcTimer = 0.0f; // Force route fix efficiently explicitly structurally naturally gracefully!
+                     player.pathRecalcTimer = 0.0f;
                  }
              }
         }
@@ -448,9 +448,12 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
     auto view = registry.view<PlayerControllerComponent, PhysicsComponent, SpriteSheetComponent, ProceduralAnimationComponent>();
     
     view.each([&](auto, auto& player, auto& phys, auto& sprite, auto& anim) {
-        // Pre-check for abruptly removed active equipped bounds securely effortlessly beautifully organically inherently gracefully precisely securely optimally!
         if (player.equippedWeapon && player.equippedWeapon->isDestroyed) {
             player.equippedWeapon = nullptr; 
+        }
+
+        if (player.uprightStunTimer > 0.0f) {
+            player.uprightStunTimer -= dt;
         }
 
         b2Vec2 vel = b2Body_GetLinearVelocity(phys.bodyId);
@@ -469,11 +472,30 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) dir = -1.0f;
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) dir =  1.0f;
             wPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W);
+            
+            bool currentS = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S);
+            if (currentS && !player.sPressed) {
+                player.uprightStunTimer = 0.25f; // Drop duration
+            }
+            player.sPressed = currentS;
+            
             rightClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
             leftClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
             fPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F);
             ePressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::E);
         } else {
+            player.sPressed = false;
+            
+            // Allow AI to intentionally drop through a platform if their nav destination is below them
+            if (player.hasTarget && !player.path.empty() && player.pathIndex < player.path.size()) {
+                PathNodeData nextNode = player.path[player.pathIndex];
+                if (player.isGrounded && nextNode.pos.y > footPos.y + 20.0f) {
+                    if (!nextNode.isJump && !nextNode.isJumpTakeoff) {
+                        player.uprightStunTimer = 0.25f;
+                    }
+                }
+            }
+
             if (!player.homePosSet) {
                 player.homePos = footPos;
                 player.homePosSet = true;
@@ -609,7 +631,7 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
                         }
 
                         float castX = footPos.x + dir * 16.0f;
-                        float fY = groundCastY(castX, footPos.y - 12.0f, TARGET_CAST_UP + TARGET_CAST_DOWN, pw);
+                        float fY = groundCastY(castX, footPos.y - 12.0f, TARGET_CAST_UP + TARGET_CAST_DOWN, pw, false);
                         if (fY >= NO_GROUND || fY > footPos.y + 16.0f) {
                             abortWander = true;
                         } else if (fY < footPos.y - 8.0f) { 
@@ -788,7 +810,7 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
                 shapeDef.density = 1.0f;
                 shapeDef.material.friction = 0.1f;
                 shapeDef.filter.categoryBits = 0x0002;
-                shapeDef.filter.maskBits = ~0x0002u;
+                shapeDef.filter.maskBits = ~0x0002u; // Ragdolls collide properly with platforms
                 b2CreatePolygonShape(phys.bodyId, &shapeDef, &box);
                 
                 auto createRagdollPart = [&](float w, float h, sf::Vector2f worldPosPx, float angle, float density, bool isCircle = false) -> b2BodyId {
@@ -813,20 +835,20 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
 
                 auto createRevoluteJoint = [&](b2BodyId bA, b2BodyId bB, b2Vec2 anchorWorldPx) {
                     b2RevoluteJointDef jd = b2DefaultRevoluteJointDef();
-                    jd.bodyIdA = bA; jd.bodyIdB = bB;
-                    jd.localAnchorA = b2Body_GetLocalPoint(bA, {anchorWorldPx.x * P2M, anchorWorldPx.y * P2M});
-                    jd.localAnchorB = b2Body_GetLocalPoint(bB, {anchorWorldPx.x * P2M, anchorWorldPx.y * P2M});
+                    b2Vec2 lAA = b2Body_GetLocalPoint(bA, {anchorWorldPx.x * P2M, anchorWorldPx.y * P2M});
+                    b2Vec2 lAB = b2Body_GetLocalPoint(bB, {anchorWorldPx.x * P2M, anchorWorldPx.y * P2M});
+                    InitJointCompat(jd, bA, bB, lAA, lAB);
                     jd.enableLimit = true; jd.lowerAngle = -PI/1.5f; jd.upperAngle = PI/1.5f;
-                    jd.collideConnected = false; 
                     b2CreateRevoluteJoint(physicsWorldId, &jd);
                 };
                 
                 auto createDistanceJoint = [&](b2BodyId bA, b2BodyId bB, b2Vec2 anchorWorldPx) {
                     b2DistanceJointDef djd = b2DefaultDistanceJointDef();
-                    djd.bodyIdA = bA; djd.bodyIdB = bB;
-                    djd.localAnchorA = b2Body_GetLocalPoint(bA, {anchorWorldPx.x * P2M, anchorWorldPx.y * P2M});
-                    djd.localAnchorB = b2Vec2_zero; djd.minLength = 0.0f; djd.maxLength = 9.0f * P2M;
-                    djd.collideConnected = false; b2CreateDistanceJoint(physicsWorldId, &djd);
+                    b2Vec2 lAA = b2Body_GetLocalPoint(bA, {anchorWorldPx.x * P2M, anchorWorldPx.y * P2M});
+                    b2Vec2 lAB = {0.0f, 0.0f};
+                    InitJointCompat(djd, bA, bB, lAA, lAB);
+                    djd.minLength = 0.0f; djd.maxLength = 9.0f * P2M;
+                    b2CreateDistanceJoint(physicsWorldId, &djd);
                 };
 
                 sf::Vector2f vbp = {bodyPos.x, bodyPos.y + 8.0f + anim.bob.offsetY};
@@ -964,10 +986,12 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
             float baseCastFrom = bodyPos.y + 8;
             float minFootY = bodyPos.y + 12.0f; 
             float maxFootY = bodyPos.y + 22.0f; 
+            
+            bool ignorePlatforms = (player.uprightStunTimer > 0.0f) || (vel.y < -1.0f);
 
             for (int i = 1; i <= maxLook; ++i) {
                 float testX = bodyPos.x + dir * i;
-                float gY = groundCastY(testX, baseCastFrom, TARGET_CAST_UP + TARGET_CAST_DOWN, pw);
+                float gY = groundCastY(testX, baseCastFrom, TARGET_CAST_UP + TARGET_CAST_DOWN, pw, ignorePlatforms);
                 if (gY < minFootY || gY > maxFootY) break;
                 maxDx = static_cast<float>(i);
             }
@@ -977,7 +1001,7 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
 
             b2QueryFilter filter = b2DefaultQueryFilter();
             filter.categoryBits = 0x0002;
-            filter.maskBits = ~0x0002u;
+            filter.maskBits = (~0x0002u) & (~0x0004u); // Safe native masking out of platforms to prevent side snags
 
             b2Transform xf = b2Body_GetTransform(phys.bodyId);
             float localX = dir * 3.5f * P2M;
@@ -992,8 +1016,9 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
                 b2BodyId sideBody = b2Shape_GetBody(sideHit.shapeId);
                 if (sideBody.index1 != phys.bodyId.index1) { 
                     auto checkLeg = [&](const ProceduralLeg& leg) -> bool {
-                        b2Vec2 origin = {(leg.footWorld.x - 0.5f) * P2M, (leg.footWorld.y + 0.5f) * P2M};
-                        b2Vec2 trans = {1.0f * P2M, 0.0f}; 
+                        float ox = leg.footWorld.x + (dir > 0 ? 0.5f : -0.5f);
+                        b2Vec2 origin = {ox * P2M, (leg.footWorld.y - 2.0f) * P2M}; 
+                        b2Vec2 trans = {dir * 2.0f * P2M, 0.0f}; 
                         b2RayResult hit = b2World_CastRayClosest(physicsWorldId, origin, trans, filter);
                         if (hit.hit) {
                             b2BodyId hitBody = b2Shape_GetBody(hit.shapeId);
@@ -1070,7 +1095,8 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
         }
     });
 }
-float EntitySystem::groundCastY(float worldX, float castFromY, float maxDown, ParticleWorld& pw) {
+
+float EntitySystem::groundCastY(float worldX, float castFromY, float maxDown, ParticleWorld& pw, bool ignorePlatforms,float bodyPosY) {
     int px     = static_cast<int>(std::round(worldX));
     int startY = static_cast<int>(std::floor(castFromY));
 
@@ -1079,6 +1105,11 @@ float EntitySystem::groundCastY(float worldX, float castFromY, float maxDown, Pa
         if (!pw.isEmpty(px, py)) {
             BaseComponent* base = pw.get<BaseComponent>(px, py);
             if (base && base->compMask != 0) {
+                if (base->compMask & COMP_PLATFORM) {
+                    if (ignorePlatforms) continue;
+                    if (py < castFromY - 1.0f) continue; 
+                }
+                
                 Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
                 if (logic) {
                     MaterialGroup group = logic->getGroup();
@@ -1222,12 +1253,37 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
             anim.bob.offsetY  += anim.bob.velocity * dt;
         }
 
+        bool ignorePlatformsSuspension = (player.uprightStunTimer > 0.0f) || (!player.isGrounded && b2Vel.y < -5.0f);
+        float footY = bodyPos.y + 17.0f;
+
         sf::Vector2f vbp(bodyPos.x, bodyPos.y + 8.0f + anim.bob.offsetY);
         float hipY = vbp.y;
         float minAllowedFootY = vbp.y + 4.0f; 
 
+        auto customGroundCastY = [&](float worldX, float castFromY, float maxDown) -> float {
+            int px = static_cast<int>(std::round(worldX));
+            int startY = static_cast<int>(std::floor(castFromY));
+            for (int i = 0; i <= static_cast<int>(maxDown); ++i) {
+                int py = startY + i;
+                if (!pw.isEmpty(px, py)) {
+                    BaseComponent* base = pw.get<BaseComponent>(px, py);
+                    if (base && base->compMask != 0) {
+                        if (base->compMask & COMP_PLATFORM) {
+                            if (ignorePlatformsSuspension) continue;
+                            if (py < bodyPos.y + 7.0f) continue; // Synced to see platforms exactly at/below Box2D Capsule Limit
+                        }
+                        Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
+                        if (logic && logic->getGroup() != MaterialGroup::Liquid && logic->getGroup() != MaterialGroup::Gas) {
+                            return static_cast<float>(py - 1);
+                        }
+                    }
+                }
+            }
+            return NO_GROUND;
+        };
+
         auto castForTarget = [&](float worldX) -> float {
-            return groundCastY(worldX, hipY, 24.0f, pw);
+            return customGroundCastY(worldX, hipY, 24.0f);
         };
         
         auto getSafeTarget = [&](float lookOffset) -> sf::Vector2f {
@@ -1235,7 +1291,7 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
             float maxDist = std::abs(lookOffset);
             float bestX = bodyPos.x;
             
-            float bestY = groundCastY(bodyPos.x, hipY, 24.0f, pw);
+            float bestY = customGroundCastY(bodyPos.x, hipY, 24.0f);
             if (bestY >= NO_GROUND) bestY = bodyPos.y + 17.0f;
 
             if (maxDist < 0.1f) return {bestX, std::max(bestY, minAllowedFootY)};
@@ -1245,7 +1301,7 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
 
             for (int i = 1; i <= static_cast<int>(std::ceil(maxDist)); ++i) {
                 float testX = bodyPos.x + castDir * i;
-                float ty = groundCastY(testX, hipY, 24.0f, pw);
+                float ty = customGroundCastY(testX, hipY, 24.0f);
                 
                 if (ty < minFootY) break;
                 if (ty > maxFootY) break;
@@ -1281,8 +1337,8 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
 
         bool wantsToWalk = std::abs(b2Vel.x) > 0.1f && !isAirborne && (player.landingTimer <= 0.0f);
 
-        auto castNearFoot = [&](float worldX, float footY) -> float {
-            return groundCastY(worldX, hipY, 24.0f, pw);
+        auto castNearFoot = [&](float worldX, float fy) -> float {
+            return customGroundCastY(worldX, hipY, 24.0f);
         };
 
         auto isWallAhead = [&](float dX) -> bool {
@@ -1297,6 +1353,7 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
                 if (pw.isEmpty(px, py)) return false;
                 BaseComponent* base = pw.get<BaseComponent>(px, py);
                 if (base) {
+                    if (base->compMask & COMP_PLATFORM) return false;
                     Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
                     if (logic) {
                         MaterialGroup group = logic->getGroup();
@@ -1811,13 +1868,63 @@ void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
             v.y = lerp(v.y, desiredVy_P * P2M, dt * 25.0f); 
             b2Body_SetLinearVelocity(phys.bodyId, v);
         }
+
+        // --- DYNAMIC COLLISION FILTER FOR PLATFORMS ---
+        b2ShapeId playerShapeId = b2_nullShapeId;
+        int shapeCount = b2Body_GetShapeCount(phys.bodyId);
+        if (shapeCount > 0) {
+            std::vector<b2ShapeId> shapes(shapeCount);
+            b2Body_GetShapes(phys.bodyId, shapes.data(), shapeCount);
+            playerShapeId = shapes[0];
+        }
+
+        if (b2Shape_IsValid(playerShapeId) && !player.isRagdoll) {
+            bool overlappingPlatform = false;
+            bool overlappingSolid = false;
+            
+            int pxMin = static_cast<int>(std::floor(bodyPos.x - 2.5f));
+            int pxMax = static_cast<int>(std::ceil(bodyPos.x + 2.5f));
+            int pyMin = static_cast<int>(std::floor(bodyPos.y - 7.5f)); 
+            int pyMaxLimit = static_cast<int>(std::floor(bodyPos.y + 7.9f)); 
+
+            for (int py = pyMin; py <= pyMaxLimit; ++py) {
+                for (int px = pxMin; px <= pxMax; ++px) {
+                    if (pw.isEmpty(px, py)) continue;
+                    BaseComponent* b = pw.get<BaseComponent>(px, py);
+                    if (b && b->compMask != 0) {
+                        if (b->compMask & COMP_PLATFORM) {
+                            overlappingPlatform = true;
+                        } else {
+                            Particle* logic = MaterialRegistry[static_cast<int>(b->id)];
+                            if (logic && logic->getGroup() != MaterialGroup::Liquid && logic->getGroup() != MaterialGroup::Gas) {
+                                overlappingSolid = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            b2Filter filter = b2Shape_GetFilter(playerShapeId);
+            bool movingUp = !player.isGrounded && b2Vel.y < -1.0f;
+            bool dropping = player.uprightStunTimer > 0.0f;
+            
+            bool ignorePlatformsPhysics = movingUp || dropping || (overlappingPlatform && !overlappingSolid);
+            
+            if (ignorePlatformsPhysics) {
+                filter.maskBits = (~0x0002u) & (~0x0004u); // Safe native masking out of platforms to prevent side snags
+            } else {
+                filter.maskBits = ~0x0002u; // Restores collisions to platforms normally
+            }
+            b2Shape_SetFilter(playerShapeId, filter);
+        }
     });
 }
 
-bool EntitySystem::isSolid(int cx, int cy, ParticleWorld& pw) {
+bool EntitySystem::isSolid(int cx, int cy, ParticleWorld& pw, bool ignorePlatforms) {
     if (pw.isEmpty(cx, cy)) return false;
     BaseComponent* b = pw.get<BaseComponent>(cx, cy);
     if (b && b->compMask != 0 && !b->flags.isRigidBodyPart) {
+        if (ignorePlatforms && (b->compMask & COMP_PLATFORM)) return false;
         Particle* p = MaterialRegistry[static_cast<int>(b->id)];
         if (p && p->getGroup() != MaterialGroup::Liquid && p->getGroup() != MaterialGroup::Gas) return true;
     }
@@ -1836,15 +1943,15 @@ sf::Vector2f EntitySystem::resolveTargetPos(sf::Vector2f clickPos, ParticleWorld
     if (y < 0) y = 0;
     if (y >= h) y = h - 1;
     
-    if (isSolid(x, y, pw)) {
+    if (isSolid(x, y, pw, false)) {
         for (int cy = y; cy > 0; --cy) {
-            if (!isSolid(x, cy - 1, pw) && isSolid(x, cy, pw)) {
+            if (!isSolid(x, cy - 1, pw, true) && isSolid(x, cy, pw, false)) {
                 return sf::Vector2f(x, cy - 1);
             }
         }
     } else {
         for (int cy = y; cy < h - 1; ++cy) {
-            if (!isSolid(x, cy, pw) && isSolid(x, cy + 1, pw)) {
+            if (!isSolid(x, cy, pw, true) && isSolid(x, cy + 1, pw, false)) {
                 return sf::Vector2f(x, cy);
             }
         }
@@ -1867,11 +1974,11 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
     
     for (int x = STEP; x < width - STEP; x += STEP) {
         for (int y = 1; y < height - 1; ++y) {
-            if (!isSolid(x, y - 1, pw) && isSolid(x, y, pw)) {
+            if (!isSolid(x, y - 1, pw, true) && isSolid(x, y, pw, false)) {
                 bool fits = true;
                 for (int cy = y - CLEARANCE_H; cy <= y - 6; ++cy) {
                     for (int cx = x - CLEARANCE_W; cx <= x + CLEARANCE_W; ++cx) {
-                        if (isSolid(cx, cy, pw)) { 
+                        if (isSolid(cx, cy, pw, true)) { 
                             fits = false; 
                             break; 
                         }
@@ -1907,7 +2014,7 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
                         float groundY = p1.y + (p2.y - p1.y) * t;
                         
                         for (int cy = static_cast<int>(groundY) - CLEARANCE_H; cy <= static_cast<int>(groundY) - 4; ++cy) {
-                            if (isSolid(cx, cy, pw)) { blocked = true; break; }
+                            if (isSolid(cx, cy, pw, true)) { blocked = true; break; }
                         }
                         if (blocked) break;
                     }
@@ -1954,7 +2061,7 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
                         int checkX = static_cast<int>(std::round(p.x));
                         int groundY = static_cast<int>(std::round(startP.y + 1.0f));
                         if (checkX < 0 || checkX >= width) break;
-                        if (!isSolid(checkX, groundY, pw)) {
+                        if (!isSolid(checkX, groundY, pw, false)) {
                             isAirborne = true;
                         }
                     }
@@ -1975,7 +2082,7 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
                     
                     bool blocked = false;
                     for (int cy = static_cast<int>(p.y) - CLEARANCE_H+8; cy <= static_cast<int>(p.y) - 6; cy += 4) {
-                        if (isSolid(p.x, cy, pw) || isSolid(p.x - 2, cy, pw) || isSolid(p.x + 2, cy, pw)) {
+                        if (isSolid(p.x, cy, pw, true) || isSolid(p.x - 2, cy, pw, true) || isSolid(p.x + 2, cy, pw, true)) {
                             blocked = true; break;
                         }
                     }
@@ -1984,7 +2091,7 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
                     traj.push_back(p);
                     
                     if (isAirborne && currentVy > 0.0f) {
-                        if (isSolid(p.x, p.y + 1, pw)) {
+                        if (isSolid(p.x, p.y + 1, pw, false)) {
                             hitGround = true;
                             break;
                         }
@@ -2016,7 +2123,7 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
                                 for (float px = minX + 8.0f; px < maxX; px += 8.0f) {
                                     bool groundFound = false;
                                     for (int cy = startP.y - 16; cy <= startP.y + 48; ++cy) {
-                                        if (isSolid(px, cy, pw)) { groundFound = true; break; }
+                                        if (isSolid(px, cy, pw, false)) { groundFound = true; break; }
                                     }
                                     if (!groundFound) { gapFound = true; break; }
                                 }
@@ -2335,8 +2442,9 @@ void EntitySystem::killAndRagdollEntity(entt::entity e, ParticleWorld& pw, Mater
     b2DestroyBody(phys->bodyId);
     registry.destroy(e);
 }
+
 void EntitySystem::notifyTerrainChanged(sf::Vector2f center, float radius) {
-    float r = radius + 20.0f; // Provides tolerance margin reliably logically natively structurally securely securely implicitly effectively inherently precisely explicitly!
+    float r = radius + 20.0f;
     sf::FloatRect altered({center.x - r, center.y - r}, {r*2, r*2});
     
     if (!hasDirtyNavRegion) {
@@ -2354,5 +2462,5 @@ void EntitySystem::notifyTerrainChanged(sf::Vector2f center, float radius) {
         dirtyNavRect.size.y = bottom - top;
     }
     
-    globalGraphBuilt = false; // Forces an instant automatic logical Graph layout natively
+    globalGraphBuilt = false;
 }

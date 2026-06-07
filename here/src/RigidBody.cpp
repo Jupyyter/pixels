@@ -1056,6 +1056,7 @@ namespace {
         return result;
     }
 }
+
 void RigidBodySystem::applyBlastImpulse(float x, float y, float radius, float strength) {
     for (auto& rb : bodies) {
         if (rb->isEquipped || rb->isGlued) continue; 
@@ -1078,6 +1079,7 @@ void RigidBodySystem::applyBlastImpulse(float x, float y, float radius, float st
         }
     }
 }
+
 void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, ParticleWorld& world) {
     uint64_t currentHash = 0;
     if (chunk) {
@@ -1105,113 +1107,131 @@ void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, Partic
     bdef.position = { 0.0f, 0.0f }; 
     b2BodyId bodyId = b2CreateBody(worldId, &bdef);
 
-    auto isSolid = [&](int wx, int wy) {
-        BaseComponent* base = world.get<BaseComponent>(wx, wy);
-        if (!base || base->compMask == 0 || base->flags.isRigidBodyPart) return false;
-        Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
-        return logic && logic->getGroup() == MaterialGroup::ImmovableSolid;
-    };
-
-    struct Edge { IntPoint p1, p2; };
-    std::vector<Edge> all_edges;
     int chunkWx = coord.x * CHUNK_SIZE;
     int chunkWy = coord.y * CHUNK_SIZE;
-
-    for (int ly = 0; ly < CHUNK_SIZE; ++ly) {
-        for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
-            int wx = chunkWx + lx;
-            int wy = chunkWy + ly;
-            
-            if (isSolid(wx, wy)) {
-                if (!isSolid(wx, wy - 1))     all_edges.push_back({{wx, wy}, {wx + 1, wy}});
-                if (!isSolid(wx + 1, wy))     all_edges.push_back({{wx + 1, wy}, {wx + 1, wy + 1}});
-                if (!isSolid(wx, wy + 1))     all_edges.push_back({{wx + 1, wy + 1}, {wx, wy + 1}});
-                if (!isSolid(wx - 1, wy))     all_edges.push_back({{wx, wy + 1}, {wx, wy}});
-            }
-        }
-    }
-
-    std::unordered_map<IntPoint, int, IntPointHash> inDegree;
-    std::unordered_map<IntPoint, int, IntPointHash> outDegree;
-    std::unordered_multimap<IntPoint, IntPoint, IntPointHash> adj;
-
-    for (const auto& edge : all_edges) {
-        adj.insert({edge.p1, edge.p2});
-        outDegree[edge.p1]++;
-        inDegree[edge.p2]++;
-    }
-
-    std::vector<std::vector<IntPoint>> polylines;
-
-    for (auto& pair : outDegree) {
-        IntPoint start = pair.first;
-        while (outDegree[start] > inDegree[start]) {
-            std::vector<IntPoint> path;
-            path.push_back(start);
-            IntPoint curr = start;
-            while (true) {
-                auto it = adj.find(curr);
-                if (it == adj.end()) break;
-                IntPoint next = it->second;
-                path.push_back(next);
-                adj.erase(it);
-                outDegree[curr]--;
-                inDegree[next]--;
-                curr = next;
-            }
-            polylines.push_back(path);
-        }
-    }
-
-    for (auto& pair : outDegree) {
-        IntPoint start = pair.first;
-        while (outDegree[start] > 0) {
-            std::vector<IntPoint> path;
-            path.push_back(start);
-            IntPoint curr = start;
-            while (true) {
-                auto it = adj.find(curr);
-                if (it == adj.end()) break;
-                IntPoint next = it->second;
-                path.push_back(next);
-                adj.erase(it);
-                outDegree[curr]--;
-                inDegree[next]--;
-                curr = next;
-                if (curr == start) break;
-            }
-            polylines.push_back(path);
-        }
-    }
-
     bool hasFixtures = false;
 
-    for (const auto& poly : polylines) {
-        std::vector<IntPoint> simplified = simplify(poly, 0.8f);
-        if (simplified.size() < 2) continue;
-        
-        b2ShapeDef shapeDef = b2DefaultShapeDef();
-        shapeDef.material.friction = 0.5f; 
+    auto buildShapes = [&](bool platformPass) {
+        auto checkSolid = [&](int wx, int wy) {
+            BaseComponent* base = world.get<BaseComponent>(wx, wy);
+            if (!base || base->compMask == 0 || base->flags.isRigidBodyPart) return false;
+            
+            bool isPlat = (base->compMask & COMP_PLATFORM) != 0;
+            if (isPlat != platformPass) return false;
 
-        for (size_t i = 0; i < simplified.size() - 1; ++i) {
-            b2Segment segment = { 
-                {simplified[i].x * P2M, simplified[i].y * P2M}, 
-                {simplified[i+1].x * P2M, simplified[i+1].y * P2M} 
-            };
-            b2CreateSegmentShape(bodyId, &shapeDef, &segment);
-            hasFixtures = true;
-        }
+            Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
+            return logic && logic->getGroup() == MaterialGroup::ImmovableSolid;
+        };
 
-        shapeDef.material.friction = 0.0f; 
-        for (size_t i = 0; i < simplified.size(); ++i) {
-            if (simplified.front() == simplified.back() || (i > 0 && i < simplified.size() - 1)) {
-                 b2Circle circle;
-                 circle.center = {simplified[i].x * P2M, simplified[i].y * P2M};
-                 circle.radius = 0.01f; 
-                 b2CreateCircleShape(bodyId, &shapeDef, &circle);
+        struct Edge { IntPoint p1, p2; };
+        std::vector<Edge> all_edges;
+
+        for (int ly = 0; ly < CHUNK_SIZE; ++ly) {
+            for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
+                int wx = chunkWx + lx;
+                int wy = chunkWy + ly;
+                
+                if (checkSolid(wx, wy)) {
+                    if (!checkSolid(wx, wy - 1))     all_edges.push_back({{wx, wy}, {wx + 1, wy}});
+                    if (!checkSolid(wx + 1, wy))     all_edges.push_back({{wx + 1, wy}, {wx + 1, wy + 1}});
+                    if (!checkSolid(wx, wy + 1))     all_edges.push_back({{wx + 1, wy + 1}, {wx, wy + 1}});
+                    if (!checkSolid(wx - 1, wy))     all_edges.push_back({{wx, wy + 1}, {wx, wy}});
+                }
             }
         }
-    }
+
+        if (all_edges.empty()) return;
+
+        std::unordered_map<IntPoint, int, IntPointHash> inDegree;
+        std::unordered_map<IntPoint, int, IntPointHash> outDegree;
+        std::unordered_multimap<IntPoint, IntPoint, IntPointHash> adj;
+
+        for (const auto& edge : all_edges) {
+            adj.insert({edge.p1, edge.p2});
+            outDegree[edge.p1]++;
+            inDegree[edge.p2]++;
+        }
+
+        std::vector<std::vector<IntPoint>> polylines;
+
+        for (auto& pair : outDegree) {
+            IntPoint start = pair.first;
+            while (outDegree[start] > inDegree[start]) {
+                std::vector<IntPoint> path;
+                path.push_back(start);
+                IntPoint curr = start;
+                while (true) {
+                    auto it = adj.find(curr);
+                    if (it == adj.end()) break;
+                    IntPoint next = it->second;
+                    path.push_back(next);
+                    adj.erase(it);
+                    outDegree[curr]--;
+                    inDegree[next]--;
+                    curr = next;
+                }
+                polylines.push_back(path);
+            }
+        }
+
+        for (auto& pair : outDegree) {
+            IntPoint start = pair.first;
+            while (outDegree[start] > 0) {
+                std::vector<IntPoint> path;
+                path.push_back(start);
+                IntPoint curr = start;
+                while (true) {
+                    auto it = adj.find(curr);
+                    if (it == adj.end()) break;
+                    IntPoint next = it->second;
+                    path.push_back(next);
+                    adj.erase(it);
+                    outDegree[curr]--;
+                    inDegree[next]--;
+                    curr = next;
+                    if (curr == start) break;
+                }
+                polylines.push_back(path);
+            }
+        }
+
+        for (const auto& poly : polylines) {
+            std::vector<IntPoint> simplified = simplify(poly, 0.8f);
+            if (simplified.size() < 2) continue;
+            
+            b2ShapeDef shapeDef = b2DefaultShapeDef();
+            shapeDef.material.friction = 0.5f; 
+            
+            // Assign Platforms their own unique Collision Layer (0x0004)
+            if (platformPass) {
+                shapeDef.filter.categoryBits = 0x0004;
+            } else {
+                shapeDef.filter.categoryBits = 0x0001;
+            }
+
+            for (size_t i = 0; i < simplified.size() - 1; ++i) {
+                b2Segment segment = { 
+                    {simplified[i].x * P2M, simplified[i].y * P2M}, 
+                    {simplified[i+1].x * P2M, simplified[i+1].y * P2M} 
+                };
+                b2CreateSegmentShape(bodyId, &shapeDef, &segment);
+                hasFixtures = true;
+            }
+
+            shapeDef.material.friction = 0.0f; 
+            for (size_t i = 0; i < simplified.size(); ++i) {
+                if (simplified.front() == simplified.back() || (i > 0 && i < simplified.size() - 1)) {
+                     b2Circle circle;
+                     circle.center = {simplified[i].x * P2M, simplified[i].y * P2M};
+                     circle.radius = 0.01f; 
+                     b2CreateCircleShape(bodyId, &shapeDef, &circle);
+                }
+            }
+        }
+    };
+
+    buildShapes(false); // Normal Terrain Pass
+    buildShapes(true);  // Platform Pass
 
     if (hasFixtures) {
         chunkBodies[coord] = {bodyId, currentHash};
@@ -1219,6 +1239,7 @@ void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, Partic
         b2DestroyBody(bodyId);
     }
 }
+
 void RigidBodySystem::save(std::ostream& out) const {
     size_t count = bodies.size();
     out.write(reinterpret_cast<const char*>(&count), sizeof(count));
@@ -1343,6 +1364,7 @@ void RigidBodySystem::clearAll() {
     chunkBodies.clear();
     orphanedPixels.clear();
 }
+
 void RigidBodySystem::renderEffects(sf::RenderTarget& target) const {
     for (const auto& rb : bodies) {
         rb->renderEffects(target);

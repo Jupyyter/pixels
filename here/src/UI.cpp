@@ -295,7 +295,8 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
         ImGui::Text("Brush Shape");
         int shape = static_cast<int>(brushShape);
         ImGui::RadioButton("Circle", &shape, static_cast<int>(BrushShape::Circle)); ImGui::SameLine();
-        ImGui::RadioButton("Square", &shape, static_cast<int>(BrushShape::Square));
+        ImGui::RadioButton("Square", &shape, static_cast<int>(BrushShape::Square)); ImGui::SameLine();
+        ImGui::RadioButton("Platform", &shape, static_cast<int>(BrushShape::Platform));
         brushShape = static_cast<BrushShape>(shape);
         
         ImGui::Spacing();
