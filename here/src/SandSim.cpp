@@ -147,6 +147,10 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
         if (key->code == sf::Keyboard::Key::Grave) {
             isUIVisible = !isUIVisible;
         }
+        if (key->code == sf::Keyboard::Key::M) { // Press M to generate a map
+    // Ensure you have an image called input_image.png in your game folder
+    world->generateWorldFromImage("input_image.png", "color_map.txt");
+}
     }
     else if (const auto* resize = event.getIf<sf::Event::Resized>()) {
         handleResize(resize->size.x, resize->size.y);

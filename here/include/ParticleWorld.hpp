@@ -102,7 +102,7 @@ public:
     
     // Extensibility hook providing sequence independent binding!
     void setEntitySystem(EntitySystem* sys) { entitySystem = sys; }
-    
+
     RigidBodySystem* getRigidBodySystem() const { return rigidBodySystem.get(); }
     void renderDebugColliders(sf::RenderTarget& target) const;
     void addRigidBodyFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat, bool glue = false);
@@ -119,7 +119,8 @@ public:
     Chunk* getChunk(int x, int y) const;
     std::unordered_map<uint32_t, MaterialID> containerPayloads;
     void notifyTerrainChanged(float x, float y, float radius);
-    
+    void generateWorldFromImage(const std::string& imagePath, const std::string& mapPath);
+
     inline uint32_t computeLocalIndex(int x, int y) const {
         return ((y & 63) << 6) | (x & 63); 
     }

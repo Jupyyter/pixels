@@ -1,3 +1,6 @@
+#include <fstream>
+#include <sstream>
+#include <limits>
 #include "ParticleWorld.hpp"
 #include "Particles/Particle.hpp"
 #include <algorithm>
@@ -778,4 +781,87 @@ void ParticleWorld::notifyTerrainChanged(float x, float y, float radius) {
     if (entitySystem) {
         entitySystem->notifyTerrainChanged(sf::Vector2f(x, y), radius);
     }
+}
+static MaterialID mapStringToMaterialID(const std::string& name) {
+    // Dynamically search through your existing X-macro generated list
+    for (const auto& mat : ALL_MATERIALS) {
+        if (mat.name == name) {
+            return mat.id;
+        }
+    }
+    
+    std::cerr << "Warning: Material '" << name << "' not found, defaulting to Stone.\n";
+    return MaterialID::Stone; // Fallback
+}
+
+struct MappedColor {
+    sf::Color color;
+    std::string matName;
+};
+
+void ParticleWorld::generateWorldFromImage(const std::string& imagePath, const std::string& mapPath) {
+    sf::Image img;
+    if (!img.loadFromFile(imagePath)) {
+        std::cerr << "Failed to load image: " << imagePath << "\n";
+        return;
+    }
+
+    std::ifstream file(mapPath);
+    if (!file.is_open()) {
+        std::cerr << "Failed to load color map: " << mapPath << "\n";
+        return;
+    }
+
+    std::vector<MappedColor> colorMap;
+    std::string line;
+    while (std::getline(file, line)) {
+        std::stringstream ss(line);
+        int r, g, b;
+        std::string mat;
+        if (ss >> r >> g >> b >> mat) {
+            colorMap.push_back({sf::Color(r, g, b), mat});
+        }
+    }
+
+    // Clear the current world state
+    clear();
+
+    // Iterate through every pixel in the original image
+    for (unsigned int y = 0; y < img.getSize().y; ++y) {
+        for (unsigned int x = 0; x < img.getSize().x; ++x) {
+            sf::Color pixelCol = img.getPixel({x, y});
+
+            if (pixelCol.a < 128) continue; // Skip transparent background
+
+            int minDist = std::numeric_limits<int>::max();
+            std::string bestMat = "None";
+
+            // Find which mapped AI color is closest to this pixel
+            for (const auto& mc : colorMap) {
+                int dr = pixelCol.r - mc.color.r;
+                int dg = pixelCol.g - mc.color.g;
+                int db = pixelCol.b - mc.color.b;
+                int dist = dr*dr + dg*dg + db*db; // Squared distance
+
+                if (dist < minDist) {
+                    minDist = dist;
+                    bestMat = mc.matName;
+                }
+            }
+
+            // If Gemini didn't discard the color, spawn the block
+            if (bestMat != "None") {
+                MaterialID matID = mapStringToMaterialID(bestMat);
+                spawnParticle(matID, x, y);
+                
+                // IMPORTANT: Overwrite the spawned material color with the exact pixel 
+                // color so the resulting map perfectly resembles the input image!
+                setParticleColor(x, y, pixelCol);
+            }
+        }
+    }
+
+    // Call your existing save system
+    saveWorld("AI_Generated_Map");
+    std::cout << "Success! AI Generated map saved to worlds folder.\n";
 }
