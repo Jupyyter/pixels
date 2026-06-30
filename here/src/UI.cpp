@@ -1,5 +1,6 @@
 #include "UI.hpp"
 #include "ParticleWorld.hpp"
+#include "EntitySystem.hpp"
 #include <imgui.h>
 #include <imgui-SFML.h>
 #include <filesystem>
@@ -13,22 +14,16 @@ UI::UI(sf::RenderWindow& window, ParticleWorld* worldPtr) : world(worldPtr) {
 
 void UI::loadImageAssets() {
     imageAssets.clear();
-    
     auto loadFromDir = [&](const std::string& folderPath) {
-        if (!std::filesystem::exists(folderPath)) {
-            std::filesystem::create_directories(folderPath);
-        }
-
+        if (!std::filesystem::exists(folderPath)) std::filesystem::create_directories(folderPath);
         for (const auto& entry : std::filesystem::directory_iterator(folderPath)) {
             if (entry.is_regular_file()) {
                 std::string path = entry.path().string();
                 std::string ext = entry.path().extension().string();
-                
                 if (ext == ".png" || ext == ".jpg" || ext == ".bmp") {
                     ImageAsset asset;
                     asset.name = entry.path().stem().string();
                     asset.path = path;
-                    
                     if (asset.image.loadFromFile(path)) {
                         if (asset.texture.loadFromImage(asset.image)) {
                             imageAssets.push_back(std::move(asset));
@@ -38,7 +33,6 @@ void UI::loadImageAssets() {
             }
         }
     };
-
     loadFromDir("assets/images/rigidBodies");
     loadFromDir("assets/images/structures");
 }
@@ -47,26 +41,16 @@ void UI::loadWeaponAssets() {
     weaponAssets.clear();
     std::string folderPath = "assets/images/weapons";
     if (!std::filesystem::exists(folderPath)) std::filesystem::create_directories(folderPath);
-    
-    // Use recursive_directory_iterator to ensure we look inside the /revolver/ and /submachine/ folders
     for (const auto& entry : std::filesystem::recursive_directory_iterator(folderPath)) {
         if (entry.is_regular_file()) {
             std::string path = entry.path().string();
             std::string ext = entry.path().extension().string();
-            
             if (ext == ".png" || ext == ".jpg" || ext == ".bmp") {
                 std::string stem = entry.path().stem().string();
-                
-                // Exclude ONLY the animation sprite sheets.
-                // The animations contain "[SHOOT", while the base sprites just contain "[width x height]".
-                if (stem.find("[SHOOT") != std::string::npos) {
-                    continue; 
-                }
-                
+                if (stem.find("[SHOOT") != std::string::npos) continue; 
                 ImageAsset asset;
                 asset.name = stem;
                 asset.path = path;
-                
                 if (asset.image.loadFromFile(path)) {
                     if (asset.texture.loadFromImage(asset.image)) {
                         weaponAssets.push_back(std::move(asset));
@@ -79,20 +63,14 @@ void UI::loadWeaponAssets() {
 
 void UI::loadEntityAssets() {
     entityAssets.clear();
-    std::string folderPath = "assets/images/entities";
-    if (!std::filesystem::exists(folderPath)) std::filesystem::create_directories(folderPath);
-    
-    for (const auto& entry : std::filesystem::directory_iterator(folderPath)) {
-        if (entry.is_regular_file()) {
-            std::string path = entry.path().string();
-            std::string ext = entry.path().extension().string();
-            
-            if (ext == ".png" || ext == ".jpg" || ext == ".bmp") {
+    if (world && world->getEntitySystem()) {
+        const auto& defs = world->getEntitySystem()->getDefinitions();
+        for (const auto& def : defs) {
+            if (!def.texturePath.empty()) {
                 ImageAsset asset;
-                asset.name = entry.path().stem().string();
-                asset.path = path;
-                
-                if (asset.image.loadFromFile(path)) {
+                asset.name = def.name;
+                asset.path = def.texturePath;
+                if (asset.image.loadFromFile(def.texturePath)) {
                     if (asset.texture.loadFromImage(asset.image)) {
                         entityAssets.push_back(std::move(asset));
                     }
@@ -101,6 +79,7 @@ void UI::loadEntityAssets() {
         }
     }
 }
+
 const sf::Image* UI::getSelectedAssetImage() const {
     if (imageAssets.empty() || selectedAssetIndex < 0 || selectedAssetIndex >= imageAssets.size()) return nullptr;
     return &imageAssets[selectedAssetIndex].image;
@@ -146,10 +125,7 @@ std::string UI::getSelectedEntityPath() const {
     return entityAssets[selectedEntityIndex].path;
 }
 
-
 void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, float frameTime, sf::Vector2f mouseWorldPos) {
-    
-    // --- HIGH VISIBILITY HOVER TOOLTIP ---
     ImGui::SetNextWindowPos(ImVec2(10, 10));
     ImGui::SetNextWindowBgAlpha(0.6f); 
     ImGuiWindowFlags tooltipFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | 
@@ -177,7 +153,6 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
     }
     ImGui::End();
 
-    // --- MAIN UI ---
     ImGui::Begin("Simulation Control");
 
     ImGui::Text("Performance: %.1f FPS", 1000.0f / frameTime);
@@ -214,18 +189,12 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
                     ImGui::TableNextColumn();
                     bool selected = (selectedAssetIndex == i);
                     
-                    if (selected) {
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.8f, 0.0f, 0.5f)); 
-                    }
+                    if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.8f, 0.0f, 0.5f)); 
                     
                     std::string btnId = "##asset" + std::to_string(i);
-                    if (ImGui::ImageButton(btnId.c_str(), imageAssets[i].texture, sf::Vector2f(60, 60))) {
-                        selectedAssetIndex = i;
-                    }
+                    if (ImGui::ImageButton(btnId.c_str(), imageAssets[i].texture, sf::Vector2f(60, 60))) selectedAssetIndex = i;
                     
-                    if (selected) {
-                        ImGui::PopStyleColor();
-                    }
+                    if (selected) ImGui::PopStyleColor();
                     ImGui::TextWrapped("%s", imageAssets[i].name.c_str());
                 }
                 ImGui::EndTable();
@@ -236,7 +205,7 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
         ImGui::Text("Entity Assets Gallery");
         ImGui::Checkbox("Is Player", &spawnAsPlayer);
         if (entityAssets.empty()) {
-            ImGui::TextColored(ImVec4(1, 0, 0, 1), "No images found in assets/images/entities/");
+            ImGui::TextColored(ImVec4(1, 0, 0, 1), "No entities registered or valid sprites found!");
         } else {
             int columns = std::max(1, static_cast<int>(ImGui::GetWindowWidth() / 80.0f));
             if (ImGui::BeginTable("##entitygrid", columns)) {
@@ -290,7 +259,6 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
     }
     else {
         ImGui::SliderFloat("Brush Radius", &selectionRadius, MIN_SELECTION_RADIUS, MAX_SELECTION_RADIUS);
-        
         ImGui::Spacing();
         ImGui::Text("Brush Shape");
         int shape = static_cast<int>(brushShape);
@@ -298,19 +266,13 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
         ImGui::RadioButton("Square", &shape, static_cast<int>(BrushShape::Square)); ImGui::SameLine();
         ImGui::RadioButton("Platform", &shape, static_cast<int>(BrushShape::Platform));
         brushShape = static_cast<BrushShape>(shape);
-        
         ImGui::Spacing();
         ImGui::Checkbox("Line Mode (Drag to draw)", &useLineMode);
     }
 
     ImGui::Separator();
-    
-    if (ImGui::Button("Clear Canvas", ImVec2(-1, 0))) {
-        world->clear();
-    }
-    if (ImGui::Button("Save World", ImVec2(-1, 0))) {
-        world->saveWorld("world");
-    }
+    if (ImGui::Button("Clear Canvas", ImVec2(-1, 0))) world->clear();
+    if (ImGui::Button("Save World", ImVec2(-1, 0))) world->saveWorld("world");
 
     ImGui::Separator();
     ImGui::Text("Debug Overlays");
@@ -320,9 +282,7 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
     ImGui::Separator();
     ImGui::Spacing();
     ImGui::Text("Materials");
-    
     drawMaterialTabs();
-
     ImGui::End();
 }
 
@@ -337,20 +297,14 @@ void UI::drawMaterialTabs() {
 
                         ImVec4 col = ImVec4(c.r/255.f, c.g/255.f, c.b/255.f, 1.0f);
                         ImGui::PushStyleColor(ImGuiCol_Button, col);
-                        
-                        if (ImGui::Button(mat.name.c_str(), ImVec2(80, 40))) {
-                            currentMaterial = mat.id;
-                        }
-                        
+                        if (ImGui::Button(mat.name.c_str(), ImVec2(80, 40))) currentMaterial = mat.id;
                         if (currentMaterial == mat.id) {
                             ImGui::GetWindowDrawList()->AddRect(
                                 ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), 
                                 IM_COL32(255, 255, 0, 255), 0, 0, 2.0f
                             );
                         }
-
                         ImGui::PopStyleColor();
-                        
                         if (ImGui::GetItemRectMax().x < ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 90)
                             ImGui::SameLine();
                     }
@@ -364,7 +318,6 @@ void UI::drawMaterialTabs() {
         renderGroup("Liquids", MaterialGroup::Liquid);
         renderGroup("Gases", MaterialGroup::Gas);
         renderGroup("Special", MaterialGroup::Special);
-
         ImGui::EndTabBar();
     }
 }

@@ -1,3 +1,5 @@
+// text/plain
+// entitycomponents.hpp
 #pragma once
 #include <box2d/box2d.h>
 #include <SFML/Graphics.hpp>
@@ -20,14 +22,9 @@ struct PathNodeData {
     bool isFall = false;
     bool isJumpTakeoff = false;
     float requiredVx = 0.0f;
-    
 };
 
-struct PhysicsComponent {
-    b2BodyId bodyId;
-};
-
-struct PlayerControllerComponent {
+struct PlayerController {
     bool isPlayer = true;
     
     bool hasTarget = false;
@@ -77,15 +74,44 @@ struct PlayerControllerComponent {
 };
 
 struct AnimationState {
-    int startFrame;
+    int startFrameX;
+    int startFrameY;
     int frameCount;
     float frameDuration;
 };
 
-struct SpriteSheetComponent {
+struct EntityDefinition {
+    std::string name;
+    std::string texturePath;
+    bool isComplex;
+    
+    int frameWidth;
+    int frameHeight;
+    
+    // Defines the collider in the sprite's local pixel coordinates.
+    sf::FloatRect colliderRect; 
+    float colliderRadius = 0.0f;
+
+    // Helper to set collider using opposite inclusive corners (Top-Left and Bottom-Right)
+    void setCollider(sf::Vector2f topLeft, sf::Vector2f bottomRight) {
+        // +1.0f ensures we count the pixels inclusively (e.g. 13 to 19 = 7 pixels wide)
+        colliderRect = sf::FloatRect(
+            topLeft, 
+            {bottomRight.x - topLeft.x + 1.0f, bottomRight.y - topLeft.y + 1.0f}
+        );
+    }
+    float hipBaseY;
+    float armBaseY;
+    
+    float uprightMultiplier; 
+
+    std::unordered_map<std::string, AnimationState> animations;
+};
+
+struct SpriteSheet {
     std::shared_ptr<sf::Texture> texture;
     std::optional<sf::Sprite> sprite;
-    std::string texturePath = ""; // Essential logic anchor to restore textures accurately on loaded files dynamically globally! 
+    std::string texturePath = ""; 
 
     int frameWidth  = 32;
     int frameHeight = 32;
@@ -125,29 +151,18 @@ struct BodyBobState {
     float damping   = 12.0f;
 };
 
-struct ProceduralAnimationComponent {
-    ProceduralLeg  legA;
-    ProceduralLeg  legB;
-    ProceduralHand handA; 
-    ProceduralHand handB; 
-    BodyBobState   bob;
+namespace Box2DCompat {
+    template <typename T>
+    auto InitJointCompat(T& jd, b2BodyId bA, b2BodyId bB, b2Vec2 lAA, b2Vec2 lAB) -> decltype(jd.bodyIdA, void()) {
+        jd.bodyIdA = bA; jd.bodyIdB = bB;
+        jd.localAnchorA = lAA; jd.localAnchorB = lAB;
+        jd.collideConnected = false;
+    }
 
-    int   steppingLeg  = -1;   
-    float stepProgress = 0.0f; 
-    bool  isStopping   = false;
-
-    float armSwing    = 0.0f;
-    float weaponAngle = 90.0f; 
-
-    float strideDistance = 12.0f; 
-    float stepLookahead  = 8.0f;  
-    float stepArcHeight  = 5.0f;  
-    float minStepRate    = 0.8f;  
-    
-    float downhillOffset = 0.0f;
-    
-    float recoilAngle = 0.0f;
-    float recoilAngleVel = 0.0f;
-    sf::Vector2f recoilOffset = {0.0f, 0.0f};
-    sf::Vector2f recoilVelocity = {0.0f, 0.0f};
-};
+    template <typename T>
+    auto InitJointCompat(T& jd, b2BodyId bA, b2BodyId bB, b2Vec2 lAA, b2Vec2 lAB) -> decltype(jd.base.bodyIdA, void()) {
+        jd.base.bodyIdA = bA; jd.base.bodyIdB = bB;
+        jd.base.localFrameA.p = lAA; jd.base.localFrameB.p = lAB;
+        jd.base.collideConnected = false;
+    }
+}

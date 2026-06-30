@@ -60,8 +60,14 @@ private:
     bool isPanning;
     float currentZoom;
     
-    // Defer-Brushing Properties: Creates preview paths reliably naturally logically elegantly explicitly optimally safely effectively correctly 
+    // Properties for continuous "freehand" brushing
     std::vector<sf::Vector2f> currentStroke;
     bool isBrushing = false;
     bool isErasing = false;
+
+    // Properties for click-and-drag "line mode" drawing
+    bool isDraggingLine = false;
+    bool isDraggingEraseLine = false;
+    sf::Vector2f lineStartPos;
+    sf::Vector2f lineCurrentPos;
 };

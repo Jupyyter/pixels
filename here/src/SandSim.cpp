@@ -1,4 +1,5 @@
 #include "SandSim.hpp"
+#include "RigidBody.hpp"
 #include <cmath>
 #include <algorithm>
 #include <iostream>
@@ -147,10 +148,9 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
         if (key->code == sf::Keyboard::Key::Grave) {
             isUIVisible = !isUIVisible;
         }
-        if (key->code == sf::Keyboard::Key::M) { // Press M to generate a map
-    // Ensure you have an image called input_image.png in your game folder
-    world->generateWorldFromImage("input_image.png", "color_map.txt");
-}
+        if (key->code == sf::Keyboard::Key::M) {
+            world->generateWorldFromImage("input_image.png", "color_map.txt");
+        }
     }
     else if (const auto* resize = event.getIf<sf::Event::Resized>()) {
         handleResize(resize->size.x, resize->size.y);
@@ -190,9 +190,21 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
                     }
                     else if (ui->getSpawnMode() == SpawnMode::Entity) {
                         if (entitySystem) {
-                            std::string path = ui->getSelectedEntityPath();
-                            if (!path.empty()) {
-                                entitySystem->spawnEntity(worldPos.x, worldPos.y, path, ui->getSpawnAsPlayer());
+                            std::string defName = ui->getSelectedEntityName();
+                            if (!defName.empty()) {
+                                sf::Vector2f spawnPos = worldPos;
+                                
+                                // Offset the spawn position by the collider's center
+                                // so it perfectly matches the ghost preview origin
+                                for (const auto& def : entitySystem->getDefinitions()) {
+                                    if (def.name == defName) {
+                                        spawnPos.x -= (def.colliderRect.position.x + def.colliderRect.size.x / 2.0f);
+                                        spawnPos.y -= (def.colliderRect.position.y + def.colliderRect.size.y / 2.0f);
+                                        break;
+                                    }
+                                }
+                                
+                                entitySystem->spawnEntity(spawnPos.x, spawnPos.y, defName, ui->getSpawnAsPlayer());
                             }
                         }
                     }
@@ -420,7 +432,22 @@ void SandSimApp::render() {
                     int w = std::min(32u, ghostTex->getSize().x);
                     int h = std::min(32u, ghostTex->getSize().y);
                     ghostSprite.setTextureRect(sf::IntRect({0, 0}, {w, h}));
-                    ghostSprite.setOrigin({15.5f, 25.0f}); 
+                    
+                    // For the ghost preview, we query the entity system to align perfectly to its defined origin
+sf::Vector2f previewOrigin = {16.0f, 16.0f}; // Fallback
+if (entitySystem) {
+    for (const auto& def : entitySystem->getDefinitions()) {
+        if (def.name == ui->getSelectedEntityName()) {
+            // Calculate the origin from the center of the new SFML 3 colliderRect
+            previewOrigin = {
+                def.colliderRect.position.x + def.colliderRect.size.x / 2.0f, 
+                def.colliderRect.position.y + def.colliderRect.size.y / 2.0f
+            };
+            break;
+        }
+    }
+}
+                    ghostSprite.setOrigin(previewOrigin); 
                     ghostSprite.setPosition(worldPos);
                     ghostSprite.setColor(sf::Color(255, 255, 255, 128)); 
                     window.draw(ghostSprite);

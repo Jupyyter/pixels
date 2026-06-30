@@ -1,206 +1,123 @@
+// text/plain
+// entitysystem.cpp
 #include "EntitySystem.hpp"
+#include "Entity.hpp"
+#include "ComplexEntity.hpp"
+#include "SimpleEntity.hpp"
 #include "Weapon.hpp"
+#include "ParticleWorld.hpp"
+#include "RigidBody.hpp"
 #include "Constants.hpp"
 #include <cmath>
 #include <iostream>
 #include <cstdlib>
 #include <queue>
 #include <map>
+#include <algorithm>
 #include <SFML/Window/Mouse.hpp>
 
-constexpr float PI       = 3.14159265358979323846f;
 constexpr float NO_GROUND = 1e9f;
-constexpr float FOOT_CAST_UP   = 24.0f;
-constexpr float FOOT_CAST_DOWN = 24.0f;
-constexpr float TARGET_CAST_UP   = 40.0f;
-constexpr float TARGET_CAST_DOWN = 80.0f;
-
-inline float clamp01(float t)       { return t < 0.f ? 0.f : (t > 1.f ? 1.f : t); }
-inline float lerp(float a, float b, float t) { t = clamp01(t); return a + t * (b - a); }
-inline sf::Vector2f lerpV(sf::Vector2f a, sf::Vector2f b, float t) {
-    return { lerp(a.x, b.x, t), lerp(a.y, b.y, t) };
-}
-inline float length(sf::Vector2f v) { return std::hypot(v.x, v.y); }
 
 namespace {
     struct EdgeData {
-        int action; // 0 = walk, 1 = jump, 2 = fall
+        int action; 
         float dir;
         std::vector<sf::Vector2f> trajectory;
         float requiredVx = 0.0f;
     };
     std::map<std::pair<int, int>, EdgeData> s_EdgeData;
-
-    // SFINAE fallback seamlessly resolving the underlying Box2D v3 joint changes dynamically based on the headers available locally!
-    template <typename T>
-    auto InitJointCompat(T& jd, b2BodyId bA, b2BodyId bB, b2Vec2 lAA, b2Vec2 lAB) -> decltype(jd.bodyIdA, void()) {
-        jd.bodyIdA = bA; jd.bodyIdB = bB;
-        jd.localAnchorA = lAA; jd.localAnchorB = lAB;
-        jd.collideConnected = false;
-    }
-
-    template <typename T>
-    auto InitJointCompat(T& jd, b2BodyId bA, b2BodyId bB, b2Vec2 lAA, b2Vec2 lAB) -> decltype(jd.base.bodyIdA, void()) {
-        jd.base.bodyIdA = bA; jd.base.bodyIdB = bB;
-        jd.base.localFrameA.p = lAA; jd.base.localFrameB.p = lAB;
-        jd.base.collideConnected = false;
-    }
 }
 
 EntitySystem::EntitySystem(b2WorldId physWorld) : physicsWorldId(physWorld) {
     sf::Image dummy;
     dummy.resize(sf::Vector2u(32, 32), sf::Color(100, 100, 100));
     defaultPlayerTexture = std::make_shared<sf::Texture>(dummy);
+    
+    registerEntities();
 }
-EntitySystem::~EntitySystem() { registry.clear(); }
 
+EntitySystem::~EntitySystem() { 
+    clearAll(); 
+}
+
+void EntitySystem::registerEntities() {
+    EntityDefinition bunny;
+    bunny.name = "Bunny";
+    bunny.texturePath = "assets/images/entities/bunny.png";
+    bunny.isComplex = true;
+    bunny.frameWidth = 32;
+    bunny.frameHeight = 32;
+    
+    // Exactly as you specified: 7 pixels wide, 16 pixels tall
+    bunny.setCollider({13.0f, 11.0f}, {19.0f, 26.0f});
+    
+    bunny.uprightMultiplier = 1.0f;
+    bunny.hipBaseY = 8.0f;
+    bunny.armBaseY = 8.0f;
+    bunny.animations["Idle"] = {0, 0, 1, 0.1f};
+    bunny.animations["Walk"] = {0, 0, 1, 0.1f};
+    bunny.animations["Jump"] = {0, 0, 1, 0.1f};
+    entityDefs.push_back(bunny);
+
+    EntityDefinition wolf = bunny;
+    wolf.name = "Wolf";
+    wolf.texturePath = "assets/images/entities/wolf.png";
+    entityDefs.push_back(wolf);
+
+    EntityDefinition wizzard;
+    wizzard.name = "Wizzard";
+    wizzard.texturePath = "assets/images/entities/wizzard.png";
+    wizzard.isComplex = false;
+    wizzard.frameWidth = 32;
+    wizzard.frameHeight = 32; 
+    
+    // Wizard coordinates: 32 pixels wide (0 to 31), 31 pixels tall (1 to 31)
+    wizzard.setCollider({3.0f, 1.0f}, {29.0f, 31.0f}); 
+    wizzard.colliderRadius = 4.0f; // Rounds the Wizard's corners!
+    
+    wizzard.uprightMultiplier = 15.0f; 
+    wizzard.hipBaseY = 8.0f; 
+    wizzard.armBaseY = 8.0f; 
+    wizzard.animations["Jump"] = {1, 0, 1, 0.1f};
+    wizzard.animations["Fall"] = {0, 0, 1, 0.1f};
+    wizzard.animations["Idle"] = {0, 1, 1, 0.1f};
+    wizzard.animations["Walk"] = {0, 2, 2, 0.1f};
+    entityDefs.push_back(wizzard);
+}
 void EntitySystem::clearAll() {
-    auto view = registry.view<PhysicsComponent>();
-    for (auto [e, phys] : view.each()) {
-        if (phys.bodyId.index1 != 0 && b2Body_IsValid(phys.bodyId)) b2DestroyBody(phys.bodyId);
-        
-        auto* anim = registry.try_get<ProceduralAnimationComponent>(e);
-        if (anim) {
-             if (b2Body_IsValid(anim->legA.ragdollBodyId)) b2DestroyBody(anim->legA.ragdollBodyId);
-             if (b2Body_IsValid(anim->legB.ragdollBodyId)) b2DestroyBody(anim->legB.ragdollBodyId);
-             if (b2Body_IsValid(anim->handA.ragdollBodyId)) b2DestroyBody(anim->handA.ragdollBodyId);
-             if (b2Body_IsValid(anim->handB.ragdollBodyId)) b2DestroyBody(anim->handB.ragdollBodyId);
-        }
-    }
-    registry.clear();
+    entities.clear();
 }
 
 void EntitySystem::eraseEntitiesInRadius(sf::Vector2f center, float radius) {
-    auto view = registry.view<PhysicsComponent>();
-    std::vector<entt::entity> toDelete;
-    for (auto [e, phys] : view.each()) {
-        b2Vec2 p = b2Body_GetPosition(phys.bodyId);
-        float wp_x = p.x * M2P, wp_y = p.y * M2P;
-        float dist = std::hypot(wp_x - center.x, wp_y - center.y);
-        if (dist <= radius + 16.0f) {
-            toDelete.push_back(e);
-        }
-    }
-    for (auto e : toDelete) {
-        auto* phys = registry.try_get<PhysicsComponent>(e);
-        if (phys && b2Body_IsValid(phys->bodyId)) b2DestroyBody(phys->bodyId);
-        auto* anim = registry.try_get<ProceduralAnimationComponent>(e);
-        if (anim) {
-             if (b2Body_IsValid(anim->legA.ragdollBodyId)) b2DestroyBody(anim->legA.ragdollBodyId);
-             if (b2Body_IsValid(anim->legB.ragdollBodyId)) b2DestroyBody(anim->legB.ragdollBodyId);
-             if (b2Body_IsValid(anim->handA.ragdollBodyId)) b2DestroyBody(anim->handA.ragdollBodyId);
-             if (b2Body_IsValid(anim->handB.ragdollBodyId)) b2DestroyBody(anim->handB.ragdollBodyId);
-        }
-        registry.destroy(e);
-    }
+    entities.erase(std::remove_if(entities.begin(), entities.end(), [&](const std::unique_ptr<Entity>& e) {
+        b2Vec2 p = b2Body_GetPosition(e->bodyId);
+        float dist = std::hypot(p.x * M2P - center.x, p.y * M2P - center.y);
+        return dist <= radius + 16.0f;
+    }), entities.end());
 }
 
 void EntitySystem::eraseEntitiesInSquare(sf::Vector2f center, float radius) {
-    auto view = registry.view<PhysicsComponent>();
-    std::vector<entt::entity> toDelete;
-    for (auto [e, phys] : view.each()) {
-        b2Vec2 p = b2Body_GetPosition(phys.bodyId);
-        float wp_x = p.x * M2P, wp_y = p.y * M2P;
-        if (std::abs(wp_x - center.x) <= radius + 16.0f && std::abs(wp_y - center.y) <= radius + 16.0f) {
-            toDelete.push_back(e);
-        }
-    }
-    for (auto e : toDelete) {
-        auto* phys = registry.try_get<PhysicsComponent>(e);
-        if (phys && b2Body_IsValid(phys->bodyId)) b2DestroyBody(phys->bodyId);
-        auto* anim = registry.try_get<ProceduralAnimationComponent>(e);
-        if (anim) {
-             if (b2Body_IsValid(anim->legA.ragdollBodyId)) b2DestroyBody(anim->legA.ragdollBodyId);
-             if (b2Body_IsValid(anim->legB.ragdollBodyId)) b2DestroyBody(anim->legB.ragdollBodyId);
-             if (b2Body_IsValid(anim->handA.ragdollBodyId)) b2DestroyBody(anim->handA.ragdollBodyId);
-             if (b2Body_IsValid(anim->handB.ragdollBodyId)) b2DestroyBody(anim->handB.ragdollBodyId);
-        }
-        registry.destroy(e);
-    }
+    entities.erase(std::remove_if(entities.begin(), entities.end(), [&](const std::unique_ptr<Entity>& e) {
+        b2Vec2 p = b2Body_GetPosition(e->bodyId);
+        return std::abs(p.x * M2P - center.x) <= radius + 16.0f && std::abs(p.y * M2P - center.y) <= radius + 16.0f;
+    }), entities.end());
 }
 
 void EntitySystem::save(std::ostream& out) const {
-    auto view = registry.view<const PlayerControllerComponent, const PhysicsComponent, const SpriteSheetComponent, const ProceduralAnimationComponent>();
-    
-    size_t count = 0;
-    for (auto [e, player, phys, sprite, anim] : view.each()) { count++; }
-    
+    size_t count = entities.size();
     out.write(reinterpret_cast<const char*>(&count), sizeof(size_t));
-    for (auto [e, player, phys, sprite, anim] : view.each()) {
-        b2Vec2 pos = b2Body_GetPosition(phys.bodyId);
-        b2Vec2 linVel = b2Body_GetLinearVelocity(phys.bodyId);
-        b2Rot rot = b2Body_GetRotation(phys.bodyId);
-        float angle = std::atan2(rot.s, rot.c);
-        float angVel = b2Body_GetAngularVelocity(phys.bodyId);
+    for (const auto& e : entities) {
+        int type = e->getType();
+        out.write((const char*)&type, sizeof(int));
         
+        b2Vec2 pos = b2Body_GetPosition(e->bodyId);
         out.write((const char*)&pos, sizeof(b2Vec2));
-        out.write((const char*)&linVel, sizeof(b2Vec2));
-        out.write((const char*)&angle, sizeof(float));
-        out.write((const char*)&angVel, sizeof(float));
         
-        size_t len = sprite.texturePath.size();
+        size_t len = e->defName.size();
         out.write((const char*)&len, sizeof(size_t));
-        if (len > 0) { out.write(sprite.texturePath.c_str(), len); }
+        if (len > 0) { out.write(e->defName.c_str(), len); }
         
-        out.write((const char*)&sprite.flipX, sizeof(bool));
-        out.write((const char*)&sprite.currentFrameIndex, sizeof(int));
-        out.write((const char*)&sprite.frameTimer, sizeof(float));
-        size_t cLen = sprite.currentState.size();
-        out.write((const char*)&cLen, sizeof(size_t));
-        if (cLen > 0) { out.write(sprite.currentState.c_str(), cLen); }
-
-        out.write((const char*)&player.isPlayer, sizeof(bool));
-        out.write((const char*)&player.hasTarget, sizeof(bool));
-        out.write((const char*)&player.targetPos, sizeof(sf::Vector2f));
-        
-        size_t pathSz = player.path.size();
-        out.write((const char*)&pathSz, sizeof(size_t));
-        if (pathSz > 0) {
-            out.write((const char*)player.path.data(), pathSz * sizeof(PathNodeData));
-        }
-        
-        out.write((const char*)&player.pathIndex, sizeof(int));
-        out.write((const char*)&player.pathRecalcTimer, sizeof(float));
-        out.write((const char*)&player.stuckTimer, sizeof(float));
-        out.write((const char*)&player.lastPos, sizeof(sf::Vector2f));
-        out.write((const char*)&player.homePos, sizeof(sf::Vector2f));
-        out.write((const char*)&player.homePosSet, sizeof(bool));
-        out.write((const char*)&player.idleWaitTimer, sizeof(float));
-        out.write((const char*)&player.isWandering, sizeof(bool));
-        out.write((const char*)&player.wanderDir, sizeof(float));
-        out.write((const char*)&player.wanderTimer, sizeof(float));
-        out.write((const char*)&player.physicsStuckTimer, sizeof(float));
-        out.write((const char*)&player.isGrounded, sizeof(bool));
-
-        auto saveLeg = [&](const ProceduralLeg& leg) {
-            out.write((const char*)&leg.hipOffset, sizeof(sf::Vector2f));
-            out.write((const char*)&leg.footWorld, sizeof(sf::Vector2f));
-            out.write((const char*)&leg.footStart, sizeof(sf::Vector2f));
-            out.write((const char*)&leg.footTarget, sizeof(sf::Vector2f));
-            out.write((const char*)&leg.plantedX, sizeof(float));
-            out.write((const char*)&leg.plantedY, sizeof(float));
-            out.write((const char*)&leg.isPlanted, sizeof(bool));
-        };
-        auto saveHand = [&](const ProceduralHand& hand) {
-            out.write((const char*)&hand.offset, sizeof(sf::Vector2f));
-            out.write((const char*)&hand.recoilPos, sizeof(sf::Vector2f));
-            out.write((const char*)&hand.recoilVel, sizeof(sf::Vector2f));
-            out.write((const char*)&hand.recoilAngle, sizeof(float));
-            out.write((const char*)&hand.recoilAngularVel, sizeof(float));
-        };
-
-        saveLeg(anim.legA);
-        saveLeg(anim.legB);
-        saveHand(anim.handA);
-        saveHand(anim.handB);
-
-        out.write((const char*)&anim.bob, sizeof(BodyBobState));
-        out.write((const char*)&anim.steppingLeg, sizeof(int));
-        out.write((const char*)&anim.stepProgress, sizeof(float));
-        out.write((const char*)&anim.isStopping, sizeof(bool));
-        out.write((const char*)&anim.armSwing, sizeof(float));
-        out.write((const char*)&anim.weaponAngle, sizeof(float));
-        out.write((const char*)&anim.downhillOffset, sizeof(float));
+        e->save(out);
     }
 }
 
@@ -209,233 +126,75 @@ void EntitySystem::load(std::istream& in) {
     size_t count = 0;
     if (in.read(reinterpret_cast<char*>(&count), sizeof(size_t))) {
         for (size_t i = 0; i < count; ++i) {
+            int type = 0;
+            in.read((char*)&type, sizeof(int));
             
-            b2Vec2 pos, linVel;
-            float angle, angVel;
-            
+            b2Vec2 pos;
             in.read((char*)&pos, sizeof(b2Vec2));
-            in.read((char*)&linVel, sizeof(b2Vec2));
-            in.read((char*)&angle, sizeof(float));
-            in.read((char*)&angVel, sizeof(float));
-
+            
             size_t tLen = 0;
             in.read((char*)&tLen, sizeof(size_t));
-            std::string tpath = "";
+            std::string dName = "";
             if (tLen > 0) {
-                tpath.resize(tLen);
-                in.read(&tpath[0], tLen);
+                dName.resize(tLen);
+                in.read(&dName[0], tLen);
             }
             
-            bool flipX; 
-            int currentFrameIndex; 
-            float frameTimer;
-            std::string cState = "Idle";
-
-            in.read((char*)&flipX, sizeof(bool));
-            in.read((char*)&currentFrameIndex, sizeof(int));
-            in.read((char*)&frameTimer, sizeof(float));
-            
-            size_t cLen = 0;
-            in.read((char*)&cLen, sizeof(size_t));
-            if (cLen > 0) {
-                cState.resize(cLen);
-                in.read(&cState[0], cLen);
-            }
-
-            PlayerControllerComponent pc;
-            in.read((char*)&pc.isPlayer, sizeof(bool));
-            in.read((char*)&pc.hasTarget, sizeof(bool));
-            in.read((char*)&pc.targetPos, sizeof(sf::Vector2f));
-            
-            size_t pathSz = 0;
-            in.read((char*)&pathSz, sizeof(size_t));
-            if (pathSz > 0) {
-                pc.path.resize(pathSz);
-                in.read((char*)pc.path.data(), pathSz * sizeof(PathNodeData));
-            }
-            
-            in.read((char*)&pc.pathIndex, sizeof(int));
-            in.read((char*)&pc.pathRecalcTimer, sizeof(float));
-            in.read((char*)&pc.stuckTimer, sizeof(float));
-            in.read((char*)&pc.lastPos, sizeof(sf::Vector2f));
-            in.read((char*)&pc.homePos, sizeof(sf::Vector2f));
-            in.read((char*)&pc.homePosSet, sizeof(bool));
-            in.read((char*)&pc.idleWaitTimer, sizeof(float));
-            in.read((char*)&pc.isWandering, sizeof(bool));
-            in.read((char*)&pc.wanderDir, sizeof(float));
-            in.read((char*)&pc.wanderTimer, sizeof(float));
-            in.read((char*)&pc.physicsStuckTimer, sizeof(float));
-            in.read((char*)&pc.isGrounded, sizeof(bool));
-
-            ProceduralAnimationComponent panim; 
-            auto readLeg = [&](ProceduralLeg& leg) {
-                in.read((char*)&leg.hipOffset, sizeof(sf::Vector2f));
-                in.read((char*)&leg.footWorld, sizeof(sf::Vector2f));
-                in.read((char*)&leg.footStart, sizeof(sf::Vector2f));
-                in.read((char*)&leg.footTarget, sizeof(sf::Vector2f));
-                in.read((char*)&leg.plantedX, sizeof(float));
-                in.read((char*)&leg.plantedY, sizeof(float));
-                in.read((char*)&leg.isPlanted, sizeof(bool));
-                leg.ragdollBodyId = b2_nullBodyId; 
-            };
-            auto readHand = [&](ProceduralHand& hand) {
-                in.read((char*)&hand.offset, sizeof(sf::Vector2f));
-                in.read((char*)&hand.recoilPos, sizeof(sf::Vector2f));
-                in.read((char*)&hand.recoilVel, sizeof(sf::Vector2f));
-                in.read((char*)&hand.recoilAngle, sizeof(float));
-                in.read((char*)&hand.recoilAngularVel, sizeof(float));
-                hand.ragdollBodyId = b2_nullBodyId;
-            };
-
-            readLeg(panim.legA); readLeg(panim.legB);
-            readHand(panim.handA); readHand(panim.handB);
-
-            in.read((char*)&panim.bob, sizeof(BodyBobState));
-            in.read((char*)&panim.steppingLeg, sizeof(int));
-            in.read((char*)&panim.stepProgress, sizeof(float));
-            in.read((char*)&panim.isStopping, sizeof(bool));
-            in.read((char*)&panim.armSwing, sizeof(float));
-            in.read((char*)&panim.weaponAngle, sizeof(float));
-            in.read((char*)&panim.downhillOffset, sizeof(float));
-            
-            float wx = pos.x * M2P, wy = pos.y * M2P; 
-            entt::entity spawned = spawnEntity(wx, wy, tpath, pc.isPlayer);
-            
-            auto& newPhys = registry.get<PhysicsComponent>(spawned);
-            b2Body_SetTransform(newPhys.bodyId, pos, b2MakeRot(angle));
-            b2Body_SetLinearVelocity(newPhys.bodyId, linVel);
-            b2Body_SetAngularVelocity(newPhys.bodyId, angVel);
-
-            auto& pRef = registry.get<PlayerControllerComponent>(spawned);
-            pRef.isPlayer = pc.isPlayer;
-            pRef.hasTarget = pc.hasTarget;
-            pRef.targetPos = pc.targetPos;
-            pRef.path = std::move(pc.path);
-            pRef.pathIndex = pc.pathIndex;
-            pRef.pathRecalcTimer = pc.pathRecalcTimer;
-            pRef.stuckTimer = pc.stuckTimer;
-            pRef.lastPos = pc.lastPos;
-            pRef.homePos = pc.homePos;
-            pRef.homePosSet = pc.homePosSet;
-            pRef.idleWaitTimer = pc.idleWaitTimer;
-            pRef.isWandering = pc.isWandering;
-            pRef.wanderDir = pc.wanderDir;
-            pRef.wanderTimer = pc.wanderTimer;
-            pRef.physicsStuckTimer = pc.physicsStuckTimer;
-            pRef.isGrounded = pc.isGrounded;
-            pRef.isRagdoll = false; 
-
-            auto& sRef = registry.get<SpriteSheetComponent>(spawned);
-            sRef.flipX = flipX;
-            sRef.currentFrameIndex = currentFrameIndex;
-            sRef.frameTimer = frameTimer;
-            sRef.currentState = cState;
-
-            auto& aRef = registry.get<ProceduralAnimationComponent>(spawned);
-            aRef = panim; 
+            Entity* spawned = spawnEntity(pos.x * M2P, pos.y * M2P, dName, false);
+            if (spawned) spawned->load(in);
         }
     }
 }
 
-entt::entity EntitySystem::spawnEntity(float x, float y, const std::string& texturePath, bool isPlayer) {
-    auto entity = registry.create();
-
-    b2BodyDef bdef      = b2DefaultBodyDef();
-    bdef.type           = b2_dynamicBody;
-    bdef.position.x     = x * P2M;
-    bdef.position.y     = y * P2M;
-    bdef.linearDamping  = 1.0f;
-    bdef.angularDamping = 10.0f;
-
-    b2BodyId bodyId = b2CreateBody(physicsWorldId, &bdef);
-    
-    b2Capsule capsule = {{-0.0f, -5.5f * P2M}, {0.0f, 5.5f * P2M}, 2.5f * P2M};
-    b2ShapeDef shapeDef = b2DefaultShapeDef();
-    shapeDef.density           = 10.0f; 
-    shapeDef.material.friction = 0.1f;
-    shapeDef.filter.categoryBits = 0x0002;
-    shapeDef.filter.maskBits = ~0x0002u;
-    b2CreateCapsuleShape(bodyId, &shapeDef, &capsule);
-
-    registry.emplace<PhysicsComponent>(entity, bodyId);
-    auto& pCtrl = registry.emplace<PlayerControllerComponent>(entity);
-    pCtrl.isPlayer = isPlayer;
-
-    SpriteSheetComponent spriteComp;
-    if (!texturePath.empty()) {
-        try   { spriteComp.texture = std::make_shared<sf::Texture>(texturePath); }
-        catch (...) { spriteComp.texture = defaultPlayerTexture; }
-        spriteComp.texturePath = texturePath;
-    } else {
-        spriteComp.texture = defaultPlayerTexture;
+Entity* EntitySystem::spawnEntity(float x, float y, const std::string& defName, bool isPlayer) {
+    const EntityDefinition* foundDef = nullptr;
+    for (const auto& def : entityDefs) {
+        if (def.name == defName) {
+            foundDef = &def;
+            break;
+        }
     }
-    spriteComp.sprite.emplace(*spriteComp.texture);
-    spriteComp.frameWidth  = 32;
-    spriteComp.frameHeight = 32;
-    spriteComp.sprite->setOrigin({15.5f, 25.0f});
     
-    spriteComp.animations["Idle"] = {0, 1, 0.1f};
-    spriteComp.animations["Walk"] = {0, 1, 0.1f};
-    spriteComp.animations["Jump"] = {0, 1, 0.1f};
-    spriteComp.currentState = "Idle";
-    registry.emplace<SpriteSheetComponent>(entity, spriteComp);
-
-    ProceduralAnimationComponent anim;
-    anim.legA.footWorld  = {x - 3.0f, y + 17.0f};
-    anim.legB.footWorld  = {x + 3.0f, y + 17.0f};
-    anim.legA.footStart  = anim.legA.footTarget = anim.legA.footWorld;
-    anim.legB.footStart  = anim.legB.footTarget = anim.legB.footWorld;
-    anim.legA.plantedX   = anim.legA.footWorld.x;
-    anim.legA.plantedY   = anim.legA.footWorld.y;
-    anim.legA.isPlanted  = true;
-    anim.legB.plantedX   = anim.legB.footWorld.x;
-    anim.legB.plantedY   = anim.legB.footWorld.y;
-    anim.legB.isPlanted  = true;
+    if (!foundDef && !entityDefs.empty()) {
+        foundDef = &entityDefs.front();
+    }
     
-    anim.handA.offset    = {4.0f, 0.0f};
-    anim.handB.offset    = {-4.0f, 0.0f};
-    anim.armSwing        = 0.0f;
-    registry.emplace<ProceduralAnimationComponent>(entity, anim);
+    if (!foundDef) return nullptr;
 
-    return entity;
+    std::unique_ptr<Entity> e;
+    if (foundDef->isComplex) {
+        e = std::make_unique<ComplexEntity>(physicsWorldId, this, x, y, *foundDef, isPlayer);
+    } else {
+        e = std::make_unique<SimpleEntity>(physicsWorldId, this, x, y, *foundDef, isPlayer);
+    }
+    Entity* ptr = e.get();
+    entities.push_back(std::move(e));
+    return ptr;
 }
 
 void EntitySystem::triggerSwing(sf::Vector2f targetWorldPos) {
-    auto view = registry.view<PlayerControllerComponent>();
-    for (auto [entity, player] : view.each()) {
-        if (player.equippedWeapon && !player.isSwinging) {
-            if (player.equippedWeapon->isGun) continue;
-            player.isSwinging = true;
-            player.swingTimer = 0.0f;
-            player.swingEffectApplied = false;
-            player.swingTarget = targetWorldPos;
-            player.swingRandomness = ((rand() % 100) / 100.0f) * 0.4f - 0.2f;
-        }
+    for (auto& e : entities) {
+        e->triggerSwing(targetWorldPos);
     }
 }
 
 void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& rbs, ParticleWorld& pw) {
-    dt = std::min(dt, 0.05f);
     static bool rightClickLastGlobal = false;
     bool currentRightClickGlobal = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
     bool orderGiven = currentRightClickGlobal && !rightClickLastGlobal;
     rightClickLastGlobal = currentRightClickGlobal;
 
     if (hasDirtyNavRegion) {
-        auto viewCheck = registry.view<PlayerControllerComponent>();
-        for (auto [e, player] : viewCheck.each()) {
-             if (player.hasTarget || player.isWandering) {
-                 bool compromised = false;
-                 for (size_t i = player.pathIndex; i < player.path.size(); ++i) {
-                     if (dirtyNavRect.contains({player.path[i].pos.x, player.path[i].pos.y})) { compromised = true; break; }
-                 }
-                 if (!compromised && dirtyNavRect.contains(player.targetPos)) compromised = true;
-                 if (!compromised && dirtyNavRect.contains(player.lastPos)) compromised = true;
-                 
-                 if (compromised) {
-                     player.pathRecalcTimer = 0.0f;
-                 }
-             }
+        for (auto& e : entities) {
+            if (e->pCtrl.hasTarget || e->pCtrl.isWandering) {
+                bool compromised = false;
+                for (size_t i = e->pCtrl.pathIndex; i < e->pCtrl.path.size(); ++i) {
+                    if (dirtyNavRect.contains({e->pCtrl.path[i].pos.x, e->pCtrl.path[i].pos.y})) { compromised = true; break; }
+                }
+                if (!compromised && dirtyNavRect.contains(e->pCtrl.targetPos)) compromised = true;
+                if (!compromised && dirtyNavRect.contains(e->pCtrl.lastPos)) compromised = true;
+                if (compromised) e->pCtrl.pathRecalcTimer = 0.0f;
+            }
         }
         hasDirtyNavRegion = false;
     }
@@ -445,658 +204,12 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
     }
 
     debugLines.clear();
-    auto view = registry.view<PlayerControllerComponent, PhysicsComponent, SpriteSheetComponent, ProceduralAnimationComponent>();
-    
-    view.each([&](auto, auto& player, auto& phys, auto& sprite, auto& anim) {
-        if (player.equippedWeapon && player.equippedWeapon->isDestroyed) {
-            player.equippedWeapon = nullptr; 
-        }
-
-        if (player.uprightStunTimer > 0.0f) {
-            player.uprightStunTimer -= dt;
-        }
-
-        b2Vec2 vel = b2Body_GetLinearVelocity(phys.bodyId);
-        b2Vec2 pos = b2Body_GetPosition(phys.bodyId);
-        sf::Vector2f bodyPos(pos.x * M2P, pos.y * M2P);
-        sf::Vector2f footPos(bodyPos.x, bodyPos.y + 17.0f);
-
-        float dir = 0.0f;
-        bool wPressed = false;
-        bool rightClick = false;
-        bool leftClick = false;
-        bool fPressed = false;
-        bool ePressed = false;
-
-        if (player.isPlayer) {
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) dir = -1.0f;
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) dir =  1.0f;
-            wPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W);
-            
-            bool currentS = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S);
-            if (currentS && !player.sPressed) {
-                player.uprightStunTimer = 0.25f; // Drop duration
-            }
-            player.sPressed = currentS;
-            
-            rightClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
-            leftClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
-            fPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F);
-            ePressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::E);
-        } else {
-            player.sPressed = false;
-            
-            // Allow AI to intentionally drop through a platform if their nav destination is below them
-            if (player.hasTarget && !player.path.empty() && player.pathIndex < player.path.size()) {
-                PathNodeData nextNode = player.path[player.pathIndex];
-                if (player.isGrounded && nextNode.pos.y > footPos.y + 20.0f) {
-                    if (!nextNode.isJump && !nextNode.isJumpTakeoff) {
-                        player.uprightStunTimer = 0.25f;
-                    }
-                }
-            }
-
-            if (!player.homePosSet) {
-                player.homePos = footPos;
-                player.homePosSet = true;
-                player.idleWaitTimer = ((std::rand() % 100) / 100.0f) * 4.0f + 2.0f;
-                player.isWandering = false;
-            }
-
-            if (orderGiven) {
-                player.hasTarget = true;
-                player.isWandering = false;
-                player.targetPos = resolveTargetPos(mouseWorldPos, pw);
-                
-                player.path = findPath(footPos, player.targetPos);
-                
-                bool destinationSevered = false;
-                if (!player.path.empty()) {
-                    float distToEnd = std::hypot(player.path.back().pos.x - player.targetPos.x, player.path.back().pos.y - player.targetPos.y);
-                    if (distToEnd > 24.0f) destinationSevered = true; 
-                }
-
-                if (!player.path.empty() && !destinationSevered) {
-                    player.path.push_back({player.targetPos, false, false, false, 0.0f});
-                }
-
-                player.pathIndex = 0;
-                player.pathRecalcTimer = 0.5f;
-                player.stuckTimer = 0.0f; 
-                player.lastPos = bodyPos;
-            }
-
-            if (!player.hasTarget) {
-                if (player.idleWaitTimer > 0.0f) {
-                    player.idleWaitTimer -= dt;
-                    dir = 0.0f;
-                    player.isWandering = false;
-                } else {
-                    if (!player.isWandering) {
-                        player.isWandering = true;
-                        
-                        float offsetAmount = (50.0f + ((std::rand() % 100) / 100.0f) * 100.0f);
-                        float dirX = (std::rand() % 2 == 0) ? 1.0f : -1.0f;
-                        
-                        if (footPos.x > player.homePos.x + 100.0f) dirX = -1.0f;
-                        if (footPos.x < player.homePos.x - 100.0f) dirX = 1.0f;
-
-                        player.wanderDir = dirX;
-                        
-                        if (globalGraphBuilt) {
-                            int startNode = getClosestNode(footPos);
-                            if (startNode != -1) {
-                                std::vector<int> reachableNodes;
-                                std::queue<std::pair<int, int>> q;
-                                std::map<int, bool> visited;
-                                
-                                q.push({startNode, 0});
-                                visited[startNode] = true;
-                                
-                                int targetWanderEdgeDist = std::max(5, static_cast<int>(offsetAmount / 16.0f)); 
-                                
-                                while (!q.empty()) {
-                                    auto [curr, edgeDist] = q.front();
-                                    q.pop();
-                                    
-                                    if (edgeDist > targetWanderEdgeDist / 2 && edgeDist <= targetWanderEdgeDist * 2) {
-                                        float distFromHome = std::abs(globalNavGraph[curr].pos.x - player.homePos.x);
-                                        if (distFromHome < 250.0f) { 
-                                            float signToNode = (globalNavGraph[curr].pos.x > footPos.x) ? 1.0f : -1.0f;
-                                            if (signToNode == dirX || std::rand() % 3 == 0) {
-                                                reachableNodes.push_back(curr);
-                                            }
-                                        }
-                                    }
-                                    
-                                    if (edgeDist < targetWanderEdgeDist * 2) {
-                                        for (int nxt : globalNavGraph[curr].neighbors) {
-                                            if (!visited[nxt]) {
-                                                visited[nxt] = true;
-                                                q.push({nxt, edgeDist + 1});
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                if (!reachableNodes.empty()) {
-                                    int rNode = reachableNodes[std::rand() % reachableNodes.size()];
-                                    sf::Vector2f candidateDest = globalNavGraph[rNode].pos;
-                                    
-                                    player.targetPos = candidateDest;
-                                    player.path = findPath(footPos, candidateDest);
-                                    if (!player.path.empty()) {
-                                        player.path.push_back({candidateDest, false, false, false, 0.0f});
-                                        player.pathIndex = 0;
-                                        player.pathRecalcTimer = 0.5f;
-                                        player.stuckTimer = 0.0f;
-                                        player.lastPos = bodyPos;
-                                        player.hasTarget = true;
-                                    } else {
-                                        player.wanderTimer = offsetAmount / (player.moveSpeed * 0.7f); 
-                                        player.physicsStuckTimer = 0.0f;
-                                    }
-                                } else {
-                                    player.wanderTimer = offsetAmount / (player.moveSpeed * 0.7f); 
-                                    player.physicsStuckTimer = 0.0f;
-                                }
-                            } else {
-                                player.wanderTimer = offsetAmount / (player.moveSpeed * 0.7f); 
-                                player.physicsStuckTimer = 0.0f;
-                            }
-                        } else {
-                            player.wanderTimer = offsetAmount / (player.moveSpeed * 0.7f); 
-                            player.physicsStuckTimer = 0.0f;
-                        }
-                    }
-
-                    if (player.isWandering && !player.hasTarget) {
-                        player.wanderTimer -= dt;
-                        dir = player.wanderDir;
-
-                        if (std::abs(vel.x) < 0.2f && player.isGrounded) {
-                            player.physicsStuckTimer += dt;
-                        } else {
-                            player.physicsStuckTimer = 0.0f;
-                        }
-
-                        bool abortWander = false;
-                        if (player.wanderTimer <= 0.0f) abortWander = true;
-                        
-                        if (player.physicsStuckTimer > 0.3f) {
-                            wPressed = true;
-                            if (player.physicsStuckTimer > 1.2f) { 
-                                abortWander = true;
-                            }
-                        }
-
-                        float castX = footPos.x + dir * 16.0f;
-                        float fY = groundCastY(castX, footPos.y - 12.0f, TARGET_CAST_UP + TARGET_CAST_DOWN, pw, false);
-                        if (fY >= NO_GROUND || fY > footPos.y + 16.0f) {
-                            abortWander = true;
-                        } else if (fY < footPos.y - 8.0f) { 
-                            if (player.isGrounded && fY > footPos.y - 24.0f) wPressed = true; 
-                            else abortWander = true; 
-                        }
-
-                        if (abortWander) {
-                            dir = 0.0f;
-                            player.isWandering = false;
-                            player.idleWaitTimer = ((std::rand() % 100) / 100.0f) * 4.0f + 2.0f;
-                        }
-                    }
-                }
-            }
-            
-            if (player.hasTarget) {
-                sf::Vector2f tPos = player.targetPos;
-                debugLines.push_back({tPos + sf::Vector2f(-4, 0), tPos + sf::Vector2f(4, 0), sf::Color::Cyan});
-                debugLines.push_back({tPos + sf::Vector2f(0, -4), tPos + sf::Vector2f(0, 4), sf::Color::Cyan});
-
-                player.pathRecalcTimer -= dt;
-                
-                if (std::hypot(bodyPos.x - player.lastPos.x, bodyPos.y - player.lastPos.y) < 2.0f) {
-                    player.stuckTimer += dt;
-                } else {
-                    player.stuckTimer = 0.0f;
-                    player.lastPos = bodyPos;
-                }
-
-                bool needsRecalc = false;
-                if (player.stuckTimer > 0.5f && player.isGrounded) {
-                    needsRecalc = true;
-                    player.stuckTimer = 0.0f;
-                }
-
-                if (!player.path.empty() && player.pathIndex < player.path.size()) {
-                    float dy = footPos.y - player.path[player.pathIndex].pos.y;
-                    if (dy > 40.0f && player.isGrounded) needsRecalc = true;
-                }
-
-                if ((needsRecalc || player.pathRecalcTimer <= 0.0f) && player.isGrounded) {
-                    player.pathRecalcTimer = 0.5f;
-                    if (std::hypot(player.targetPos.x - footPos.x, player.targetPos.y - footPos.y) > 24.0f) {
-                        std::vector<PathNodeData> newPath = findPath(footPos, player.targetPos);
-                        
-                        bool destinationSevered = false;
-                        if (!newPath.empty()) {
-                            float distToEnd = std::hypot(newPath.back().pos.x - player.targetPos.x, newPath.back().pos.y - player.targetPos.y);
-                            if (distToEnd > 24.0f) destinationSevered = true; 
-                        }
-                        
-                        if (newPath.empty() || (destinationSevered && player.isWandering)) {
-                            if (player.isWandering) {
-                                player.pathIndex = player.path.size();
-                            } else {
-                                player.path = std::move(newPath);
-                                if (!player.path.empty()) { player.path.push_back({player.targetPos, false, false, false, 0.0f}); }
-                                player.pathIndex = 0;
-                            }
-                        } else {
-                            player.path = std::move(newPath);
-                            if (!player.path.empty() && !destinationSevered) {
-                                player.path.push_back({player.targetPos, false, false, false, 0.0f});
-                            }
-                            player.pathIndex = 0;
-                        }
-                    } else {
-                        player.pathIndex = player.path.size(); 
-                    }
-                }
-
-                if (!player.path.empty() && player.pathIndex < player.path.size()) {
-                    b2Body_SetAwake(phys.bodyId, true);
-
-                    while (player.pathIndex < player.path.size()) {
-                        PathNodeData nextNode = player.path[player.pathIndex];
-                        float dist = std::hypot(nextNode.pos.x - footPos.x, nextNode.pos.y - footPos.y);
-                        
-                        bool reached = false;
-                        if (nextNode.isJumpTakeoff) {
-                            if (std::abs(nextNode.pos.x - footPos.x) < 4.0f && std::abs(nextNode.pos.y - footPos.y) < 16.0f) {
-                                reached = true;
-                            }
-                        } else {
-                            if (dist < 12.0f) {
-                                reached = true;
-                            } else if (player.isGrounded && std::abs(nextNode.pos.x - footPos.x) < 12.0f && std::abs(nextNode.pos.y - footPos.y) < 24.0f) {
-                                reached = true;
-                            }
-                        }
-                        
-                        if (reached) player.pathIndex++;
-                        else break;
-                    }
-
-                    if (player.pathIndex < player.path.size()) {
-                        PathNodeData nextNode = player.path[player.pathIndex];
-                        
-                        if (player.pathIndex > 0) debugLines.push_back({footPos, nextNode.pos, sf::Color::Yellow});
-                        for (size_t i = player.pathIndex; i + 1 < player.path.size(); ++i) {
-                            debugLines.push_back({player.path[i].pos, player.path[i+1].pos, sf::Color::Yellow});
-                        }
-                        
-                        float dx = nextNode.pos.x - footPos.x; 
-                        if (dx > 2.0f) {
-                            dir = 1.0f;
-                        } else if (dx < -2.0f) {
-                            dir = -1.0f;
-                        }
-                        
-                        bool needsJump = false;
-                        
-                        if (nextNode.isJump || nextNode.isFall) {
-                            if (player.isGrounded) {
-                                if (nextNode.isJump) needsJump = true;
-                            }
-                        } else {
-                            int lookMax = std::min(static_cast<int>(player.path.size()), player.pathIndex + 2);
-                            for (int i = player.pathIndex; i < lookMax; ++i) {
-                                if (player.path[i].pos.y < footPos.y - 12.0f && std::abs(player.path[i].pos.x - footPos.x) < 32.0f && !player.path[i].isJump && !player.path[i].isFall) {
-                                    needsJump = true;
-                                    break;
-                                }
-                            }
-                            if (std::abs(dx) > 4.0f && std::abs(vel.x) < 0.5f && player.stuckTimer > 0.1f) {
-                                needsJump = true;
-                            }
-                        }
-                        
-                        if (player.isGrounded && needsJump) {
-                            wPressed = true;
-                        }
-                    } else {
-                        dir = 0.0f;
-                        player.hasTarget = false;
-                        if (player.isWandering) {
-                            player.isWandering = false;
-                            player.idleWaitTimer = ((std::rand() % 100) / 100.0f) * 4.0f + 2.0f;
-                        }
-                    }
-                } else {
-                    dir = 0.0f;
-                    player.hasTarget = false;
-                    if (player.isWandering) {
-                        player.isWandering = false;
-                        player.idleWaitTimer = ((std::rand() % 100) / 100.0f) * 4.0f + 2.0f;
-                    }
-                }
-            }
-        } 
-
-        // --- RAGDOLL TOGGLE ---
-        b2Rot currentRot = b2Body_GetRotation(phys.bodyId);
-        float currentBodyAng = std::atan2(currentRot.s, currentRot.c);
-        float maxAngle = 45.0f * PI / 180.0f;
-        bool forceRagdoll = (!player.isRagdoll && std::abs(currentBodyAng) > maxAngle);
-
-        if ((fPressed && !player.fPressedLastFrame) || forceRagdoll) {
-            if (forceRagdoll) {
-                player.isRagdoll = true;
-            } else {
-                player.isRagdoll = !player.isRagdoll;
-            }
-
-            if (player.isRagdoll) {
-                b2Body_SetAngularDamping(phys.bodyId, 2.0f);
-                int shapeCount = b2Body_GetShapeCount(phys.bodyId);
-                if (shapeCount > 0) {
-                    std::vector<b2ShapeId> shapes(shapeCount);
-                    b2Body_GetShapes(phys.bodyId, shapes.data(), shapeCount);
-                    for (int i = 0; i < shapeCount; i++) b2DestroyShape(shapes[i], true);
-                }
-                b2Polygon box = b2MakeBox(2.5f * P2M, 8.0f * P2M); 
-                b2ShapeDef shapeDef = b2DefaultShapeDef();
-                shapeDef.density = 1.0f;
-                shapeDef.material.friction = 0.1f;
-                shapeDef.filter.categoryBits = 0x0002;
-                shapeDef.filter.maskBits = ~0x0002u; // Ragdolls collide properly with platforms
-                b2CreatePolygonShape(phys.bodyId, &shapeDef, &box);
-                
-                auto createRagdollPart = [&](float w, float h, sf::Vector2f worldPosPx, float angle, float density, bool isCircle = false) -> b2BodyId {
-                    b2BodyDef bdef = b2DefaultBodyDef();
-                    bdef.type = b2_dynamicBody;
-                    bdef.position = {worldPosPx.x * P2M, worldPosPx.y * P2M};
-                    bdef.rotation = b2MakeRot(angle);
-                    bdef.linearDamping = 0.5f;
-                    bdef.angularDamping = 2.0f;
-                    b2BodyId partId = b2CreateBody(physicsWorldId, &bdef);
-                    
-                    b2ShapeDef shapeDef = b2DefaultShapeDef();
-                    shapeDef.density = density;
-                    shapeDef.filter.categoryBits = 0x0002;
-                    shapeDef.filter.maskBits = ~0x0002u;
-                    shapeDef.material.friction = 0.5f;
-                    
-                    if (isCircle) { b2Circle circle = {{0, 0}, w * P2M}; b2CreateCircleShape(partId, &shapeDef, &circle); } 
-                    else { b2Polygon box = b2MakeBox(w * P2M, h * P2M); b2CreatePolygonShape(partId, &shapeDef, &box); }
-                    return partId;
-                };
-
-                auto createRevoluteJoint = [&](b2BodyId bA, b2BodyId bB, b2Vec2 anchorWorldPx) {
-                    b2RevoluteJointDef jd = b2DefaultRevoluteJointDef();
-                    b2Vec2 lAA = b2Body_GetLocalPoint(bA, {anchorWorldPx.x * P2M, anchorWorldPx.y * P2M});
-                    b2Vec2 lAB = b2Body_GetLocalPoint(bB, {anchorWorldPx.x * P2M, anchorWorldPx.y * P2M});
-                    InitJointCompat(jd, bA, bB, lAA, lAB);
-                    jd.enableLimit = true; jd.lowerAngle = -PI/1.5f; jd.upperAngle = PI/1.5f;
-                    b2CreateRevoluteJoint(physicsWorldId, &jd);
-                };
-                
-                auto createDistanceJoint = [&](b2BodyId bA, b2BodyId bB, b2Vec2 anchorWorldPx) {
-                    b2DistanceJointDef djd = b2DefaultDistanceJointDef();
-                    b2Vec2 lAA = b2Body_GetLocalPoint(bA, {anchorWorldPx.x * P2M, anchorWorldPx.y * P2M});
-                    b2Vec2 lAB = {0.0f, 0.0f};
-                    InitJointCompat(djd, bA, bB, lAA, lAB);
-                    djd.minLength = 0.0f; djd.maxLength = 9.0f * P2M;
-                    b2CreateDistanceJoint(physicsWorldId, &djd);
-                };
-
-                sf::Vector2f vbp = {bodyPos.x, bodyPos.y + 8.0f + anim.bob.offsetY};
-                
-                auto initLeg = [&](ProceduralLeg& leg, float density) {
-                    sf::Vector2f hip = vbp + leg.hipOffset;
-                    sf::Vector2f foot = leg.footWorld;
-                    sf::Vector2f dir = foot - hip;
-                    float angle = std::atan2(dir.y, dir.x) - PI/2.0f;
-                    sf::Vector2f center = hip + dir * 0.5f;
-                    leg.ragdollBodyId = createRagdollPart(1.5f, 4.5f, center, angle, density);
-                    createRevoluteJoint(phys.bodyId, leg.ragdollBodyId, {hip.x, hip.y});
-                };
-                
-                initLeg(anim.legA, 1.0f);
-                initLeg(anim.legB, 1.0f);
-
-                sf::Vector2f handA_pos = vbp + anim.handA.offset;
-                anim.handA.ragdollBodyId = createRagdollPart(2.0f, 2.0f, handA_pos, 0.0f, 0.5f, true);
-                sf::Vector2f shoulderA = bodyPos + sf::Vector2f(-4.0f, 4.0f);
-                createDistanceJoint(phys.bodyId, anim.handA.ragdollBodyId, {shoulderA.x, shoulderA.y});
-
-                sf::Vector2f handB_pos = vbp + anim.handB.offset;
-                anim.handB.ragdollBodyId = createRagdollPart(2.0f, 2.0f, handB_pos, 0.0f, 0.5f, true);
-                sf::Vector2f shoulderB = bodyPos + sf::Vector2f(4.0f, 4.0f);
-                createDistanceJoint(phys.bodyId, anim.handB.ragdollBodyId, {shoulderB.x, shoulderB.y});
-                
-            } else {
-                b2Body_SetAngularDamping(phys.bodyId, 10.0f);
-                b2Body_SetTransform(phys.bodyId, b2Body_GetPosition(phys.bodyId), b2MakeRot(0.0f));
-                
-                int shapeCount = b2Body_GetShapeCount(phys.bodyId);
-                if (shapeCount > 0) {
-                    std::vector<b2ShapeId> shapes(shapeCount);
-                    b2Body_GetShapes(phys.bodyId, shapes.data(), shapeCount);
-                    for (int i = 0; i < shapeCount; i++) b2DestroyShape(shapes[i], true);
-                }
-                b2Capsule capsule = {{-0.0f, -5.5f * P2M}, {0.0f, 5.5f * P2M}, 2.5f * P2M};
-                b2ShapeDef shapeDef = b2DefaultShapeDef();
-                shapeDef.density = 10.0f;
-                shapeDef.material.friction = 0.1f;
-                shapeDef.filter.categoryBits = 0x0002;
-                shapeDef.filter.maskBits = ~0x0002u;
-                b2CreateCapsuleShape(phys.bodyId, &shapeDef, &capsule);
-
-                if (b2Body_IsValid(anim.legA.ragdollBodyId)) b2DestroyBody(anim.legA.ragdollBodyId);
-                if (b2Body_IsValid(anim.legB.ragdollBodyId)) b2DestroyBody(anim.legB.ragdollBodyId);
-                if (b2Body_IsValid(anim.handA.ragdollBodyId)) b2DestroyBody(anim.handA.ragdollBodyId);
-                if (b2Body_IsValid(anim.handB.ragdollBodyId)) b2DestroyBody(anim.handB.ragdollBodyId);
-                
-                anim.legA.ragdollBodyId = b2_nullBodyId; anim.legB.ragdollBodyId = b2_nullBodyId;
-                anim.handA.ragdollBodyId = b2_nullBodyId; anim.handB.ragdollBodyId = b2_nullBodyId;
-                anim.bob.offsetY = 0.0f; anim.bob.velocity = 0.0f;
-            }
-        }
-        player.fPressedLastFrame = fPressed;
-
-        if (player.isRagdoll) {
-            player.isAiming = false; player.isSwinging = false;
-            player.leftClickPressedLastFrame = leftClick; player.wPressedLastFrame = wPressed;
-            player.ePressedLastFrame = ePressed;
-            return; 
-        }
-
-        b2Rot rot = b2Body_GetRotation(phys.bodyId);
-        float bodyAng = std::atan2(rot.s, rot.c);
-        float angVel = b2Body_GetAngularVelocity(phys.bodyId);
-        if (std::abs(bodyAng) < 0.03f && std::abs(angVel) < 0.5f) {
-            if (bodyAng != 0.0f || angVel != 0.0f) {
-                b2Body_SetTransform(phys.bodyId, b2Body_GetPosition(phys.bodyId), b2MakeRot(0.0f));
-                b2Body_SetAngularVelocity(phys.bodyId, 0.0f);
-                bodyAng = 0.0f; angVel = 0.0f;
-            }
-        }
-        bool movingAway = (bodyAng * angVel > 0.0f);
-        float stiffness = movingAway ? 15.0f : 250.0f;
-        float damping = movingAway ? 2.0f : 31.0f;
-        
-        if (std::abs(bodyAng) > maxAngle * 0.7f) {
-            float excess = (std::abs(bodyAng) - maxAngle * 0.7f) / (maxAngle * 0.3f);
-            stiffness += excess * 600.0f; damping += excess * 40.0f;
-        }
-
-        float torque = (-bodyAng * stiffness - angVel * damping) * b2Body_GetMass(phys.bodyId);
-        b2Body_ApplyTorque(phys.bodyId, torque, true);
-
-        if (rightClick && player.equippedWeapon && player.isPlayer) {
-            player.isAiming = true;
-            player.aimTarget = mouseWorldPos;
-            debugLines.push_back({{bodyPos.x, bodyPos.y}, player.aimTarget, sf::Color::Magenta});
-            
-            if (player.equippedWeapon->isGun) {
-                Weapon* w = static_cast<Weapon*>(player.equippedWeapon);
-                if (player.fireTimer <= 0.0f) {
-                    bool canShoot = w->semiAuto ? (leftClick && !player.leftClickPressedLastFrame) : leftClick;
-                    if (canShoot) {
-                        sf::Vector2f vbp(bodyPos.x, bodyPos.y + 8.0f + anim.bob.offsetY);
-                        sf::Vector2f handPos = vbp + anim.handB.offset + anim.handB.recoilPos;
-                        float currentWeaponAngle = anim.weaponAngle + anim.handB.recoilAngle;
-                        
-                        w->fire(handPos, player.aimTarget, currentWeaponAngle, sprite.flipX, rbs, pw);
-                        player.fireTimer = w->fireRate;
-
-                        float wFinalAngle = currentWeaponAngle + (sprite.flipX ? -w->visualAngleOffset : w->visualAngleOffset);
-                        float wRad = wFinalAngle * PI / 180.0f;
-                        float dX = std::cos(wRad) * (sprite.flipX ? -1.0f : 1.0f);
-                        float dY = std::sin(wRad) * (sprite.flipX ? -1.0f : 1.0f);
-                        sf::Vector2f shootDir(dX, dY);
-                        
-                        float backwardForce = w->recoilForce * 120.0f;
-                        anim.handB.recoilVel -= shootDir * backwardForce;
-                        
-                        sf::Vector2f perpDir(-shootDir.y, shootDir.x);
-                        float randLateral = ((std::rand() % 100) / 100.0f - 0.5f) * backwardForce * 1.5f;
-                        anim.handB.recoilVel += perpDir * randLateral;
-                        anim.handB.recoilAngularVel += ((std::rand() % 100) / 100.0f - 0.5f) * w->visualRecoilAngle * 80.0f;
-
-                        float playerKickMult = 0.5f; float effectiveMass = 0.8f; 
-                        vel.x += (-shootDir.x * w->recoilForce * playerKickMult) / effectiveMass;
-                        vel.y += (-shootDir.y * w->recoilForce * playerKickMult) / effectiveMass;
-                    }
-                }
-            }
-        } else {
-            player.isAiming = false;
-        }
-        player.leftClickPressedLastFrame = leftClick;
-        if (player.fireTimer > 0.0f) player.fireTimer -= dt;
-        
-        float speedFactor = 1.0f;
-        
-        if (player.isPlayer && player.isGrounded && dir != 0.0f) {
-            float maxDx = 0.0f;
-            int maxLook = static_cast<int>(std::ceil(anim.stepLookahead));
-            float baseCastFrom = bodyPos.y + 8;
-            float minFootY = bodyPos.y + 12.0f; 
-            float maxFootY = bodyPos.y + 22.0f; 
-            
-            bool ignorePlatforms = (player.uprightStunTimer > 0.0f) || (vel.y < -1.0f);
-
-            for (int i = 1; i <= maxLook; ++i) {
-                float testX = bodyPos.x + dir * i;
-                float gY = groundCastY(testX, baseCastFrom, TARGET_CAST_UP + TARGET_CAST_DOWN, pw, ignorePlatforms);
-                if (gY < minFootY || gY > maxFootY) break;
-                maxDx = static_cast<float>(i);
-            }
-            
-            speedFactor = maxDx / anim.stepLookahead;
-            if (speedFactor > 1.0f) speedFactor = 1.0f;
-
-            b2QueryFilter filter = b2DefaultQueryFilter();
-            filter.categoryBits = 0x0002;
-            filter.maskBits = (~0x0002u) & (~0x0004u); // Safe native masking out of platforms to prevent side snags
-
-            b2Transform xf = b2Body_GetTransform(phys.bodyId);
-            float localX = dir * 3.5f * P2M;
-            b2Vec2 localTop = {localX, -8.0f * P2M};
-            b2Vec2 localBottom = {localX, 8.0f * P2M};
-            b2Vec2 worldTop = b2TransformPoint(xf, localTop);
-            b2Vec2 worldBottom = b2TransformPoint(xf, localBottom);
-            b2Vec2 sideTrans = {worldBottom.x - worldTop.x, worldBottom.y - worldTop.y};
-            
-            b2RayResult sideHit = b2World_CastRayClosest(physicsWorldId, worldTop, sideTrans, filter);
-            if (sideHit.hit) {
-                b2BodyId sideBody = b2Shape_GetBody(sideHit.shapeId);
-                if (sideBody.index1 != phys.bodyId.index1) { 
-                    auto checkLeg = [&](const ProceduralLeg& leg) -> bool {
-                        float ox = leg.footWorld.x + (dir > 0 ? 0.5f : -0.5f);
-                        b2Vec2 origin = {ox * P2M, (leg.footWorld.y - 2.0f) * P2M}; 
-                        b2Vec2 trans = {dir * 2.0f * P2M, 0.0f}; 
-                        b2RayResult hit = b2World_CastRayClosest(physicsWorldId, origin, trans, filter);
-                        if (hit.hit) {
-                            b2BodyId hitBody = b2Shape_GetBody(hit.shapeId);
-                            return (hitBody.index1 == sideBody.index1 && hitBody.generation == sideBody.generation);
-                        }
-                        return false;
-                    };
-                    if (checkLeg(anim.legA) || checkLeg(anim.legB)) {
-                        speedFactor = 0.0f;
-                        vel.x = 0.0f; 
-                    }
-                }
-            }
-        }
-
-        float desiredVelX = dir * player.moveSpeed * speedFactor;
-        
-        if (!player.isSwinging && !player.isAiming) {
-            if (dir < 0.0f) sprite.flipX = true;
-            else if (dir > 0.0f) sprite.flipX = false;
-        }
-
-        if (player.landingTimer > 0.0f) {
-            player.landingTimer -= dt;
-            desiredVelX *= 0.1f; 
-        }
-
-        if (player.isGrounded) vel.x = lerp(vel.x, desiredVelX, dt * 8.0f);
-
-        if (wPressed && !player.wPressedLastFrame && player.isGrounded && player.landingTimer <= 0.0f) {
-            vel.y = player.jumpForce;
-            
-            if (!player.isPlayer && !player.path.empty() && player.pathIndex < player.path.size()) {
-                PathNodeData nextNode = player.path[player.pathIndex];
-                if (nextNode.isJump && std::abs(nextNode.requiredVx) > 0.1f) {
-                    vel.x = nextNode.requiredVx * P2M; 
-                }
-            }
-        }
-        player.wPressedLastFrame = wPressed;
-
-        if      (!player.isGrounded)         sprite.currentState = "Jump";
-        else if (player.landingTimer > 0.0f) sprite.currentState = "Idle";
-        else if (std::abs(vel.x) > 1.0f)     sprite.currentState = "Walk";
-        else                                 sprite.currentState = "Idle";
-
-        b2Body_SetLinearVelocity(phys.bodyId, vel);
-
-        if (ePressed && player.isPlayer) {
-            if (!player.ePressedLastFrame) {
-                player.ePressedLastFrame = true;
-                if (player.equippedWeapon) {
-                    player.equippedWeapon->isEquipped = false;
-                    b2Body_Enable(player.equippedWeapon->bodyId);
-                    
-                    b2Vec2 dropPos = { (bodyPos.x + (sprite.flipX ? -15.f : 15.f)) * P2M, (bodyPos.y - 10.f) * P2M };
-                    b2Body_SetTransform(player.equippedWeapon->bodyId, dropPos, b2MakeRot(0.0f));
-                    b2Body_SetLinearVelocity(player.equippedWeapon->bodyId, { sprite.flipX ? -8.f : 8.f, -5.0f });
-                    b2Body_SetAngularVelocity(player.equippedWeapon->bodyId, sprite.flipX ? -5.0f : 5.0f);
-                    
-                    player.equippedWeapon = nullptr;
-                } else {
-                    RigidBody* nearest = rbs.getNearestWeapon(bodyPos, 40.0f);
-                    if (nearest) {
-                        nearest->clearFromWorld(pw);
-                        nearest->isEquipped = true;
-                        b2Body_Disable(nearest->bodyId); 
-                        player.equippedWeapon = nearest;
-                    }
-                }
-            }
-        } else {
-            player.ePressedLastFrame = false;
-        }
-    });
+    for (auto& e : entities) {
+        e->updateInput(dt, mouseWorldPos, rbs, pw, orderGiven);
+    }
 }
 
-float EntitySystem::groundCastY(float worldX, float castFromY, float maxDown, ParticleWorld& pw, bool ignorePlatforms,float bodyPosY) {
+float EntitySystem::groundCastY(float worldX, float castFromY, float maxDown, ParticleWorld& pw, bool ignorePlatforms, float bodyPosY) {
     int px     = static_cast<int>(std::round(worldX));
     int startY = static_cast<int>(std::floor(castFromY));
 
@@ -1109,7 +222,6 @@ float EntitySystem::groundCastY(float worldX, float castFromY, float maxDown, Pa
                     if (ignorePlatforms) continue;
                     if (py < castFromY - 1.0f) continue; 
                 }
-                
                 Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
                 if (logic) {
                     MaterialGroup group = logic->getGroup();
@@ -1126,798 +238,9 @@ float EntitySystem::groundCastY(float worldX, float castFromY, float maxDown, Pa
 }
 
 void EntitySystem::updateProceduralAnimations(float dt, ParticleWorld& pw) {
-    dt = std::min(dt, 0.05f); 
-    auto view = registry.view<PlayerControllerComponent, PhysicsComponent, ProceduralAnimationComponent, SpriteSheetComponent>();
-
-    view.each([&](auto entity, auto& player, auto& phys, auto& anim, auto& spriteComp) {
-
-        b2Vec2 b2Pos = b2Body_GetPosition(phys.bodyId);
-        sf::Vector2f bodyPos(b2Pos.x * M2P, b2Pos.y * M2P);
-        b2Vec2 b2Vel = b2Body_GetLinearVelocity(phys.bodyId);
-
-        b2Rot rot = b2Body_GetRotation(phys.bodyId);
-        float bodyAng = std::atan2(rot.s, rot.c);
-
-        if (player.isRagdoll) {
-            auto displaceSandAndApplyForce = [&](b2BodyId bId, sf::Vector2f halfSize, sf::Vector2f center, float angle) {
-                if (!b2Body_IsValid(bId)) return;
-                int minX = static_cast<int>(std::floor(center.x - halfSize.x - 2.0f));
-                int maxX = static_cast<int>(std::ceil(center.x + halfSize.x + 2.0f));
-                int minY = static_cast<int>(std::floor(center.y - halfSize.y - 2.0f));
-                int maxY = static_cast<int>(std::ceil(center.y + halfSize.y + 2.0f));
-                
-                float r_cs = std::cos(-angle);
-                float r_sn = std::sin(-angle);
-                int sandCount = 0;
-                
-                for (int py = minY; py <= maxY; ++py) {
-                    for (int px = minX; px <= maxX; ++px) {
-                        float dx = px - center.x;
-                        float dy = py - center.y;
-                        float rx = dx * r_cs - dy * r_sn;
-                        float ry = dx * r_sn + dy * r_cs;
-                        
-                        if (std::abs(rx) <= halfSize.x + 0.5f && std::abs(ry) <= halfSize.y + 0.5f) {
-                            BaseComponent* base = pw.get<BaseComponent>(px, py);
-                            if (base && base->compMask != 0 && !base->flags.isRigidBodyPart) {
-                                Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
-                                if (logic && logic->getGroup() == MaterialGroup::MovableSolid) {
-                                    sandCount++;
-                                    bool moved = false;
-                                    for (int d = 1; d <= 3; ++d) {
-                                        if (pw.isEmpty(px, py - d)) { pw.moveParticle(px, py, px, py - d); moved = true; break; }
-                                        if (pw.isEmpty(px - d, py)) { pw.moveParticle(px, py, px - d, py); moved = true; break; }
-                                        if (pw.isEmpty(px + d, py)) { pw.moveParticle(px, py, px + d, py); moved = true; break; }
-                                    }
-                                    if (!moved && std::rand() % 100 < 10) {
-                                        pw.removeParticle(px, py);
-                                    } else if (moved) {
-                                        if (auto* kin = pw.get<KinematicsComponent>(px, py)) kin->isFreeFalling = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                if (sandCount > 0) {
-                    float mass = b2Body_GetMass(bId);
-                    b2Vec2 vel = b2Body_GetLinearVelocity(bId);
-                    vel.x *= 0.8f; vel.y *= 0.8f; 
-                    b2Body_ApplyForceToCenter(bId, {0.0f, -(sandCount * 25.0f) * mass}, true);
-                    b2Body_SetLinearVelocity(bId, vel);
-                }
-            };
-            
-            displaceSandAndApplyForce(phys.bodyId, {2.5f, 8.0f}, bodyPos, bodyAng);
-            
-            auto applySandToPart = [&](b2BodyId bId, sf::Vector2f halfSize) {
-                if (b2Body_IsValid(bId)) {
-                    b2Vec2 p = b2Body_GetPosition(bId);
-                    b2Rot r = b2Body_GetRotation(bId);
-                    displaceSandAndApplyForce(bId, halfSize, {p.x * M2P, p.y * M2P}, std::atan2(r.s, r.c));
-                }
-            };
-            
-            applySandToPart(anim.legA.ragdollBodyId, {1.5f, 4.5f});
-            applySandToPart(anim.legB.ragdollBodyId, {1.5f, 4.5f});
-            applySandToPart(anim.handA.ragdollBodyId, {2.0f, 2.0f});
-            applySandToPart(anim.handB.ragdollBodyId, {2.0f, 2.0f});
-            
-            sf::Vector2f vbp(bodyPos.x, bodyPos.y + 8.0f + anim.bob.offsetY);
-            
-            auto syncHand = [&](ProceduralHand& hand) {
-                if (b2Body_IsValid(hand.ragdollBodyId)) {
-                    b2Vec2 p = b2Body_GetPosition(hand.ragdollBodyId);
-                    hand.offset = {p.x * M2P - vbp.x, p.y * M2P - vbp.y};
-                }
-            };
-            syncHand(anim.handA);
-            syncHand(anim.handB);
-            
-            auto syncLeg = [&](ProceduralLeg& leg, b2BodyId bId) {
-                if (b2Body_IsValid(bId)) {
-                    b2Vec2 p = b2Body_GetPosition(bId);
-                    b2Rot r = b2Body_GetRotation(bId);
-                    float a = std::atan2(r.s, r.c);
-                    
-                    sf::Vector2f center(p.x * M2P, p.y * M2P);
-                    float dirX = -std::sin(a);
-                    float dirY = std::cos(a);
-                    
-                    leg.footWorld = {center.x + dirX * 4.5f, center.y + dirY * 4.5f};
-                    
-                    sf::Vector2f hip = {center.x - dirX * 4.5f, center.y - dirY * 4.5f};
-                    leg.hipOffset = {hip.x - vbp.x, hip.y - vbp.y};
-                }
-            };
-            syncLeg(anim.legA, anim.legA.ragdollBodyId);
-            syncLeg(anim.legB, anim.legB.ragdollBodyId);
-
-            if (b2Body_IsValid(anim.handB.ragdollBodyId)) {
-                b2Rot handRot = b2Body_GetRotation(anim.handB.ragdollBodyId);
-                anim.weaponAngle = std::atan2(handRot.s, handRot.c) * 180.0f / PI + (spriteComp.flipX ? -90.0f : 90.0f);
-            } else {
-                anim.weaponAngle = bodyAng * 180.0f / PI + (spriteComp.flipX ? -90.0f : 90.0f);
-            }
-            
-            anim.handB.recoilPos = {0.0f, 0.0f};
-            anim.handB.recoilVel = {0.0f, 0.0f};
-            
-            return; 
-        }
-
-        {
-            float f = -anim.bob.stiffness * anim.bob.offsetY - anim.bob.damping * anim.bob.velocity;
-            anim.bob.velocity += f * dt;
-            anim.bob.offsetY  += anim.bob.velocity * dt;
-        }
-
-        bool ignorePlatformsSuspension = (player.uprightStunTimer > 0.0f) || (!player.isGrounded && b2Vel.y < -5.0f);
-        float footY = bodyPos.y + 17.0f;
-
-        sf::Vector2f vbp(bodyPos.x, bodyPos.y + 8.0f + anim.bob.offsetY);
-        float hipY = vbp.y;
-        float minAllowedFootY = vbp.y + 4.0f; 
-
-        auto customGroundCastY = [&](float worldX, float castFromY, float maxDown) -> float {
-            int px = static_cast<int>(std::round(worldX));
-            int startY = static_cast<int>(std::floor(castFromY));
-            for (int i = 0; i <= static_cast<int>(maxDown); ++i) {
-                int py = startY + i;
-                if (!pw.isEmpty(px, py)) {
-                    BaseComponent* base = pw.get<BaseComponent>(px, py);
-                    if (base && base->compMask != 0) {
-                        if (base->compMask & COMP_PLATFORM) {
-                            if (ignorePlatformsSuspension) continue;
-                            if (py < bodyPos.y + 7.0f) continue; // Synced to see platforms exactly at/below Box2D Capsule Limit
-                        }
-                        Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
-                        if (logic && logic->getGroup() != MaterialGroup::Liquid && logic->getGroup() != MaterialGroup::Gas) {
-                            return static_cast<float>(py - 1);
-                        }
-                    }
-                }
-            }
-            return NO_GROUND;
-        };
-
-        auto castForTarget = [&](float worldX) -> float {
-            return customGroundCastY(worldX, hipY, 24.0f);
-        };
-        
-        auto getSafeTarget = [&](float lookOffset) -> sf::Vector2f {
-            float castDir = lookOffset > 0 ? 1.0f : (lookOffset < 0 ? -1.0f : 0.0f);
-            float maxDist = std::abs(lookOffset);
-            float bestX = bodyPos.x;
-            
-            float bestY = customGroundCastY(bodyPos.x, hipY, 24.0f);
-            if (bestY >= NO_GROUND) bestY = bodyPos.y + 17.0f;
-
-            if (maxDist < 0.1f) return {bestX, std::max(bestY, minAllowedFootY)};
-
-            float minFootY = bodyPos.y + 12.0f;
-            float maxFootY = bodyPos.y + 22.0f; 
-
-            for (int i = 1; i <= static_cast<int>(std::ceil(maxDist)); ++i) {
-                float testX = bodyPos.x + castDir * i;
-                float ty = customGroundCastY(testX, hipY, 24.0f);
-                
-                if (ty < minFootY) break;
-                if (ty > maxFootY) break;
-                
-                bestX = testX;
-                bestY = ty;
-            }
-            return {bestX, std::max(bestY, minAllowedFootY)};
-        };
-
-        float centerGroundY = castForTarget(bodyPos.x);
-        float distToGround = (centerGroundY >= NO_GROUND) ? 1000.0f : (centerGroundY - bodyPos.y);
-
-        bool wasGrounded = player.isGrounded;
-        float airThreshold = (!wasGrounded && b2Vel.y > 0.0f) ? 18.0f : 28.0f;
-        
-        bool isAirborne  = (b2Vel.y < -15.0f) || (distToGround > airThreshold);
-
-        if (isAirborne && b2Vel.y > 0.0f) {
-            player.lastFallVelocity = b2Vel.y;
-        }
-
-        player.isGrounded = !isAirborne;
-
-        if (!wasGrounded && player.isGrounded) {
-            if (player.lastFallVelocity > 25.0f) {
-                player.landingTimer = std::min(0.55f, (player.lastFallVelocity - 25.0f) * 0.030f);
-            } else {
-                player.landingTimer = 0.0f;
-            }
-            player.lastFallVelocity = 0.0f;
-        }
-
-        bool wantsToWalk = std::abs(b2Vel.x) > 0.1f && !isAirborne && (player.landingTimer <= 0.0f);
-
-        auto castNearFoot = [&](float worldX, float fy) -> float {
-            return customGroundCastY(worldX, hipY, 24.0f);
-        };
-
-        auto isWallAhead = [&](float dX) -> bool {
-            if (std::abs(dX) < 0.01f) return false;
-            int dirSign = dX > 0 ? 1 : -1;
-            int startX = static_cast<int>(std::round(bodyPos.x + dirSign * 4.0f));
-            int endX   = static_cast<int>(std::round(bodyPos.x + dirSign * 7.0f));
-            int pyAnkle = static_cast<int>(std::round(bodyPos.y + 12.0f));
-            int pyKnee  = static_cast<int>(std::round(bodyPos.y +  6.0f));
-
-            auto checkSolid = [&](int px, int py) {
-                if (pw.isEmpty(px, py)) return false;
-                BaseComponent* base = pw.get<BaseComponent>(px, py);
-                if (base) {
-                    if (base->compMask & COMP_PLATFORM) return false;
-                    Particle* logic = MaterialRegistry[static_cast<int>(base->id)];
-                    if (logic) {
-                        MaterialGroup group = logic->getGroup();
-                        if (group == MaterialGroup::Liquid || group == MaterialGroup::Gas) {
-                            return false;
-                        }
-                    }
-                }
-                return true;
-            };
-
-            for (int px = startX; px != endX + dirSign; px += dirSign) {
-                if (checkSolid(px, pyAnkle) && checkSolid(px, pyKnee)) return true;
-            }
-            return false;
-        };
-
-        if (wantsToWalk && isWallAhead(b2Vel.x)) {
-            wantsToWalk = false;
-            if (spriteComp.currentState != "Idle") {
-                spriteComp.currentState = "Idle";
-                spriteComp.currentFrameIndex = 0;
-            }
-        }
-
-        {
-            auto& as = spriteComp.animations[spriteComp.currentState];
-            spriteComp.frameTimer += dt;
-            if (spriteComp.frameTimer >= as.frameDuration) {
-                spriteComp.frameTimer = 0.0f;
-                spriteComp.currentFrameIndex = (spriteComp.currentFrameIndex + 1) % as.frameCount;
-            }
-            int fx = (as.startFrame + spriteComp.currentFrameIndex) * spriteComp.frameWidth;
-            if (spriteComp.flipX)
-                spriteComp.sprite->setTextureRect(sf::IntRect({fx + spriteComp.frameWidth, 0}, {-spriteComp.frameWidth, spriteComp.frameHeight}));
-            else
-                spriteComp.sprite->setTextureRect(sf::IntRect({fx, 0}, {spriteComp.frameWidth, spriteComp.frameHeight}));
-        }
-
-        if (isAirborne) {
-            anim.steppingLeg    = -1;
-            anim.isStopping     = false;
-            anim.legA.isPlanted = false;
-            anim.legB.isPlanted = false;
-
-            anim.legA.hipOffset = {-2.0f, 0.0f}; 
-            anim.legB.hipOffset = { 2.0f, 0.0f}; 
-
-            bool facingLeft = spriteComp.flipX;
-            ProceduralLeg* frontLeg = facingLeft ? &anim.legA : &anim.legB;
-            ProceduralLeg* backLeg  = facingLeft ? &anim.legB : &anim.legA;
-
-            float vx = b2Vel.x;
-            float vy = b2Vel.y;
-
-            float angleVy = vy;
-            if (angleVy > -15.0f && angleVy <= 0.0f) angleVy = -15.0f;
-            else if (angleVy > 0.0f && angleVy < 15.0f) angleVy = 15.0f;
-
-            float signY = (angleVy < 0.0f) ? -1.0f : 1.0f;
-            float d_x = vx * signY;
-            float d_y = std::abs(angleVy);
-            if (d_x == 0.0f && d_y == 0.0f) d_y = 1.0f;
-
-            float baseAngle = std::atan2(d_x, d_y); 
-
-            float maxAngleAir = 60.0f * PI / 180.0f;
-            if (baseAngle > maxAngleAir)  baseAngle = maxAngleAir;
-            if (baseAngle < -maxAngleAir) baseAngle = -maxAngleAir;
-
-            float frontAngle, backAngle;
-            if (vy < 0.0f) {
-                backAngle  = baseAngle;
-                frontAngle = -baseAngle;
-            } else {
-                frontAngle = baseAngle;
-                backAngle  = -baseAngle;
-            }
-
-            float mappedVy = vy;
-            if (mappedVy < -15.0f) mappedVy = -15.0f;
-            if (mappedVy >  15.0f) mappedVy =  15.0f;
-
-            float t = (mappedVy + 15.0f) / 30.0f; 
-            
-            float frontLen = 1.0f + 8.0f * t;
-            float backLen  = 9.0f - 8.0f * t;
-            
-            sf::Vector2f frontDir(std::sin(frontAngle), std::cos(frontAngle));
-            sf::Vector2f backDir(std::sin(backAngle),   std::cos(backAngle));
-
-            frontLeg->footWorld = vbp + frontLeg->hipOffset + frontDir * frontLen;
-            backLeg->footWorld  = vbp + backLeg->hipOffset  + backDir  * backLen;
-
-            auto preventGroundPenetration = [&](ProceduralLeg* leg) {
-                float gY = castNearFoot(leg->footWorld.x, leg->footWorld.y);
-                if (gY < NO_GROUND && leg->footWorld.y > gY) {
-                    leg->footWorld.y = std::max(gY, minAllowedFootY); 
-                }
-            };
-            preventGroundPenetration(frontLeg);
-            preventGroundPenetration(backLeg);
-
-            anim.legA.footTarget = anim.legA.footWorld;
-            anim.legB.footTarget = anim.legB.footWorld;
-
-            goto end_hips;
-        }
-
-        // GROUNDED
-        {
-            bool  aIsLeft  = anim.legA.footWorld.x < anim.legB.footWorld.x;
-            float targetXA = bodyPos.x + (aIsLeft ? -3.0f :  3.0f);
-            float targetXB = bodyPos.x + (aIsLeft ?  3.0f : -3.0f);
-
-            auto plantLeg = [&](ProceduralLeg& leg) {
-                float sy = castNearFoot(leg.footWorld.x, leg.footWorld.y);
-                if (sy < NO_GROUND) leg.footWorld.y = std::max(sy, minAllowedFootY);
-                leg.plantedX  = leg.footWorld.x;
-                leg.plantedY  = leg.footWorld.y;
-                leg.isPlanted = true;
-            };
-
-            auto enforcePlant =[](ProceduralLeg& leg) {
-                leg.footWorld.x = leg.plantedX;
-                leg.footWorld.y = leg.plantedY;
-            };
-
-            if (wantsToWalk) {
-                anim.isStopping = false;
-
-                if (anim.steppingLeg == -1) {
-                    bool movingRight = b2Vel.x > 0.0f;
-                    anim.steppingLeg = movingRight ? (aIsLeft ? 0 : 1) : (aIsLeft ? 1 : 0);
-                    anim.stepProgress = 0.0f;
-
-                    ProceduralLeg* sl = (anim.steppingLeg == 0) ? &anim.legA : &anim.legB;
-                    ProceduralLeg* pl = (anim.steppingLeg == 0) ? &anim.legB : &anim.legA;
-
-                    sl->footStart = sl->footWorld;
-                    sl->isPlanted = false;
-
-                    float look = movingRight ? anim.stepLookahead : -anim.stepLookahead;
-                    sl->footTarget = getSafeTarget(look);
-
-                    if (!pl->isPlanted) plantLeg(*pl);
-                }
-
-                float speedX    = std::abs(b2Vel.x * M2P);
-                float speedRate = (speedX * dt) / anim.strideDistance;
-
-                bool keyHeld = std::abs(b2Vel.x) > 0.5f; 
-                float minRate = keyHeld ? (anim.minStepRate * 2.5f * dt) : (anim.minStepRate * dt);
-
-                anim.stepProgress += std::max(speedRate, minRate);
-
-            } else { 
-                handle_stopped:
-                if (anim.steppingLeg != -1) {
-                    anim.isStopping   = true;
-                    anim.stepProgress += dt * 4.5f;
-                } else {
-                    float distA = std::abs(anim.legA.footWorld.x - targetXA);
-                    float distB = std::abs(anim.legB.footWorld.x - targetXB);
-
-                    if (distA > 3.0f || distB > 3.0f) {
-                        anim.isStopping   = true;
-                        anim.steppingLeg  = (distA >= distB) ? 0 : 1;
-                        anim.stepProgress = 0.0f;
-
-                        ProceduralLeg* sl = (anim.steppingLeg == 0) ? &anim.legA : &anim.legB;
-                        ProceduralLeg* pl = (anim.steppingLeg == 0) ? &anim.legB : &anim.legA;
-
-                        sl->footStart  = sl->footWorld;
-                        sl->isPlanted  = false;
-                        float tx = (anim.steppingLeg == 0) ? targetXA : targetXB;
-                        
-                        sl->footTarget = getSafeTarget(tx - bodyPos.x);
-
-                        if (!pl->isPlanted) plantLeg(*pl);
-                    } else {
-                        auto snapAndLock = [&](ProceduralLeg& leg) {
-                            if (leg.isPlanted) enforcePlant(leg);
-                            else               plantLeg(leg);
-                        };
-                        snapAndLock(anim.legA);
-                        snapAndLock(anim.legB);
-                        goto update_hips;
-                    }
-                }
-            }
-
-            {
-                ProceduralLeg* stepLeg = (anim.steppingLeg == 0) ? &anim.legA : &anim.legB;
-                ProceduralLeg* plant   = (anim.steppingLeg == 0) ? &anim.legB : &anim.legA;
-
-                if (plant->isPlanted) enforcePlant(*plant);
-
-                float idealLook;
-                if (anim.isStopping) {
-                    float tx = (anim.steppingLeg == 0) ? targetXA : targetXB;
-                    idealLook = tx - bodyPos.x;
-                } else {
-                    idealLook = b2Vel.x > 0 ? anim.stepLookahead : -anim.stepLookahead;
-                }
-                
-                sf::Vector2f safeIdeal = getSafeTarget(idealLook);
-
-                stepLeg->footTarget.x = lerp(stepLeg->footTarget.x, safeIdeal.x, dt * 20.0f);
-                stepLeg->footTarget.y = lerp(stepLeg->footTarget.y, safeIdeal.y, dt * 20.0f);
-
-                float terrainDelta = std::abs(stepLeg->footTarget.y - stepLeg->footStart.y);
-                float dynamicArc   = anim.stepArcHeight + std::min(terrainDelta * 0.5f, 8.0f);
-
-                if (anim.stepProgress >= 1.0f) {
-                    float landedY = castNearFoot(stepLeg->footTarget.x, stepLeg->footTarget.y);
-                    if (landedY >= NO_GROUND) landedY = stepLeg->footTarget.y;
-
-                    stepLeg->footWorld.x = stepLeg->footTarget.x;
-                    stepLeg->footWorld.y = std::max(landedY, minAllowedFootY);
-                    stepLeg->plantedX    = stepLeg->footWorld.x;
-                    stepLeg->plantedY    = stepLeg->footWorld.y;
-                    stepLeg->isPlanted   = true;
-
-                    anim.bob.velocity += 8.0f;
-
-                    if (anim.isStopping) {
-                        float otherX    = (anim.steppingLeg == 0) ? targetXB : targetXA;
-                        float otherDist = std::abs(plant->footWorld.x - otherX);
-
-                        if (otherDist > 1.5f) {
-                            anim.steppingLeg  = (anim.steppingLeg == 0) ? 1 : 0;
-                            anim.stepProgress = 0.0f;
-
-                            ProceduralLeg* nl = (anim.steppingLeg == 0) ? &anim.legA : &anim.legB;
-                            ProceduralLeg* pl = (anim.steppingLeg == 0) ? &anim.legB : &anim.legA;
-
-                            nl->footStart  = nl->footWorld;
-                            nl->isPlanted  = false;
-                            
-                            float tx = (anim.steppingLeg == 0) ? targetXA : targetXB;
-                            nl->footTarget = getSafeTarget(tx - bodyPos.x);
-
-                            if (!pl->isPlanted) plantLeg(*pl);
-                        } else {
-                            anim.steppingLeg = -1;
-                            anim.isStopping  = false;
-                            if (!plant->isPlanted) plantLeg(*plant);
-                        }
-                    } else {
-                        anim.stepProgress -= 1.0f;
-                        anim.steppingLeg   = (anim.steppingLeg == 0) ? 1 : 0;
-
-                        ProceduralLeg* nl = (anim.steppingLeg == 0) ? &anim.legA : &anim.legB;
-                        nl->footStart  = nl->footWorld;
-                        nl->isPlanted  = false;
-
-                        float look2 = b2Vel.x > 0 ? anim.stepLookahead : -anim.stepLookahead;
-                        nl->footTarget = getSafeTarget(look2);
-                    }
-
-                } else {
-                    float u   = clamp01(anim.stepProgress);
-                    float arc = 4.0f * u * (1.0f - u) * dynamicArc;
-
-                    stepLeg->footWorld.x = lerp(stepLeg->footStart.x, stepLeg->footTarget.x, u);
-                    stepLeg->footWorld.y = lerp(stepLeg->footStart.y, stepLeg->footTarget.y, u) - arc;
-
-                    float midY = castNearFoot(stepLeg->footWorld.x, stepLeg->footWorld.y);
-                    if (midY < NO_GROUND && stepLeg->footWorld.y > midY) {
-                        stepLeg->footWorld.y = std::max(midY, minAllowedFootY);
-                    }
-                    
-                    if (stepLeg->footWorld.y < minAllowedFootY) {
-                        stepLeg->footWorld.y = minAllowedFootY;
-                    }
-                }
-            }
-        }
-
-        update_hips:
-        {
-            auto updateHip = [&](ProceduralLeg& leg) {
-                float relX      = leg.footWorld.x - vbp.x;
-                leg.hipOffset.x = std::max(-2.0f, std::min(2.0f, relX * 0.8f));
-                leg.hipOffset.y = 0.0f;
-            };
-            updateHip(anim.legA);
-            updateHip(anim.legB);
-        }
-        end_hips:
-
-        // ============================================================
-        // ARMS / HANDS / SWING MECHANICS
-        // ============================================================
-        {
-            float speedX = std::abs(b2Vel.x * M2P);
-            
-            if (wantsToWalk && !isAirborne) anim.armSwing += dt * speedX * PI / anim.strideDistance;
-            else                            anim.armSwing = lerp(anim.armSwing, std::round(anim.armSwing / PI) * PI, dt * 10.0f);
-
-            bool facingLeft = spriteComp.flipX;
-            float swingVal  = std::sin(anim.armSwing);
-
-            if (player.isSwinging) {
-                player.swingTimer += dt;
-                float t = clamp01(player.swingTimer / player.swingDuration);
-
-                spriteComp.flipX = (player.swingTarget.x < bodyPos.x);
-
-                if (t >= 0.5f && !player.swingEffectApplied) {
-                    player.swingEffectApplied = true;
-                    if (player.equippedWeapon && player.equippedWeapon->isWeapon) {
-                        Weapon* w = static_cast<Weapon*>(player.equippedWeapon);
-                        w->performSwingEffect(bodyPos, player.swingTarget, pw, *pw.getRigidBodySystem());
-                    }
-
-                    sf::Vector2f sw_dir = player.swingTarget - bodyPos;
-                    float dist = std::max(length(sw_dir), 1.0f);
-                    sf::Vector2f norm = { sw_dir.x / dist, sw_dir.y / dist };
-                    
-                    anim.handB.recoilVel += norm * 250.0f; 
-                    anim.handB.recoilAngularVel += ((std::rand() % 100) / 100.0f - 0.5f) * 800.0f;
-                }
-
-                if (t >= 1.0f) {
-                    player.isSwinging = false;
-                }
-
-                sf::Vector2f sw_dir = player.swingTarget - bodyPos;
-                float dist = std::max(length(sw_dir), 1.0f);
-                sf::Vector2f F = { sw_dir.x / dist, sw_dir.y / dist };
-                
-                float sign = spriteComp.flipX ? -1.0f : 1.0f;
-                sf::Vector2f Perp = { F.y * sign, -F.x * sign };
-
-                float r_val = player.swingRandomness; 
-                float half_width = 16.0f + r_val * 10.0f; 
-                float reach      = 22.0f + r_val * 10.0f;
-                float base_dist  = 2.0f;
-
-                float s = std::cos(t * PI); 
-                
-                float x_local = s * half_width;
-                float y_local = reach * (1.0f - s * s);
-                anim.handB.offset = F * (base_dist + y_local) + Perp * x_local;
-
-                float a = reach / (half_width * half_width);
-                sf::Vector2f N_local(2.0f * a * x_local, 1.0f);
-                float n_len = std::hypot(N_local.x, N_local.y);
-                N_local.x /= n_len;
-                N_local.y /= n_len;
-                
-                sf::Vector2f N_world = Perp * N_local.x + F * N_local.y;
-                anim.weaponAngle = std::atan2(N_world.y, N_world.x) * 180.0f / PI + 90.0f;
-
-                float frontBaseX = spriteComp.flipX ? -4.0f : 4.0f;
-                anim.handA.offset.x = lerp(anim.handA.offset.x, frontBaseX, dt * 15.0f);
-                anim.handA.offset.y = lerp(anim.handA.offset.y, 0.0f, dt * 15.0f);
-
-            } else if (player.isAiming) {
-                sf::Vector2f shoulderPos = vbp + sf::Vector2f(0.0f, -4.0f); 
-                sf::Vector2f aimDir = player.aimTarget - shoulderPos;
-                
-                spriteComp.flipX = (aimDir.x < 0.0f);
-                facingLeft = spriteComp.flipX;
-                
-                float dist = std::max(length(aimDir), 1.0f);
-                sf::Vector2f aimNorm = {aimDir.x / dist, aimDir.y / dist};
-                
-                float desiredWeaponAngle = 0.0f;
-                if (!facingLeft) {
-                    desiredWeaponAngle = std::atan2(aimDir.y, aimDir.x) * 180.0f / PI;
-                } else {
-                    desiredWeaponAngle = -std::atan2(aimDir.y, -aimDir.x) * 180.0f / PI;
-                }
-                
-                float armExtension = 9.0f; 
-                sf::Vector2f desiredHandBOffset = (shoulderPos - vbp) + aimNorm * armExtension;
-
-                if (desiredHandBOffset.y > 0.0f) {
-                    desiredHandBOffset.y = 0.0f;
-                }
-
-                anim.handB.offset.x = lerp(anim.handB.offset.x, desiredHandBOffset.x, dt * 15.0f);
-                anim.handB.offset.y = lerp(anim.handB.offset.y, desiredHandBOffset.y, dt * 15.0f);
-                
-                float angleDiff = desiredWeaponAngle - anim.weaponAngle;
-                while (angleDiff > 180.0f) angleDiff -= 360.0f;
-                while (angleDiff < -180.0f) angleDiff += 360.0f;
-                anim.weaponAngle += angleDiff * dt * 25.0f; 
-
-                float facingDir   = facingLeft ? -1.0f : 1.0f;
-                float swingOffset = swingVal * 5.0f * facingDir; 
-                float swingHeight = -std::pow(swingVal, 2) * 3.0f;
-                float frontBaseX  = facingLeft ? -4.0f : 4.0f;
-
-                if (isAirborne) {
-                    anim.handA.offset.x = lerp(anim.handA.offset.x, frontBaseX, dt * 10.0f);
-                    anim.handA.offset.y = lerp(anim.handA.offset.y, -6.0f, dt * 10.0f);
-                } else {
-                    anim.handA.offset.x = lerp(anim.handA.offset.x, frontBaseX + swingOffset, dt * 20.0f);
-                    anim.handA.offset.y = lerp(anim.handA.offset.y, swingHeight, dt * 20.0f);
-                }
-
-            } else {
-                float facingDir   = facingLeft ? -1.0f : 1.0f;
-                float swingOffset = swingVal * 5.0f * facingDir; 
-                float swingHeight = -std::pow(swingVal, 2) * 3.0f;
-                float frontBaseX  = facingLeft ? -4.0f :  4.0f;
-                float backBaseX   = facingLeft ?  4.0f : -4.0f;
-
-                if (isAirborne) {
-                    anim.handA.offset.x = lerp(anim.handA.offset.x, frontBaseX, dt * 10.0f);
-                    anim.handA.offset.y = lerp(anim.handA.offset.y, -6.0f, dt * 10.0f);
-                    anim.handB.offset.x = lerp(anim.handB.offset.x, backBaseX, dt * 10.0f);
-                    anim.handB.offset.y = lerp(anim.handB.offset.y, -6.0f, dt * 10.0f);
-                    
-                    float desiredWeaponAngle = facingLeft ? -90.0f : 90.0f; 
-                    
-                    float angleDiff = desiredWeaponAngle - anim.weaponAngle;
-                    while (angleDiff > 180.0f) angleDiff -= 360.0f;
-                    while (angleDiff < -180.0f) angleDiff += 360.0f;
-                    anim.weaponAngle += angleDiff * dt * 15.0f;
-                } else {
-                    anim.handA.offset.x = lerp(anim.handA.offset.x, frontBaseX + swingOffset, dt * 20.0f);
-                    anim.handA.offset.y = lerp(anim.handA.offset.y, swingHeight, dt * 20.0f);
-                    anim.handB.offset.x = lerp(anim.handB.offset.x, backBaseX - swingOffset, dt * 20.0f);
-                    anim.handB.offset.y = lerp(anim.handB.offset.y, swingHeight, dt * 20.0f);
-
-                    float slopeB = 1.2f * swingVal;
-                    float angleDeg = std::atan(slopeB) * 180.0f / PI;
-
-                    float desiredWeaponAngle = facingLeft ? (-90.0f - angleDeg) : (90.0f + angleDeg);
-                    
-                    float angleDiff = desiredWeaponAngle - anim.weaponAngle;
-                    while (angleDiff > 180.0f) angleDiff -= 360.0f;
-                    while (angleDiff < -180.0f) angleDiff += 360.0f;
-                    anim.weaponAngle += angleDiff * dt * 20.0f;
-                }
-            }
-        }
-
-        float recoilStiff = 120.0f;
-        float recoilDamp = 8.0f;
-        
-        sf::Vector2f springForce = -recoilStiff * anim.handB.recoilPos - recoilDamp * anim.handB.recoilVel;
-        sf::Vector2f swirlForce = {-anim.handB.recoilPos.y, anim.handB.recoilPos.x};
-        springForce += swirlForce * 20.0f;
-        
-        anim.handB.recoilVel += springForce * dt;
-        anim.handB.recoilPos += anim.handB.recoilVel * dt;
-        
-        float maxRecoilDist = 35.0f;
-        float distSq = anim.handB.recoilPos.x * anim.handB.recoilPos.x + anim.handB.recoilPos.y * anim.handB.recoilPos.y;
-        if (distSq > maxRecoilDist * maxRecoilDist) {
-            float dist = std::sqrt(distSq);
-            anim.handB.recoilPos.x = (anim.handB.recoilPos.x / dist) * maxRecoilDist;
-            anim.handB.recoilPos.y = (anim.handB.recoilPos.y / dist) * maxRecoilDist;
-        }
-
-        float playerDragMult = 0.02f;
-        float mass = b2Body_GetMass(phys.bodyId);
-        float originalMass = 0.8f; 
-        b2Vec2 dragPlayerForce = {-springForce.x * playerDragMult * (mass / originalMass), -springForce.y * playerDragMult * (mass / originalMass)};
-        b2Body_ApplyForceToCenter(phys.bodyId, dragPlayerForce, true);
-        
-        float angSpringForce = -recoilStiff * anim.handB.recoilAngle - recoilDamp * anim.handB.recoilAngularVel;
-        anim.handB.recoilAngularVel += angSpringForce * dt;
-        anim.handB.recoilAngle += anim.handB.recoilAngularVel * dt;
-
-        if (anim.handB.recoilAngle > 90.0f) anim.handB.recoilAngle = 90.0f;
-        if (anim.handB.recoilAngle < -90.0f) anim.handB.recoilAngle = -90.0f;
-
-        if (!isAirborne) {
-            float avgFootY     = (anim.legA.footWorld.y + anim.legB.footWorld.y) * 0.5f;
-            float desiredBodyY = avgFootY - 17.0f;
-            
-            float d_dirX = (b2Vel.x > 0.1f) ? 1.0f : ((b2Vel.x < -0.1f) ? -1.0f : 0.0f);
-            float targetDownhill = 0.0f;
-            
-            if (d_dirX != 0.0f) {
-                float gHere = castForTarget(bodyPos.x);
-                float gAhead = castForTarget(bodyPos.x + d_dirX * anim.stepLookahead);
-                if (gHere < NO_GROUND && gAhead < NO_GROUND) {
-                    float diff = gAhead - gHere; 
-                    if (diff > 0.0f) { 
-                        targetDownhill = std::min(3.0f, diff * 0.8f);
-                    }
-                }
-            }
-            
-            anim.downhillOffset = lerp(anim.downhillOffset, targetDownhill, dt * 10.0f);
-            desiredBodyY += anim.downhillOffset;
-            
-            float bodyError = desiredBodyY - bodyPos.y;
-            float currentMinVy, currentMaxVy, vertStiffness;
-            
-            if (player.landingTimer > 0.0f) {
-                currentMinVy  = -80.0f;
-                currentMaxVy  = 80.0f;
-                vertStiffness = 18.0f;
-            } else {
-                currentMinVy  = -250.0f; 
-                currentMaxVy  = 150.0f;
-                vertStiffness = 40.0f; 
-            }
-            
-            float desiredVy_P = std::max(currentMinVy, std::min(currentMaxVy, bodyError * vertStiffness)); 
-            
-            b2Vec2 v = b2Body_GetLinearVelocity(phys.bodyId);
-            v.y = lerp(v.y, desiredVy_P * P2M, dt * 25.0f); 
-            b2Body_SetLinearVelocity(phys.bodyId, v);
-        }
-
-        // --- DYNAMIC COLLISION FILTER FOR PLATFORMS ---
-        b2ShapeId playerShapeId = b2_nullShapeId;
-        int shapeCount = b2Body_GetShapeCount(phys.bodyId);
-        if (shapeCount > 0) {
-            std::vector<b2ShapeId> shapes(shapeCount);
-            b2Body_GetShapes(phys.bodyId, shapes.data(), shapeCount);
-            playerShapeId = shapes[0];
-        }
-
-        if (b2Shape_IsValid(playerShapeId) && !player.isRagdoll) {
-            bool overlappingPlatform = false;
-            bool overlappingSolid = false;
-            
-            int pxMin = static_cast<int>(std::floor(bodyPos.x - 2.5f));
-            int pxMax = static_cast<int>(std::ceil(bodyPos.x + 2.5f));
-            int pyMin = static_cast<int>(std::floor(bodyPos.y - 7.5f)); 
-            int pyMaxLimit = static_cast<int>(std::floor(bodyPos.y + 7.9f)); 
-
-            for (int py = pyMin; py <= pyMaxLimit; ++py) {
-                for (int px = pxMin; px <= pxMax; ++px) {
-                    if (pw.isEmpty(px, py)) continue;
-                    BaseComponent* b = pw.get<BaseComponent>(px, py);
-                    if (b && b->compMask != 0) {
-                        if (b->compMask & COMP_PLATFORM) {
-                            overlappingPlatform = true;
-                        } else {
-                            Particle* logic = MaterialRegistry[static_cast<int>(b->id)];
-                            if (logic && logic->getGroup() != MaterialGroup::Liquid && logic->getGroup() != MaterialGroup::Gas) {
-                                overlappingSolid = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            b2Filter filter = b2Shape_GetFilter(playerShapeId);
-            bool movingUp = !player.isGrounded && b2Vel.y < -1.0f;
-            bool dropping = player.uprightStunTimer > 0.0f;
-            
-            bool ignorePlatformsPhysics = movingUp || dropping || (overlappingPlatform && !overlappingSolid);
-            
-            if (ignorePlatformsPhysics) {
-                filter.maskBits = (~0x0002u) & (~0x0004u); // Safe native masking out of platforms to prevent side snags
-            } else {
-                filter.maskBits = ~0x0002u; // Restores collisions to platforms normally
-            }
-            b2Shape_SetFilter(playerShapeId, filter);
-        }
-    });
+    for (auto& e : entities) {
+        e->updateAnimations(dt, pw);
+    }
 }
 
 bool EntitySystem::isSolid(int cx, int cy, ParticleWorld& pw, bool ignorePlatforms) {
@@ -1935,10 +258,8 @@ sf::Vector2f EntitySystem::resolveTargetPos(sf::Vector2f clickPos, ParticleWorld
     int x = static_cast<int>(clickPos.x);
     int w = static_cast<int>(WORLD_WIDTH);
     int h = static_cast<int>(WORLD_HEIGHT);
-    
     if (x < 0) x = 0;
     if (x >= w) x = w - 1;
-
     int y = static_cast<int>(clickPos.y);
     if (y < 0) y = 0;
     if (y >= h) y = h - 1;
@@ -1965,7 +286,6 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
     
     int width = static_cast<int>(WORLD_WIDTH);
     int height = static_cast<int>(WORLD_HEIGHT);
-    
     const int STEP = 16;
     const int CLEARANCE_H = 32; 
     const int CLEARANCE_W = 4;  
@@ -1978,10 +298,7 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
                 bool fits = true;
                 for (int cy = y - CLEARANCE_H; cy <= y - 6; ++cy) {
                     for (int cx = x - CLEARANCE_W; cx <= x + CLEARANCE_W; ++cx) {
-                        if (isSolid(cx, cy, pw, true)) { 
-                            fits = false; 
-                            break; 
-                        }
+                        if (isSolid(cx, cy, pw, true)) { fits = false; break; }
                     }
                     if (!fits) break;
                 }
@@ -1999,12 +316,10 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
     for (const auto& [x, indices] : columnNodes) {
         if (columnNodes.find(x + STEP) != columnNodes.end()) {
             const auto& nextIndices = columnNodes[x + STEP];
-            
             for (int i : indices) {
                 for (int j : nextIndices) {
                     sf::Vector2f p1 = globalNavGraph[i].pos;
                     sf::Vector2f p2 = globalNavGraph[j].pos;
-                    
                     if (std::abs(p1.y - p2.y) > 16.0f) continue; 
                     
                     bool blocked = false;
@@ -2012,17 +327,14 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
                         float t = (float)s / STEP;
                         int cx = static_cast<int>(std::round(p1.x + (p2.x - p1.x) * t));
                         float groundY = p1.y + (p2.y - p1.y) * t;
-                        
                         for (int cy = static_cast<int>(groundY) - CLEARANCE_H; cy <= static_cast<int>(groundY) - 4; ++cy) {
                             if (isSolid(cx, cy, pw, true)) { blocked = true; break; }
                         }
                         if (blocked) break;
                     }
-                    
                     if (!blocked) {
                         globalNavGraph[i].neighbors.push_back(j);
                         globalNavGraph[j].neighbors.push_back(i);
-                        
                         EdgeData walkData;
                         walkData.action = 0;
                         s_EdgeData[{i, j}] = walkData;
@@ -2038,15 +350,12 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
 
     for (size_t i = 0; i < globalNavGraph.size(); ++i) {
         sf::Vector2f startP = globalNavGraph[i].pos;
-        
         for (int isJump = 0; isJump <= 1; ++isJump) {
             float speeds[] = {-70.0f, -45.0f, -25.0f, 25.0f, 45.0f, 70.0f}; 
-            
             for (float vx : speeds) {
                 sf::Vector2f p = startP;
                 float currentVx = vx;
                 float currentVy = isJump ? -380.0f : 0.0f; 
-                
                 std::vector<sf::Vector2f> traj;
                 traj.push_back(p);
                 
@@ -2054,29 +363,21 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
                 bool hitGround = false;
                 
                 for (int step = 0; step < max_steps; ++step) {
-                    if (isAirborne) {
-                        currentVy += 980.0f * sim_dt; 
-                    } else {
+                    if (isAirborne) currentVy += 980.0f * sim_dt; 
+                    else {
                         currentVy = 0.0f;
                         int checkX = static_cast<int>(std::round(p.x));
                         int groundY = static_cast<int>(std::round(startP.y + 1.0f));
                         if (checkX < 0 || checkX >= width) break;
-                        if (!isSolid(checkX, groundY, pw, false)) {
-                            isAirborne = true;
-                        }
+                        if (!isSolid(checkX, groundY, pw, false)) isAirborne = true;
                     }
                     
                     currentVx *= std::max(0.0f, 1.0f - 1.0f * sim_dt);
-                    if (isAirborne) {
-                        currentVy *= std::max(0.0f, 1.0f - 1.0f * sim_dt);
-                    }
+                    if (isAirborne) currentVy *= std::max(0.0f, 1.0f - 1.0f * sim_dt);
                     
                     p.x += currentVx * sim_dt;
                     p.y += currentVy * sim_dt;
-                    
-                    if (!isAirborne) {
-                        p.y = startP.y; 
-                    }
+                    if (!isAirborne) p.y = startP.y; 
                     
                     if (p.x < 0 || p.x >= width || p.y < 0 || p.y >= height) break;
                     
@@ -2087,14 +388,10 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
                         }
                     }
                     if (blocked) break;
-                    
                     traj.push_back(p);
                     
                     if (isAirborne && currentVy > 0.0f) {
-                        if (isSolid(p.x, p.y + 1, pw, false)) {
-                            hitGround = true;
-                            break;
-                        }
+                        if (isSolid(p.x, p.y + 1, pw, false)) { hitGround = true; break; }
                     }
                 }
                 
@@ -2104,10 +401,7 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
                     for (size_t j = 0; j < globalNavGraph.size(); ++j) {
                         if (i == j) continue;
                         float dist = std::hypot(globalNavGraph[j].pos.x - p.x, globalNavGraph[j].pos.y - p.y);
-                        if (dist < minDist) {
-                            minDist = dist;
-                            closest = j;
-                        }
+                        if (dist < minDist) { minDist = dist; closest = j; }
                     }
                     
                     if (closest != -1) {
@@ -2128,9 +422,7 @@ void EntitySystem::buildGlobalNavGraph(ParticleWorld& pw) {
                                     if (!groundFound) { gapFound = true; break; }
                                 }
                                 if (!gapFound) isRedundant = true;
-                            } else {
-                                isRedundant = true;
-                            }
+                            } else isRedundant = true;
                         }
 
                         if (!isRedundant) {
@@ -2167,10 +459,8 @@ int EntitySystem::getClosestNode(sf::Vector2f pos) {
 
 std::vector<PathNodeData> EntitySystem::findPath(sf::Vector2f start, sf::Vector2f target) {
     if (globalNavGraph.empty()) return {};
-
     int startIdx = getClosestNode(start);
     int targetIdx = getClosestNode(target);
-
     if (startIdx == -1 || targetIdx == -1) return {};
 
     std::vector<float> gScore(globalNavGraph.size(), 1e9f);
@@ -2189,7 +479,6 @@ std::vector<PathNodeData> EntitySystem::findPath(sf::Vector2f start, sf::Vector2
     while (!pq.empty()) {
         int curr = pq.top().second;
         pq.pop();
-
         if (closed[curr]) continue;
         closed[curr] = true;
 
@@ -2208,14 +497,9 @@ std::vector<PathNodeData> EntitySystem::findPath(sf::Vector2f start, sf::Vector2
         for (int nxt : globalNavGraph[curr].neighbors) {
             float dist = std::hypot(globalNavGraph[nxt].pos.x - globalNavGraph[curr].pos.x, 
                                     globalNavGraph[nxt].pos.y - globalNavGraph[curr].pos.y);
-                                    
             auto edgeIt = s_EdgeData.find({curr, nxt});
-            if (edgeIt != s_EdgeData.end() && edgeIt->second.action != 0) {
-                dist += 150.0f; 
-            }
-            
+            if (edgeIt != s_EdgeData.end() && edgeIt->second.action != 0) dist += 150.0f; 
             float tentative = gScore[curr] + dist;
-            
             if (tentative < gScore[nxt]) {
                 gScore[nxt] = tentative;
                 cameFrom[nxt] = curr;
@@ -2235,35 +519,145 @@ std::vector<PathNodeData> EntitySystem::findPath(sf::Vector2f start, sf::Vector2
     std::reverse(pathIndices.begin(), pathIndices.end());
 
     std::vector<PathNodeData> finalPath;
-    if (!pathIndices.empty()) {
-        finalPath.push_back(PathNodeData{globalNavGraph[pathIndices[0]].pos, false, false, false, 0.0f});
-    }
+    if (!pathIndices.empty()) finalPath.push_back(PathNodeData{globalNavGraph[pathIndices[0]].pos, false, false, false, 0.0f});
 
     for (size_t i = 1; i < pathIndices.size(); ++i) {
         int prev = pathIndices[i - 1];
         int nxt = pathIndices[i];
-        
-        bool isJump = false;
-        bool isFall = false;
-        float reqVx = 0.0f;
+        bool isJump = false, isFall = false; float reqVx = 0.0f;
         auto edgeIt = s_EdgeData.find({prev, nxt});
         if (edgeIt != s_EdgeData.end() && edgeIt->second.action != 0) {
             if (edgeIt->second.action == 1) isJump = true;
             if (edgeIt->second.action == 2) isFall = true;
             reqVx = edgeIt->second.requiredVx;
-            
             finalPath[i - 1].isJumpTakeoff = true; 
         }
-        
         finalPath.push_back(PathNodeData{globalNavGraph[nxt].pos, isJump, isFall, false, reqVx});
     }
-
     return finalPath;
 }
 
 void EntitySystem::renderDebug(sf::RenderTarget& target) {
-    sf::VertexArray lines(sf::PrimitiveType::Lines);
+    float thickness = target.getView().getSize().x / target.getSize().x;
+    if (thickness < 1.0f) thickness = 1.0f;
+    
+    // Draw Box2D Physics Bodies
+    auto drawBody = [&](b2BodyId bodyId, sf::Color color) {
+        if (!b2Body_IsValid(bodyId)) return;
+        
+        b2Transform xf = b2Body_GetTransform(bodyId);
+        int shapeCount = b2Body_GetShapeCount(bodyId);
+        if (shapeCount == 0) return;
+        
+        std::vector<b2ShapeId> shapes(shapeCount);
+        b2Body_GetShapes(bodyId, shapes.data(), shapeCount);
+        
+        for (int i = 0; i < shapeCount; ++i) {
+            b2ShapeType type = b2Shape_GetType(shapes[i]);
+            
+            if (type == b2_polygonShape) {
+                b2Polygon poly = b2Shape_GetPolygon(shapes[i]);
+                sf::ConvexShape sfShape;
+                sfShape.setPointCount(poly.count);
+                
+                for (int j = 0; j < poly.count; ++j) {
+                    b2Vec2 worldPoint = b2TransformPoint(xf, poly.vertices[j]);
+                    sfShape.setPoint(j, sf::Vector2f(worldPoint.x * M2P, worldPoint.y * M2P));
+                }
+                
+                sfShape.setFillColor(sf::Color(color.r, color.g, color.b, 60)); 
+                sfShape.setOutlineColor(color);
+                sfShape.setOutlineThickness(thickness);
+                target.draw(sfShape);
+                
+                // Draw rounded corners and expanded edges perfectly if the radius is > 0
+                if (poly.radius > 0.0f) {
+                    for (int j = 0; j < poly.count; ++j) {
+                        b2Vec2 worldPoint = b2TransformPoint(xf, poly.vertices[j]);
+                        sf::CircleShape corner(poly.radius * M2P);
+                        corner.setOrigin({poly.radius * M2P, poly.radius * M2P});
+                        corner.setPosition({worldPoint.x * M2P, worldPoint.y * M2P});
+                        corner.setFillColor(sf::Color(color.r, color.g, color.b, 60));
+                        corner.setOutlineColor(color);
+                        corner.setOutlineThickness(thickness);
+                        target.draw(corner);
+                        
+                        int next = (j + 1) % poly.count;
+                        b2Vec2 p1 = poly.vertices[j];
+                        b2Vec2 p2 = poly.vertices[next];
+                        b2Vec2 normal = poly.normals[j];
+                        
+                        b2Vec2 edgeP1 = {p1.x + normal.x * poly.radius, p1.y + normal.y * poly.radius};
+                        b2Vec2 edgeP2 = {p2.x + normal.x * poly.radius, p2.y + normal.y * poly.radius};
+                        
+                        b2Vec2 wp1 = b2TransformPoint(xf, edgeP1);
+                        b2Vec2 wp2 = b2TransformPoint(xf, edgeP2);
+                        
+                        sf::VertexArray line(sf::PrimitiveType::Lines, 2);
+                        line[0].position = sf::Vector2f(wp1.x * M2P, wp1.y * M2P);
+                        line[0].color = color;
+                        line[1].position = sf::Vector2f(wp2.x * M2P, wp2.y * M2P);
+                        line[1].color = color;
+                        target.draw(line);
+                    }
+                }
+                
+            } else if (type == b2_capsuleShape) {
+                b2Capsule capsule = b2Shape_GetCapsule(shapes[i]);
+                b2Vec2 p1 = b2TransformPoint(xf, capsule.center1);
+                b2Vec2 p2 = b2TransformPoint(xf, capsule.center2);
+                
+                sf::VertexArray line(sf::PrimitiveType::Lines, 2);
+                line[0].position = sf::Vector2f(p1.x * M2P, p1.y * M2P);
+                line[0].color = color;
+                line[1].position = sf::Vector2f(p2.x * M2P, p2.y * M2P);
+                line[1].color = color;
+                target.draw(line);
+                
+                sf::CircleShape c1(capsule.radius * M2P);
+                c1.setOrigin({capsule.radius * M2P, capsule.radius * M2P});
+                c1.setPosition({p1.x * M2P, p1.y * M2P});
+                c1.setFillColor(sf::Color(color.r, color.g, color.b, 60));
+                c1.setOutlineColor(color);
+                c1.setOutlineThickness(thickness);
+                target.draw(c1);
 
+                sf::CircleShape c2(capsule.radius * M2P);
+                c2.setOrigin({capsule.radius * M2P, capsule.radius * M2P});
+                c2.setPosition({p2.x * M2P, p2.y * M2P});
+                c2.setFillColor(sf::Color(color.r, color.g, color.b, 60));
+                c2.setOutlineColor(color);
+                c2.setOutlineThickness(thickness);
+                target.draw(c2);
+            } else if (type == b2_circleShape) {
+                b2Circle circle = b2Shape_GetCircle(shapes[i]);
+                b2Vec2 center = b2TransformPoint(xf, circle.center);
+                
+                sf::CircleShape c(circle.radius * M2P);
+                c.setOrigin({circle.radius * M2P, circle.radius * M2P});
+                c.setPosition({center.x * M2P, center.y * M2P});
+                c.setFillColor(sf::Color(color.r, color.g, color.b, 60));
+                c.setOutlineColor(color);
+                c.setOutlineThickness(thickness);
+                target.draw(c);
+            }
+        }
+    };
+
+    for (const auto& e : entities) {
+        drawBody(e->bodyId, sf::Color(255, 165, 0)); // Orange for main body
+        drawBody(e->handA.ragdollBodyId, sf::Color::Magenta);
+        drawBody(e->handB.ragdollBodyId, sf::Color::Magenta);
+        
+        if (e->getType() == 0) { // 0 = ComplexEntity
+            ComplexEntity* ce = static_cast<ComplexEntity*>(e.get());
+            drawBody(ce->legA.ragdollBodyId, sf::Color::Magenta);
+            drawBody(ce->legB.ragdollBodyId, sf::Color::Magenta);
+        }
+    }
+
+    // Draw NavMesh
+    sf::VertexArray lines(sf::PrimitiveType::Lines);
     for (size_t i = 0; i < globalNavGraph.size(); ++i) {
         sf::Vector2f p1 = globalNavGraph[i].pos;
         for (int neighborIdx : globalNavGraph[i].neighbors) {
@@ -2282,33 +676,25 @@ void EntitySystem::renderDebug(sf::RenderTarget& target) {
         lines.append(sf::Vertex{p1 + sf::Vector2f(-1, 0), sf::Color::Cyan});
         lines.append(sf::Vertex{p1 + sf::Vector2f(1, 0), sf::Color::Cyan});
     }
-
     for (const auto& line : debugLines) {
         lines.append(sf::Vertex{line.p1, line.color});
         lines.append(sf::Vertex{line.p2, line.color});
     }
-
-    if (lines.getVertexCount() > 0) {
-        target.draw(lines);
-    }
+    if (lines.getVertexCount() > 0) target.draw(lines);
 }
 
 void EntitySystem::drawPixelatedHand(sf::RenderTarget& target, const sf::Vector2f& center, sf::Color col) {
     int cx = static_cast<int>(std::round(center.x));
     int cy = static_cast<int>(std::round(center.y));
-
     sf::VertexArray pixels(sf::PrimitiveType::Triangles);
-
     auto addPixel = [&](int px, int py) {
         sf::Vector2f tl(static_cast<float>(px), static_cast<float>(py));
         sf::Vector2f tr(static_cast<float>(px + 1), static_cast<float>(py));
         sf::Vector2f br(static_cast<float>(px + 1), static_cast<float>(py + 1));
         sf::Vector2f bl(static_cast<float>(px), static_cast<float>(py + 1));
-
         pixels.append(sf::Vertex{tl, col}); pixels.append(sf::Vertex{tr, col}); pixels.append(sf::Vertex{br, col});
         pixels.append(sf::Vertex{tl, col}); pixels.append(sf::Vertex{br, col}); pixels.append(sf::Vertex{bl, col});
     };
-
     addPixel(cx, cy - 1); addPixel(cx - 1, cy); addPixel(cx, cy); addPixel(cx + 1, cy); addPixel(cx, cy + 1);
     target.draw(pixels);
 }
@@ -2316,22 +702,17 @@ void EntitySystem::drawPixelatedHand(sf::RenderTarget& target, const sf::Vector2
 void EntitySystem::drawPixelatedLeg(sf::RenderTarget& target, const sf::Vector2f& hip, const sf::Vector2f& foot, sf::Color col) {
     int x0 = static_cast<int>(std::round(hip.x)); int y0 = static_cast<int>(std::round(hip.y));
     int x1 = static_cast<int>(std::round(foot.x)); int y1 = static_cast<int>(std::round(foot.y));
-
     int dx = std::abs(x1 - x0), dy = std::abs(y1 - y0);
     int sx = x0 < x1 ? 1 : -1,  sy = y0 < y1 ? 1 : -1;
     int err = dx - dy;
-
     sf::VertexArray pixels(sf::PrimitiveType::Triangles);
-
     while (true) {
         sf::Vector2f tl(static_cast<float>(x0), static_cast<float>(y0));
         sf::Vector2f tr(static_cast<float>(x0 + 1), static_cast<float>(y0));
         sf::Vector2f br(static_cast<float>(x0 + 1), static_cast<float>(y0 + 1));
         sf::Vector2f bl(static_cast<float>(x0), static_cast<float>(y0 + 1));
-
         pixels.append(sf::Vertex{tl, col}); pixels.append(sf::Vertex{tr, col}); pixels.append(sf::Vertex{br, col});
         pixels.append(sf::Vertex{tl, col}); pixels.append(sf::Vertex{br, col}); pixels.append(sf::Vertex{bl, col});
-
         if (x0 == x1 && y0 == y1) break;
         int e2 = 2 * err;
         if (e2 > -dy) { err -= dy; x0 += sx; }
@@ -2341,112 +722,34 @@ void EntitySystem::drawPixelatedLeg(sf::RenderTarget& target, const sf::Vector2f
 }
 
 void EntitySystem::renderEntities(sf::RenderTarget& target) {
-    auto view = registry.view<PlayerControllerComponent, PhysicsComponent, ProceduralAnimationComponent, SpriteSheetComponent>();
-    view.each([&](auto, auto& player, auto& phys, auto& anim, auto& spriteComp) {
-
-        b2Vec2 b2Pos = b2Body_GetPosition(phys.bodyId);
-        sf::Vector2f bodyPos(b2Pos.x * M2P, b2Pos.y * M2P);
-        b2Rot rot = b2Body_GetRotation(phys.bodyId);
-        float bodyAng = std::atan2(rot.s, rot.c);
-        sf::Vector2f vbp(bodyPos.x, bodyPos.y + 8.0f + anim.bob.offsetY);
-
-        drawPixelatedHand(target, vbp + anim.handA.offset, sf::Color(180, 180, 180));
-        drawPixelatedLeg(target, vbp + anim.legA.hipOffset, anim.legA.footWorld, sf::Color::White);
-        drawPixelatedLeg(target, vbp + anim.legB.hipOffset, anim.legB.footWorld, sf::Color::White);
-
-        if (spriteComp.sprite.has_value()) {
-            float renderAngle = bodyAng * 180.0f / PI;
-            sf::Vector2f renderPos = bodyPos;
-            
-            if (player.isRagdoll) {
-                spriteComp.sprite->setOrigin({15.5f, 16.0f});
-            } else {
-                renderPos.y += anim.bob.offsetY;
-                spriteComp.sprite->setOrigin({15.5f, 16.0f});
-            }
-            
-            sf::VertexArray va(sf::PrimitiveType::Triangles);
-            float rad = -renderAngle * PI / 180.0f;
-            float r_cs = std::cos(rad);
-            float r_sn = std::sin(rad);
-
-            sf::IntRect texRect = spriteComp.sprite->getTextureRect();
-            sf::Vector2f origin = spriteComp.sprite->getOrigin();
-            int width = std::abs(texRect.size.x);
-            int height = std::abs(texRect.size.y);
-            
-            float radius = std::hypot(width, height) + 1.0f;
-            int maxD = static_cast<int>(std::ceil(radius));
-
-            for (int dy = -maxD; dy <= maxD; ++dy) {
-                for (int dx = -maxD; dx <= maxD; ++dx) {
-                    float rx = dx * r_cs - dy * r_sn;
-                    float ry = dx * r_sn + dy * r_cs;
-
-                    int lx = static_cast<int>(std::round(rx + origin.x));
-                    int ly = static_cast<int>(std::round(ry + origin.y));
-
-                    if (lx >= 0 && lx < width && ly >= 0 && ly < height) {
-                        int tx = (texRect.size.x < 0) ? (texRect.position.x - 1 - lx) : (texRect.position.x + lx);
-                        int ty = (texRect.size.y < 0) ? (texRect.position.y - 1 - ly) : (texRect.position.y + ly);
-
-                        sf::Vector2f pxPos(renderPos.x + dx, renderPos.y + dy);
-                        sf::Vector2f t_c(tx + 0.5f, ty + 0.5f); 
-                        
-                        va.append(sf::Vertex{pxPos, sf::Color::White, t_c});
-                        va.append(sf::Vertex{pxPos + sf::Vector2f(1.f, 0.f), sf::Color::White, t_c});
-                        va.append(sf::Vertex{pxPos + sf::Vector2f(1.f, 1.f), sf::Color::White, t_c});
-                        va.append(sf::Vertex{pxPos, sf::Color::White, t_c});
-                        va.append(sf::Vertex{pxPos + sf::Vector2f(1.f, 1.f), sf::Color::White, t_c});
-                        va.append(sf::Vertex{pxPos + sf::Vector2f(0.f, 1.f), sf::Color::White, t_c});
-                    }
-                }
-            }
-            
-            sf::RenderStates states;
-            states.texture = &spriteComp.sprite->getTexture();
-            target.draw(va, states);
-        }
-
-        drawPixelatedHand(target, vbp + anim.handB.offset + anim.handB.recoilPos, sf::Color::White);
-
-        if (player.equippedWeapon) {
-            float renderAngle = anim.weaponAngle + anim.handB.recoilAngle;
-            sf::Vector2f renderHandPos = vbp + anim.handB.offset + anim.handB.recoilPos;
-            player.equippedWeapon->renderPixelated(target, renderHandPos, renderAngle, spriteComp.flipX);
-        }
-    });
+    for (auto& e : entities) e->render(target);
 }
 
 sf::Vector2f EntitySystem::getPlayerPos() const {
-    auto view = registry.view<PhysicsComponent>();
-    for (auto [entity, phys] : view.each()) {
-        b2Vec2 p = b2Body_GetPosition(phys.bodyId);
+    if (!entities.empty()) {
+        b2Vec2 p = b2Body_GetPosition(entities.front()->bodyId);
         return {p.x * M2P, p.y * M2P};
     }
     return {0.f, 0.f};
 }
 
-void EntitySystem::killAndRagdollEntity(entt::entity e, ParticleWorld& pw, MaterialID mat) {
-    auto* phys = registry.try_get<PhysicsComponent>(e);
-    if (!phys) return;
-
-    b2Vec2 pos = b2Body_GetPosition(phys->bodyId);
+void EntitySystem::killAndRagdollEntity(Entity* e, ParticleWorld& pw, uint8_t meatMaterial) {
+    if (!e) return;
+    b2Vec2 pos = b2Body_GetPosition(e->bodyId);
     sf::Image img;
     img.resize({5, 16}, sf::Color::Transparent);
     for (unsigned py = 0; py < 16; ++py)
         for (unsigned px = 0; px < 5; ++px)
             img.setPixel({px, py}, sf::Color::Red);
-
-    pw.addRigidBodyFromSprite(img, int(pos.x * M2P - 2.5f), int(pos.y * M2P - 8.0f), mat);
-    b2DestroyBody(phys->bodyId);
-    registry.destroy(e);
+    pw.addRigidBodyFromSprite(img, int(pos.x * M2P - 2.5f), int(pos.y * M2P - e->colHalfH), static_cast<MaterialID>(meatMaterial));
+    
+    auto it = std::find_if(entities.begin(), entities.end(), [&](const std::unique_ptr<Entity>& ptr) { return ptr.get() == e; });
+    if (it != entities.end()) entities.erase(it);
 }
 
 void EntitySystem::notifyTerrainChanged(sf::Vector2f center, float radius) {
     float r = radius + 20.0f;
     sf::FloatRect altered({center.x - r, center.y - r}, {r*2, r*2});
-    
     if (!hasDirtyNavRegion) {
         dirtyNavRect = altered;
         hasDirtyNavRegion = true;
@@ -2455,12 +758,8 @@ void EntitySystem::notifyTerrainChanged(sf::Vector2f center, float radius) {
         float top = std::min(dirtyNavRect.position.y, altered.position.y);
         float right = std::max(dirtyNavRect.position.x + dirtyNavRect.size.x, altered.position.x + altered.size.x);
         float bottom = std::max(dirtyNavRect.position.y + dirtyNavRect.size.y, altered.position.y + altered.size.y);
-        
-        dirtyNavRect.position.x = left;
-        dirtyNavRect.position.y = top;
-        dirtyNavRect.size.x = right - left;
-        dirtyNavRect.size.y = bottom - top;
+        dirtyNavRect.position.x = left; dirtyNavRect.position.y = top;
+        dirtyNavRect.size.x = right - left; dirtyNavRect.size.y = bottom - top;
     }
-    
     globalGraphBuilt = false;
 }

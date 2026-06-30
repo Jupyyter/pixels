@@ -1,5 +1,7 @@
 #include "RigidBody.hpp"
 #include "Weapon.hpp"
+#include "EntitySystem.hpp"
+#include "Entity.hpp"
 #include <cmath>
 #include <unordered_set>
 #include <unordered_map>
@@ -610,6 +612,38 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
             b2Body_SetAwake(rb->bodyId, true);
         }
     }
+
+    // --- NEW: Add overlapping chunks for Entities so terrain doesn't magically vanish beneath them! ---
+    if (world.getEntitySystem()) {
+        for (const auto& e : world.getEntitySystem()->entities) {
+            if (!b2Body_IsValid(e->bodyId)) continue;
+            b2Transform transform = b2Body_GetTransform(e->bodyId);
+            float radiusM = std::max(e->colHalfW, e->colHalfH) * P2M + 2.0f;
+            
+            int minCx = static_cast<int>((transform.p.x - radiusM) * M2P) >> 6;
+            int maxCx = static_cast<int>((transform.p.x + radiusM) * M2P) >> 6;
+            int minCy = static_cast<int>((transform.p.y - radiusM) * M2P) >> 6;
+            int maxCy = static_cast<int>((transform.p.y + radiusM) * M2P) >> 6;
+            
+            bool needsWake = false;
+            for (int cy = minCy; cy <= maxCy; ++cy) {
+                for (int cx = minCx; cx <= maxCx; ++cx) {
+                    ChunkCoord coord{cx, cy};
+                    overlappingChunks.insert(coord);
+                    
+                    Chunk* c = world.getChunk(cx << 6, cy << 6);
+                    if (c && (!c->isSleeping || c->visualDirty)) {
+                        needsWake = true;
+                    }
+                }
+            }
+
+            if (needsWake && !b2Body_IsAwake(e->bodyId)) {
+                b2Body_SetAwake(e->bodyId, true);
+            }
+        }
+    }
+    // ------------------------------------------------------------------------------------------------
     
     for (auto it = chunkBodies.begin(); it != chunkBodies.end(); ) {
         if (overlappingChunks.find(it->first) == overlappingChunks.end()) {

@@ -102,6 +102,7 @@ public:
     
     // Extensibility hook providing sequence independent binding!
     void setEntitySystem(EntitySystem* sys) { entitySystem = sys; }
+    EntitySystem* getEntitySystem() const { return entitySystem; } 
 
     RigidBodySystem* getRigidBodySystem() const { return rigidBodySystem.get(); }
     void renderDebugColliders(sf::RenderTarget& target) const;
