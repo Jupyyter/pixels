@@ -12,8 +12,10 @@ Explosion::Explosion(ParticleWorld &worldRef, int x, int y, int r, int s)
 
 void Explosion::enact()
 {
+    // FIX 1: Prevent Division by Zero (NaN) crashes
     if (radius <= 0) return;
 
+    // FIX 2: Ensure the cache array is large enough to hold the jagged noise bounds
     int maxReach = static_cast<int>(std::ceil(radius * 1.5f));
     int boxSize = (maxReach * 2) + 1;
     std::vector<uint8_t> cache(boxSize * boxSize, (uint8_t)CacheState::UNVISITED);
@@ -70,6 +72,7 @@ void Explosion::castRay(int destX, int destY, std::vector<uint8_t> &cache, int b
 
         if (!world.inBounds(x, y)) break;
 
+        // Apply maxReach instead of radius to fix square clipping!
         int localX = x - (centerX - maxReach);
         int localY = y - (centerY - maxReach);
         if (localX < 0 || localX >= boxSize || localY < 0 || localY >= boxSize) break;
@@ -100,7 +103,8 @@ void Explosion::castRay(int destX, int destY, std::vector<uint8_t> &cache, int b
             {
                 if (base == nullptr)
                 {
-                    if (Random::randFloat(0, 1) > 0.5f) world.spawnParticle(GetMatID("Explosion") , x, y);
+                    // SPAWNS THE ACTUAL EXPLOSION SPARK GAS (Fixed here!)
+                    if (Random::randFloat(0, 1) > 0.5f) world.spawnParticle(GetMatID("ExplosionSpark"), x, y);
                     cache[cacheIndex] = CacheState::PROCESSED_UNSTOPPED;
                 }
                 else
@@ -152,7 +156,8 @@ void Explosion::castRay(int destX, int destY, std::vector<uint8_t> &cache, int b
             {
                 if (base == nullptr)
                 {
-                    if (Random::randFloat(0, 1) > 0.5f) world.spawnParticle(GetMatID("Smoke") , x, y);
+                    // SPAWNS THE SMOKE GAS (Fixed here!)
+                    if (Random::randFloat(0, 1) > 0.5f) world.spawnParticle(GetMatID("Smoke"), x, y);
                     cache[cacheIndex] = CacheState::PROCESSED_UNSTOPPED;
                 }
                 else
@@ -212,17 +217,25 @@ void Explosion::applyDarken(int x, int y, BaseComponent* base, float factor)
 
 void Explosion::particalize(int x, int y, BaseComponent* base, sf::Vector2f velocity)
 {
-    if (!base || base->id == GetMatID("ExplosiveContainer") ) return;
+    // Resolved dynamic lookup for the explosive container check
+    if (!base || base->id == GetMatID("ExplosiveContainer")) return;
 
+    // FIX: Do not turn rigid body parts into flying debris projectiles.
+    // If we do, the projectiles instantly hit the rest of the rigid body, 
+    // detonate, and leave static pixels floating in world space as the physics body gets pushed away.
+    // Instead, we just cleanly remove the pixel so the Box2D body can fracture!
     if (base->flags.isRigidBodyPart) {
         world.removeParticle(x, y);
         return;
     }
 
+    // Cache values before removing the particle
     MaterialID contentId = base->id;
     sf::Color color = base->color;
     bool ignited = base->flags.isIgnited;
 
     world.removeParticle(x, y);
+
+    // Re-spawn as a rigid body payload (for normal static terrain)
     ExplosiveContainer::spawnWithPayload(x, y, contentId, velocity, color, ignited, world);
 }

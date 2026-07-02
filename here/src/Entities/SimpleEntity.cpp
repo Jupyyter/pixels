@@ -1,7 +1,7 @@
 // text/plain
 // simpleentity.cpp
-#include "SimpleEntity.hpp"
-#include "EntitySystem.hpp"
+#include "Entities/SimpleEntity.hpp"
+#include "Entities/EntitySystem.hpp"
 #include "ParticleWorld.hpp"
 #include "RigidBody.hpp"
 #include "Constants.hpp"

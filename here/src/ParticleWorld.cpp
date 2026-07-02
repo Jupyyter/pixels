@@ -10,7 +10,7 @@
 #include <cstring>
 #include <iostream>
 #include "RigidBody.hpp"
-#include "EntitySystem.hpp"
+#include "Entities/EntitySystem.hpp"
 #include "Particles/Explosion.hpp"
 #include <nlohmann/json.hpp>
 #include "Particles/ParticleDef.hpp"

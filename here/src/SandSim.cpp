@@ -6,7 +6,7 @@
 #include <imgui.h>
 #include <imgui-SFML.h>
 #include <vector>
-#include "CustomLogicRegistry.hpp"
+#include "Particles/ParticleDef.hpp"
 
 static bool g_isDraggingLine = false;
 static bool g_isDraggingEraseLine = false;

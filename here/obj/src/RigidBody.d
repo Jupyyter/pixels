@@ -81,8 +81,8 @@ obj/src/RigidBody.o: src/RigidBody.cpp include/RigidBody.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/ParticleWorld.hpp \
  include/Constants.hpp include/Random.hpp include/Particles/Particle.hpp \
- include/Weapon.hpp include/EntitySystem.hpp include/EntityComponents.hpp \
- include/Entity.hpp
+ include/Weapon.hpp include/Entities/EntitySystem.hpp \
+ include/Entities/EntityComponents.hpp include/Entities/Entity.hpp
 include/RigidBody.hpp:
 ../2dbox/include/box2d/box2d.h:
 ../2dbox/include/box2d/base.h:
@@ -173,6 +173,6 @@ include/Constants.hpp:
 include/Random.hpp:
 include/Particles/Particle.hpp:
 include/Weapon.hpp:
-include/EntitySystem.hpp:
-include/EntityComponents.hpp:
-include/Entity.hpp:
+include/Entities/EntitySystem.hpp:
+include/Entities/EntityComponents.hpp:
+include/Entities/Entity.hpp:

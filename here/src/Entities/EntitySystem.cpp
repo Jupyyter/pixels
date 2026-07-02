@@ -1,9 +1,9 @@
 // text/plain
 // entitysystem.cpp
-#include "EntitySystem.hpp"
-#include "Entity.hpp"
-#include "ComplexEntity.hpp"
-#include "SimpleEntity.hpp"
+#include "Entities/EntitySystem.hpp"
+#include "Entities/Entity.hpp"
+#include "Entities/ComplexEntity.hpp"
+#include "Entities/SimpleEntity.hpp"
 #include "Weapon.hpp"
 #include "ParticleWorld.hpp"
 #include "RigidBody.hpp"

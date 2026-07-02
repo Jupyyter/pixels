@@ -1,7 +1,7 @@
 #include "RigidBody.hpp"
 #include "Weapon.hpp"
-#include "EntitySystem.hpp"
-#include "Entity.hpp"
+#include "Entities/EntitySystem.hpp"
+#include "Entities/Entity.hpp"
 #include <cmath>
 #include <unordered_set>
 #include <unordered_map>

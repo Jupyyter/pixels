@@ -1,7 +1,7 @@
 // text/plain
 // complexentity.cpp
-#include "ComplexEntity.hpp"
-#include "EntitySystem.hpp"
+#include "Entities/ComplexEntity.hpp"
+#include "Entities/EntitySystem.hpp"
 #include "ParticleWorld.hpp"
 #include "RigidBody.hpp"
 #include "Constants.hpp"

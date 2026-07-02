@@ -10,7 +10,7 @@
 #include "Renderer.hpp"
 #include "UI.hpp"
 #include "LevelMenu.hpp"
-#include "EntitySystem.hpp"
+#include "Entities/EntitySystem.hpp"
 
 enum class GameState { MENU, PLAYING };
 
