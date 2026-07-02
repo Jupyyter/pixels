@@ -24,7 +24,6 @@ public:
     void enact();
 
 private:
-    // Added maxReach to correctly size the cache bounds
     void castRay(int destX, int destY, std::vector<uint8_t>& cache, int boxSize, int maxReach);
     
     void applyDarken(int x, int y, BaseComponent* base, float factor);

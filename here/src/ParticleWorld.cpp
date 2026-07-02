@@ -12,8 +12,205 @@
 #include "RigidBody.hpp"
 #include "EntitySystem.hpp"
 #include "Particles/Explosion.hpp"
+#include <nlohmann/json.hpp>
+#include "Particles/ParticleDef.hpp"
+#include "Particles/Gas.hpp"
+#include "Particles/ImmovableSolid.hpp"
+#include "Particles/MovableSolid.hpp"
+#include "Particles/Liquid.hpp"
+#include "Particles/ExplosiveContainer.hpp"
 
+using json = nlohmann::json;
+
+sf::Color HexToColor(const std::string& hex) {
+    if (hex.empty() || hex[0] != '#') return sf::Color::Magenta;
+    unsigned int r=255, g=0, b=255, a=255;
+    if (hex.length() == 7) {
+        sscanf(hex.c_str(), "#%02x%02x%02x", &r, &g, &b);
+    } else if (hex.length() == 9) {
+        sscanf(hex.c_str(), "#%02x%02x%02x%02x", &r, &g, &b, &a);
+    }
+    return sf::Color(r, g, b, a);
+}
+
+std::unordered_map<std::string, MaterialID> GlobalMaterialNameToID;
+std::unordered_map<MaterialID, ParticleDef> GlobalParticleDefs;
 const char MAGIC_HEADER_V2[4] = {'S', 'N', 'D', '2'};
+
+void ParticleWorld::loadAllMaterials(const std::vector<std::string>& jsonFiles) {
+    uint8_t nextAvailableId = 1; 
+    std::vector<json> allRawItems; 
+
+    for (const auto& fileStr : jsonFiles) {
+        std::ifstream file(fileStr);
+        if (!file.is_open()) { std::cerr << "Could not open " << fileStr << "\n"; continue; }
+        
+        json j;
+        file >> j;
+
+        for (const auto& item : j) {
+            ParticleDef def;
+            def.name = item.value("name", "Unknown");
+            def.logic_class = item.value("logic_class", "");
+            
+            std::string groupStr = item.value("group", "MovableSolid");
+            if (groupStr == "Gas") def.group = MaterialGroup::Gas;
+            else if (groupStr == "Liquid") def.group = MaterialGroup::Liquid;
+            else if (groupStr == "ImmovableSolid") def.group = MaterialGroup::ImmovableSolid;
+            else if (groupStr == "Special") def.group = MaterialGroup::Special;
+            else def.group = MaterialGroup::MovableSolid;
+
+            if (item.contains("colors")) {
+                for (const auto& colHex : item["colors"]) def.colors.push_back(HexToColor(colHex.get<std::string>()));
+            }
+
+            if (item.contains("components")) {
+                auto comps = item["components"];
+                if (comps.contains("fluid")) {
+                    def.has_fluid = true;
+                    def.fluid_density = comps["fluid"].value("density", 1);
+                    def.fluid_dispersion = comps["fluid"].value("dispersion", 1);
+                }
+                if (comps.contains("durability")) {
+                    def.has_durability = true;
+                    if (comps["durability"].contains("health")) {
+                        auto& hNode = comps["durability"]["health"];
+                        if (hNode.is_array() && hNode.size() >= 2) {
+                            def.dur_health = hNode[0].get<int>();
+                            def.dur_health_max = hNode[1].get<int>();
+                        } else {
+                            def.dur_health = hNode.get<int>();
+                            def.dur_health_max = def.dur_health;
+                        }
+                    } else {
+                        def.dur_health = 1;
+                        def.dur_health_max = 1;
+                    }
+                    def.dur_expRes = comps["durability"].value("explosionResistance", 0);
+                }
+                if (comps.contains("thermal")) {
+                    def.has_thermal = true;
+                    def.therm_temp = comps["thermal"].value("temperature", 0);
+                    def.therm_flamRes = comps["thermal"].value("flammabilityResistance", 0);
+                    def.therm_heat = comps["thermal"].value("heatFactor", 0);
+                    def.therm_fireDmg = comps["thermal"].value("fireDamage", 0);
+                }
+            }
+            
+            def.gas_buoyancy = item.value("gas_buoyancy", 0.0f);
+            def.gas_chaos = item.value("gas_chaos", 0.0f);
+            def.decay_rate = item.value("decay_rate", 0);
+            def.decay_rate_ignited = item.value("decay_rate_ignited", 0);
+            def.scatter_on_spawn = item.value("scatter_on_spawn", false);
+            def.ignite_on_spawn = item.value("ignite_on_spawn", false);
+            def.heated_on_spawn = item.value("heated_on_spawn", false);
+            def.flutter_fall = item.value("flutter_fall", false);
+
+            MaterialID newId = nextAvailableId++;
+            GlobalMaterialNameToID[def.name] = newId;
+            GlobalParticleDefs[newId] = def;
+            
+            allRawItems.push_back(item);
+        }
+    }
+
+    for (const auto& item : allRawItems) {
+        MaterialID myId = GlobalMaterialNameToID[item["name"]];
+        ParticleDef& def = GlobalParticleDefs[myId];
+
+        if (item.contains("transform_conditions")) {
+            auto tc = item["transform_conditions"];
+            if (tc.contains("on_rest") && GlobalMaterialNameToID.count(tc["on_rest"].value("result", ""))) {
+                def.transform_on_rest_frames = tc["on_rest"].value("frames", 0);
+                def.transform_on_rest_result = GlobalMaterialNameToID[tc["on_rest"]["result"]];
+            }
+            if (tc.contains("on_health_zero") && GlobalMaterialNameToID.count(tc["on_health_zero"].value("result", ""))) {
+                def.transform_on_health_zero_result = GlobalMaterialNameToID[tc["on_health_zero"]["result"]];
+            }
+            if (tc.contains("on_heat") && GlobalMaterialNameToID.count(tc["on_heat"].value("result", ""))) {
+                def.transform_on_heat_result = GlobalMaterialNameToID[tc["on_heat"]["result"]];
+            }
+            if (tc.contains("on_min_temp") && GlobalMaterialNameToID.count(tc["on_min_temp"].value("result", ""))) {
+                def.transform_on_min_temp_result = GlobalMaterialNameToID[tc["on_min_temp"]["result"]];
+                def.min_temp_threshold = tc["on_min_temp"].value("temp", 0);
+                def.min_temp_transform_neighbors = tc["on_min_temp"].value("transform_neighbors", false);
+            }
+            if (tc.contains("on_health_zero_ignited") && GlobalMaterialNameToID.count(tc["on_health_zero_ignited"].value("result", ""))) {
+                def.transform_on_health_zero_ignited_result = GlobalMaterialNameToID[tc["on_health_zero_ignited"]["result"]];
+                def.transform_on_health_zero_ignited_chance = tc["on_health_zero_ignited"].value("chance", 1.0f);
+            }
+        }
+
+        if (item.contains("traits")) {
+            auto tr = item["traits"];
+            if (tr.contains("stains")) { def.has_trait_stains = true; def.stain_color = HexToColor(tr["stains"].value("color", "#000000")); }
+            
+            // --- UPDATED CORROSIVE PARSING ---
+            if (tr.contains("corrosive")) { 
+                def.has_trait_corrosive = true; 
+                def.corrosive_damage = tr["corrosive"].value("damage", 10);
+                def.corrosive_self_cost = tr["corrosive"].value("self_cost", 1); 
+            }
+            
+            if (tr.contains("magmatize")) { def.has_trait_magmatize = true; def.magmatize_damage = tr["magmatize"].value("damage", 10); }
+            if (tr.contains("coolant")) def.has_trait_coolant = tr.value("coolant", false);
+            if (tr.contains("cleans_color")) def.has_trait_cleans_color = tr.value("cleans_color", false);
+            if (tr.contains("boils_on_heat")) def.has_trait_boils_on_heat = tr.value("boils_on_heat", false);
+            if (tr.contains("ignites_when_touching_fire")) def.has_trait_ignites_when_touching_fire = tr.value("ignites_when_touching_fire", false);
+            
+            if (tr.contains("immune_to_magmatize")) def.immune_to_magmatize = tr.value("immune_to_magmatize", false);
+            if (tr.contains("immune_to_fire")) def.immune_to_fire = tr.value("immune_to_fire", false);
+            if (tr.contains("immune_to_corrosion")) def.immune_to_corrosion = tr.value("immune_to_corrosion", false); 
+            
+            if (tr.contains("burns_objects")) {
+                def.has_trait_burns_objects = true;
+                def.burns_objects_heat = tr["burns_objects"].value("heat", 10);
+            }
+            if (tr.contains("explosive_on_ignite")) {
+                def.has_trait_explosive_on_ignite = true;
+                def.explosive_radius = tr["explosive_on_ignite"].value("radius", 15);
+                def.explosive_strength = tr["explosive_on_ignite"].value("strength", 10);
+            }
+            if (tr.contains("spark_chance")) def.spark_chance = tr.value("spark_chance", -1.0f);
+        }
+        if (item.contains("interactions")) {
+            for (auto& el : item["interactions"].items()) {
+                std::string targetName = el.key();
+                if (GlobalMaterialNameToID.find(targetName) == GlobalMaterialNameToID.end()) continue;
+
+                MaterialID targetId = GlobalMaterialNameToID[targetName];
+                InteractionDef interaction;
+                
+                auto parseAct = [](const std::string& a){ if(a=="replace") return InteractionAction::Replace; if(a=="explode") return InteractionAction::Explode; if(a=="die") return InteractionAction::Die; return InteractionAction::None; };
+                
+                interaction.self_action = parseAct(el.value().value("self_action", "none"));
+                if (GlobalMaterialNameToID.count(el.value().value("self_result", ""))) interaction.self_result = GlobalMaterialNameToID[el.value().value("self_result", "")];
+                
+                interaction.target_action = parseAct(el.value().value("target_action", "none"));
+                if (GlobalMaterialNameToID.count(el.value().value("target_result", ""))) interaction.target_result = GlobalMaterialNameToID[el.value().value("target_result", "")];
+                
+                interaction.strength = el.value().value("strength", 0);
+                interaction.transform_neighbors = el.value().value("transform_neighbors", false);
+                
+                def.interactions[targetId] = interaction;
+            }
+        }
+    }
+
+    for (const auto& [id, def] : GlobalParticleDefs) {
+        if (def.group == MaterialGroup::Special) {
+            if (def.logic_class == "ExplosiveContainer") {
+                MaterialRegistry[id] = new ExplosiveContainer(id);
+            }
+            continue; 
+        }
+        
+        if (def.group == MaterialGroup::Gas) MaterialRegistry[id] = new GenericGas(id, def);
+        else if (def.group == MaterialGroup::ImmovableSolid) MaterialRegistry[id] = new GenericImmovableSolid(id, def);
+        else if (def.group == MaterialGroup::Liquid) MaterialRegistry[id] = new GenericLiquid(id, def);
+        else if (def.group == MaterialGroup::MovableSolid) MaterialRegistry[id] = new GenericMovableSolid(id, def);
+    }
+}
 
 namespace {
     inline void moveSameChunkFast(Chunk* c, uint32_t oldIdx, uint32_t newIdx, uint8_t mask) {
@@ -76,7 +273,6 @@ namespace {
 
 ParticleWorld::~ParticleWorld() = default;
 
-// Detached loadWorld logic so rigid/entities perfectly align via sequence mapping explicitly
 ParticleWorld::ParticleWorld(unsigned int w, unsigned int h)
     : viewWidth(w), viewHeight(h), frameCounter(0), cameraPos({0, 0})
 {
@@ -607,7 +803,6 @@ bool ParticleWorld::saveWorld(const std::string &baseFilename) {
         rigidBodySystem->save(file);
     }
     
-    // Extracted Dynamic Tracking State Write Sync Extension Hook smoothly handling seamlessly perfectly aligned properly logically efficiently synced safely flawlessly:
     bool hasEntitySys = entitySystem != nullptr;
     file.write(reinterpret_cast<const char*>(&hasEntitySys), sizeof(hasEntitySys));
     if (hasEntitySys) {
@@ -689,7 +884,6 @@ bool ParticleWorld::loadWorld(const std::string &filename) {
         }
     }
     
-    // Optional Load Mechanics syncing directly effectively structurally parsing seamlessly resolving backward compatibility securely accurately mapping!
     bool hasEntitySys;
     if (file.read(reinterpret_cast<char*>(&hasEntitySys), sizeof(hasEntitySys))) {
         if (hasEntitySys && entitySystem) {
@@ -782,17 +976,6 @@ void ParticleWorld::notifyTerrainChanged(float x, float y, float radius) {
         entitySystem->notifyTerrainChanged(sf::Vector2f(x, y), radius);
     }
 }
-static MaterialID mapStringToMaterialID(const std::string& name) {
-    // Dynamically search through your existing X-macro generated list
-    for (const auto& mat : ALL_MATERIALS) {
-        if (mat.name == name) {
-            return mat.id;
-        }
-    }
-    
-    std::cerr << "Warning: Material '" << name << "' not found, defaulting to Stone.\n";
-    return MaterialID::Stone; // Fallback
-}
 
 struct MappedColor {
     sf::Color color;
@@ -823,25 +1006,22 @@ void ParticleWorld::generateWorldFromImage(const std::string& imagePath, const s
         }
     }
 
-    // Clear the current world state
     clear();
 
-    // Iterate through every pixel in the original image
     for (unsigned int y = 0; y < img.getSize().y; ++y) {
         for (unsigned int x = 0; x < img.getSize().x; ++x) {
             sf::Color pixelCol = img.getPixel({x, y});
 
-            if (pixelCol.a < 128) continue; // Skip transparent background
+            if (pixelCol.a < 128) continue; 
 
             int minDist = std::numeric_limits<int>::max();
             std::string bestMat = "None";
 
-            // Find which mapped AI color is closest to this pixel
             for (const auto& mc : colorMap) {
                 int dr = pixelCol.r - mc.color.r;
                 int dg = pixelCol.g - mc.color.g;
                 int db = pixelCol.b - mc.color.b;
-                int dist = dr*dr + dg*dg + db*db; // Squared distance
+                int dist = dr*dr + dg*dg + db*db; 
 
                 if (dist < minDist) {
                     minDist = dist;
@@ -849,19 +1029,14 @@ void ParticleWorld::generateWorldFromImage(const std::string& imagePath, const s
                 }
             }
 
-            // If Gemini didn't discard the color, spawn the block
             if (bestMat != "None") {
-                MaterialID matID = mapStringToMaterialID(bestMat);
+                MaterialID matID = GetMatID(bestMat);
                 spawnParticle(matID, x, y);
-                
-                // IMPORTANT: Overwrite the spawned material color with the exact pixel 
-                // color so the resulting map perfectly resembles the input image!
                 setParticleColor(x, y, pixelCol);
             }
         }
     }
 
-    // Call your existing save system
     saveWorld("AI_Generated_Map");
     std::cout << "Success! AI Generated map saved to worlds folder.\n";
 }

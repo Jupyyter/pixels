@@ -1,6 +1,7 @@
 #include "Weapon.hpp"
 #include <cstdlib>
 #include <iostream>
+#include "Particles/ParticleDef.hpp"
 
 #ifndef PI
 constexpr float PI = 3.14159265358979323846f;
@@ -10,7 +11,7 @@ constexpr float PI = 3.14159265358979323846f;
 // WHEEL IMPLEMENTATION
 // ==========================================
 Wheel::Wheel(b2WorldId worldId, const sf::Image& img, int startX, int startY) 
-    : RigidBody(worldId, img, startX, startY, MaterialID::Wood, false, false) 
+    : RigidBody(worldId, img, startX, startY, GetMatID("Wood") , false, false) 
 {
     isIndestructible = true;
     isWeapon = false;
@@ -71,7 +72,7 @@ void Wheel::update(float dt, ParticleWorld& world) {
 // BULLET IMPLEMENTATION
 // ==========================================
 Bullet::Bullet(b2WorldId worldId, const sf::Image& img, int startX, int startY, float angleDeg, float speed)
-    : RigidBody(worldId, img, startX, startY, MaterialID::Stone, false, false) 
+    : RigidBody(worldId, img, startX, startY, GetMatID("Stone") , false, false) 
 {
     isWeapon = false;
     isGun = false;
@@ -302,7 +303,7 @@ void Weapon::setupGunProperties() {
 }
 
 Weapon::Weapon(b2WorldId worldId, const sf::Image& img, int startX, int startY, const std::string& name)
-    : RigidBody(worldId, img, startX, startY, MaterialID::Sand, true, false, getWeaponPivot(name, img.getSize().x, img.getSize().y), getWeaponVisualOffset(name)), weaponName(name)
+    : RigidBody(worldId, img, startX, startY, GetMatID("Sand"), true, false, getWeaponPivot(name, img.getSize().x, img.getSize().y), getWeaponVisualOffset(name)), weaponName(name)
 {
     setupGunProperties();
 }

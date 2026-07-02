@@ -1,0 +1,13 @@
+[
+  { 
+    "name": "Explosion", 
+    "group": "Special", 
+    "colors": ["#ff4500"] 
+  },
+  { 
+    "name": "ExplosiveContainer", 
+    "group": "Special", 
+    "logic_class": "ExplosiveContainer",
+    "colors": ["#000000"] 
+  }
+]

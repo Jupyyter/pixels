@@ -1,11 +1,18 @@
 #include "Particles/Particle.hpp"
 #include "ParticleWorld.hpp"
 #include "Random.hpp"
+#include "Particles/ParticleDef.hpp" 
 
-// Initialize the global registry
 Particle* MaterialRegistry[256] = { nullptr };
 
-// --- SPAWN LOGIC ---
+sf::Color Particle::getRandomColor(MaterialID id) {
+    auto it = GlobalParticleDefs.find(id);
+    if (it != GlobalParticleDefs.end()) {
+        return it->second.getRandomColor();
+    }
+    return sf::Color::Magenta; 
+}
+
 void Particle::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     world.add<BaseComponent>(x, y, BaseComponent(
         this->id, 
@@ -13,8 +20,6 @@ void Particle::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
         ParticleFlags(false, false, false, false, false, false, false, false, false)
     ));
 }
-
-// --- CORE ACTIONS ---
 
 void Particle::die(int x, int y, ParticleWorld& world) {
     world.removeParticle(x, y);
@@ -25,17 +30,16 @@ void Particle::dieAndReplace(int x, int y, MaterialID newType, ParticleWorld& wo
     world.spawnParticle(newType, x, y);
 }
 
-// --- LOGIC IMPLEMENTATIONS ---
-
 void Particle::checkIfDead(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) {
     if (dur && base && dur->health <= 0 && !base->flags.isDead) {
         die(x, y, world);
     }
 }
 
-bool Particle::corrode(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) {
+// --- UPDATED CORRODE DAMAGE ---
+bool Particle::corrode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) {
     if (dur) {
-        dur->health -= 170;
+        dur->health -= damage;
         checkIfDead(base, dur, x, y, world);
         return true;
     }
@@ -57,9 +61,7 @@ bool Particle::shouldApplyHeat(BaseComponent* base) {
     return base && (base->flags.isIgnited || base->flags.heated);
 }
 
-void Particle::checkLifeSpan(BaseComponent* base, DurabilityComponent* dur,int x, int y, ParticleWorld& world) {
-    // Implement if LifeSpanComponent is added
-}
+void Particle::checkLifeSpan(BaseComponent* base, DurabilityComponent* dur,int x, int y, ParticleWorld& world) {}
 
 bool Particle::receiveHeat(BaseComponent* base, ThermalComponent* therm,  int x, int y,int heat, ParticleWorld& world) {
     if (!base || !therm || base->flags.isIgnited) return false;
@@ -72,14 +74,19 @@ bool Particle::receiveHeat(BaseComponent* base, ThermalComponent* therm,  int x,
     return true;
 }
 
-bool Particle::receiveCooling(BaseComponent* base, ThermalComponent* therm,int x, int y, int cooling, ParticleWorld& world) {
-    if (base && therm && base->flags.isIgnited) {
-        therm->flammabilityResistance += cooling;
-        if (therm->flammabilityResistance > 0) {
-            base->flags.isIgnited = false;
-            base->flags.didColorChange = true;
+bool Particle::receiveCooling(BaseComponent* base, ThermalComponent* therm, int x, int y, int cooling, ParticleWorld& world) {
+    if (base && therm) {
+        if (base->flags.isIgnited) {
+            therm->flammabilityResistance += cooling;
+            if (therm->flammabilityResistance > 0) {
+                base->flags.isIgnited = false;
+                base->flags.didColorChange = true;
+            }
+            return true;
+        } else if (base->flags.heated) {
+            therm->temperature -= cooling;
+            return true;
         }
-        return true;
     }
     return false;
 }
@@ -138,7 +145,6 @@ bool Particle::applyHeatToNeighborsIfIgnited(BaseComponent* base, ThermalCompone
             if (nx == x && ny == y) continue;
 
             if (world.inBounds(nx, ny)) {
-                // Since this acts on completely unknown neighbor particles, we DO fetch here.
                 if (auto* nBase = world.get<BaseComponent>(nx, ny)) {
                     Particle* neighborLogic = MaterialRegistry[static_cast<int>(nBase->id)];
                     if (neighborLogic) {
@@ -160,8 +166,118 @@ void Particle::spawnSparkIfIgnited(BaseComponent* base, int x, int y, ParticleWo
 
     if (world.inBounds(upX, upY) && world.isEmpty(upX, upY)) {
         MaterialID elementToSpawn = (Random::randFloat(0.0f, 1.0f) > 0.1f) 
-                                    ? MaterialID::Spark 
-                                    : MaterialID::Smoke;
+                                    ? GetMatID("Spark") 
+                                    : GetMatID("Smoke")  ;
         world.spawnParticle(elementToSpawn, upX, upY);
     }
+}
+
+bool Particle::executeGenericTraitsAndInteractions(const ParticleDef& def, BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world) {
+    if (!otherBase) return false;
+    Particle* otherLogic = MaterialRegistry[static_cast<int>(otherBase->id)];
+    if (!otherLogic) return false;
+
+    if (def.has_trait_cleans_color) otherLogic->cleanColor(otherBase, otherX, otherY, world);
+    if (def.has_trait_stains) otherLogic->stain(otherBase, otherX, otherY, def.stain_color, world);
+    
+    if (def.has_trait_ignites_when_touching_fire) {
+        if (otherBase->flags.isIgnited || otherBase->flags.heated) {
+            auto* myTherm = world.get<ThermalComponent>(myX, myY);
+            receiveHeat(myBase, myTherm, myX, myY, 100, world); 
+        }
+    }
+    
+    if (def.has_trait_burns_objects) {
+        auto* tTherm = world.get<ThermalComponent>(otherX, otherY);
+        otherLogic->receiveHeat(otherBase, tTherm, otherX, otherY, def.burns_objects_heat, world);
+        if (otherLogic->getGroup() != MaterialGroup::Gas) { 
+            die(myX, myY, world);
+            return true;
+        }
+    }
+
+    if (def.has_trait_coolant || def.has_trait_boils_on_heat) {
+        if (otherLogic->shouldApplyHeat(otherBase)) {
+            if (def.has_trait_coolant) {
+                auto* otherTherm = world.get<ThermalComponent>(otherX, otherY);
+                if (otherLogic->receiveCooling(otherBase, otherTherm, otherX, otherY, 5, world)) {
+                    if (def.transform_on_heat_result != 0) {
+                        dieAndReplace(myX, myY, def.transform_on_heat_result, world);
+                        return true;
+                    }
+                }
+            } else if (def.has_trait_boils_on_heat) {
+                if (def.transform_on_heat_result != 0) {
+                    dieAndReplace(myX, myY, def.transform_on_heat_result, world);
+                    return true;
+                }
+            }
+        }
+    }
+    
+    // --- UPDATED CORROSION LOGIC ---
+    if (def.has_trait_corrosive) {
+        auto* otherDur = world.get<DurabilityComponent>(otherX, otherY);
+        if (otherDur) {
+            bool willDie = (otherDur->health - def.corrosive_damage <= 0);
+            
+            if (otherLogic->corrode(otherBase, otherDur, otherX, otherY, def.corrosive_damage, world)) {
+                // Spawn flammable gas at the TARGET location if the target melted!
+                if (willDie) {
+                    world.spawnParticle(GetMatID("FlammableGas"), otherX, otherY);
+                }
+                
+                auto* myDur = world.get<DurabilityComponent>(myX, myY);
+                if (myDur) {
+                    myDur->health -= def.corrosive_self_cost;
+                    checkIfDead(myBase, myDur, myX, myY, world);
+                }
+                return true;
+            }
+        }
+    }
+
+    if (def.has_trait_magmatize) {
+         auto* otherDur = world.get<DurabilityComponent>(otherX, otherY);
+         otherLogic->magmatize(otherBase, otherDur, otherX, otherY, Random::randInt(0, def.magmatize_damage), world);
+    }
+
+    auto it = def.interactions.find(otherBase->id);
+    if (it != def.interactions.end()) {
+        const auto& interaction = it->second;
+        
+        if (interaction.target_action == InteractionAction::Replace) {
+            otherLogic->dieAndReplace(otherX, otherY, interaction.target_result, world);
+        } else if (interaction.target_action == InteractionAction::Explode) {
+            world.triggerExplosion(otherX, otherY, interaction.strength, interaction.strength);
+        }
+
+        if (interaction.self_action == InteractionAction::Replace) {
+            dieAndReplace(myX, myY, interaction.self_result, world);
+            
+            if (interaction.transform_neighbors) {
+                for (int ox = -1; ox <= 1; ++ox) {
+                    for (int oy = -1; oy <= 1; ++oy) {
+                        if (ox == 0 && oy == 0) continue;
+                        int tx = myX + ox;
+                        int ty = myY + oy;
+                        if (world.inBounds(tx, ty)) {
+                            BaseComponent* nb = world.get<BaseComponent>(tx, ty);
+                            if (nb) {
+                                Particle* nLogic = MaterialRegistry[static_cast<int>(nb->id)];
+                                if (nLogic && nLogic->getGroup() == MaterialGroup::Liquid) {
+                                    nLogic->dieAndReplace(tx, ty, interaction.self_result, world);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return true;
+        } else if (interaction.self_action == InteractionAction::Die) {
+            die(myX, myY, world);
+            return true;
+        }
+    }
+    return false;
 }

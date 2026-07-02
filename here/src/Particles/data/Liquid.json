@@ -1,0 +1,101 @@
+[
+  { 
+    "name": "Water", 
+    "group": "Liquid", 
+    "colors": ["#1464aa", "#1e6eb4"], 
+    "components": { 
+      "fluid": { "density": 5, "dispersion": 5 },
+      "durability": { "health": [50, 100], "explosionResistance": 2 } 
+    },
+    "traits": {
+      "coolant": true,
+      "cleans_color": true,
+      "immune_to_magmatize": true
+    },
+    "transform_conditions": {
+      "on_heat": { "result": "Steam" }
+    }
+  },
+  { 
+    "name": "Oil", 
+    "group": "Liquid", 
+    "colors": ["#50463c", "#41372d"], 
+    "components": { 
+      "fluid": { "density": 4, "dispersion": 4 }, 
+      "thermal": { "temperature": 0, "flammabilityResistance": 5, "heatFactor": 10, "fireDamage": 10 },
+      "durability": { "health": 1000, "explosionResistance": 0 }
+    },
+    "traits": {
+      "ignites_when_touching_fire": true
+    }
+  },
+  { 
+    "name": "Blood", 
+    "group": "Liquid", 
+    "colors": ["#880808", "#6e0000"], 
+    "components": { 
+      "fluid": { "density": 6, "dispersion": 5 },
+      "durability": { "health": [50, 100], "explosionResistance": 2 } 
+    }, 
+    "traits": { 
+      "stains": { "color": "#960000" },
+      "boils_on_heat": true
+    },
+    "transform_conditions": {
+      "on_heat": { "result": "Steam" }
+    }
+  },
+  { 
+    "name": "Acid", 
+    "group": "Liquid", 
+    "colors": ["#5ac83c", "#64d746"], 
+    "components": { 
+      "fluid": { "density": 2, "dispersion": 2 }, 
+      "durability": { "health": [40, 60], "explosionResistance": 0 } 
+    }, 
+    "traits": { 
+      "corrosive": { "damage": 10, "self_cost": 1 }, 
+      "stains": { "color": "#00ff0064" } 
+    }
+  },
+  { 
+    "name": "Cement", 
+    "group": "Liquid", 
+    "colors": ["#a5a391", "#969482"], 
+    "components": { 
+      "fluid": { "density": 9, "dispersion": 1 }, 
+      "durability": { "health": 200, "explosionResistance": 2 } 
+    }, 
+    "transform_conditions": { 
+      "on_rest": { "frames": 50, "result": "Stone" } 
+    } 
+  },
+  { 
+    "name": "Lava", 
+    "group": "Liquid", 
+    "colors": ["#c83200", "#dc3c0a", "#b42800"], 
+    "components": { 
+      "fluid": { "density": 10, "dispersion": 1 }, 
+      "thermal": { "temperature": 10, "flammabilityResistance": 0, "heatFactor": 10, "fireDamage": 0 }, 
+      "durability": { "health": [500, 1000], "explosionResistance": 0 } 
+    }, 
+    "heated_on_spawn": true,
+    "traits": { 
+      "magmatize": { "damage": 10 },
+      "immune_to_fire": true,
+      "spark_chance": 0.02
+    }, 
+    "transform_conditions": {
+      "on_min_temp": { "temp": 0, "result": "Stone", "transform_neighbors": true }
+    },
+    "interactions": { 
+      "Water": { 
+        "self_action": "replace", 
+        "self_result": "Stone", 
+        "target_action": "replace", 
+        "target_result": "Steam",
+        "transform_neighbors": true
+      } 
+    } 
+  }
+]

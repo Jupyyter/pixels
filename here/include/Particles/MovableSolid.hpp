@@ -1,8 +1,11 @@
 #pragma once
 #include "Particles/Particle.hpp"
+#include "ParticleWorld.hpp"
+#include "ParticleDef.hpp"
 #include "Random.hpp"
 #include <cmath>
 
+// --- Base Movable Physics Class ---
 class MovableSolid : public Particle {
 public:
     MovableSolid(MaterialID id) : Particle(id) {}
@@ -21,50 +24,22 @@ protected:
     virtual bool actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY, int& myX, int& myY, ParticleWorld& world, bool isFinal, bool isFirst, int depth) override;
 };
 
-// --- Derived Classes ---
-
-class Sand : public MovableSolid {
+// --- Generic Data-Driven Movable Solid ---
+class GenericMovableSolid : public MovableSolid {
+protected:
+    ParticleDef def;
 public:
-    Sand() : MovableSolid(MaterialID::Sand) {}
-    void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
-};
+    GenericMovableSolid(MaterialID id, const ParticleDef& definition) 
+        : MovableSolid(id), def(definition) {}
 
-class Dirt : public MovableSolid {
-public:
-    Dirt() : MovableSolid(MaterialID::Dirt) {}
-    void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
-};
-
-class Coal : public MovableSolid {
-public:
-    Coal() : MovableSolid(MaterialID::Coal) {}
-    void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
-    void spawnSparkIfIgnited(BaseComponent* base, int x, int y, ParticleWorld& world) override;
-};
-
-class Gunpowder : public MovableSolid {
-public:
-    Gunpowder() : MovableSolid(MaterialID::Gunpowder) {}
     void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
     void update(const ParticleContext& ctx, float dt, ParticleWorld& world) override;
-};
+    void checkIfDead(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) override;
+    bool actOnOther(BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world) override;
 
-class Snow : public MovableSolid {
-public:
-    Snow() : MovableSolid(MaterialID::Snow) {}
-    void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
-    void update(const ParticleContext& ctx, float dt, ParticleWorld& world) override;
     bool receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world) override;
-};
+    bool corrode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) override;
+    bool magmatize(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) override;
 
-class Ember : public MovableSolid {
-public:
-    Ember() : MovableSolid(MaterialID::Ember) {}
-    void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
-};
-
-class Salt : public MovableSolid {
-public:
-    Salt() : MovableSolid(MaterialID::Salt) {}
-    void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
+    void spawnSparkIfIgnited(BaseComponent* base, int x, int y, ParticleWorld& world) override;
 };

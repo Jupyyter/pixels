@@ -1,0 +1,39 @@
+[
+  { 
+    "name": "Stone", 
+    "group": "ImmovableSolid", 
+    "colors": ["#786e78", "#645f64"], 
+    "components": { 
+      "durability": { "health": 500, "explosionResistance": 4 } 
+    } 
+  },
+  { 
+    "name": "Brick", 
+    "group": "ImmovableSolid", 
+    "colors": ["#bc0300", "#a00a0a"], 
+    "components": { 
+      "durability": { "health": 500, "explosionResistance": 4 } 
+    } 
+  },
+  { 
+    "name": "SlimeMold", 
+    "group": "ImmovableSolid", 
+    "colors": ["#c93a6b", "#b4325a"], 
+    "components": { 
+      "durability": { "health": 40, "explosionResistance": 0 }, 
+      "thermal": { "temperature": 0, "flammabilityResistance": 10, "heatFactor": 5, "fireDamage": 3 } 
+    } 
+  },
+  { 
+    "name": "Wood", 
+    "group": "ImmovableSolid", 
+    "colors": ["#3c2814", "#46321e", "#37230f"], 
+    "components": { 
+      "durability": { "health": [100, 200], "explosionResistance": 0 }, 
+      "thermal": { "temperature": 0, "flammabilityResistance": 40, "heatFactor": 10, "fireDamage": 1 } 
+    },
+    "transform_conditions": {
+      "on_health_zero_ignited": { "result": "Ember", "chance": 0.05 }
+    }
+  }
+]

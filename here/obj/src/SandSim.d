@@ -85,7 +85,8 @@ obj/src/SandSim.o: src/SandSim.cpp include/SandSim.hpp \
  ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
  ../2dbox/include/box2d/types.h include/EntityComponents.hpp \
  include/RigidBody.hpp ../imgui-src/imgui.h ../imgui-src/imconfig.h \
- ../imgui-src/imgui-SFML.h ../imgui-src/imgui-SFML_export.h
+ ../imgui-src/imgui-SFML.h ../imgui-src/imgui-SFML_export.h \
+ include/CustomLogicRegistry.hpp include/Particles/ParticleDef.hpp
 include/SandSim.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp:
@@ -185,3 +186,5 @@ include/RigidBody.hpp:
 ../imgui-src/imconfig.h:
 ../imgui-src/imgui-SFML.h:
 ../imgui-src/imgui-SFML_export.h:
+include/CustomLogicRegistry.hpp:
+include/Particles/ParticleDef.hpp:

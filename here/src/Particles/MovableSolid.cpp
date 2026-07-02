@@ -5,16 +5,11 @@
 
 static const float MAX_VEL_Y = 124.0f;
 
-// --- MOVABLE SOLID BASE IMPLEMENTATION ---
-
 void MovableSolid::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     Particle::onSpawn(index, x, y, world);
-
-    // Initialized with forced constructors
     world.add<KinematicsComponent>(x, y, KinematicsComponent(
         sf::Vector2f(0.0f, 124.0f), 0.0f, 0.0f, true, 0
     ));
-
     world.add<DurabilityComponent>(x, y, DurabilityComponent(500, 1));
 }
 
@@ -25,7 +20,6 @@ void MovableSolid::update(const ParticleContext& ctx, float dt, ParticleWorld& w
     kin->velocity.y += (GRAVITY * dt);
     if (kin->velocity.y > MAX_VEL_Y) kin->velocity.y = MAX_VEL_Y;
     
-    // --- NEW FRICTION LOGIC ---
     if (kin->isFreeFalling) {
         kin->velocity.x *= 0.9f; 
     } else {
@@ -82,21 +76,17 @@ void MovableSolid::update(const ParticleContext& ctx, float dt, ParticleWorld& w
             applyHeatToNeighborsIfIgnited(base, therm, curX, curY, world);
             spawnSparkIfIgnited(base, curX, curY, world);
             
-            // RESOLUTION FOR EVER-BURNING RESIDUE AND IMMORTAL EMBERS: 
-            // All flaming payload copies systematically consume themselves dynamically,
-            // correctly preventing immortal floating blazing sand leftovers eternally clogging map physics bounds gracefully flawlessly safely properly smoothly! 
             auto* dur = world.getFast<DurabilityComponent>(ctx, curX, curY);
-            if (dur && base->id != MaterialID::Coal) { // Prevent unigniting primary perpetual fuel lines implicitly accurately smoothly logically reliably smoothly efficiently smartly effortlessly appropriately explicitly functionally efficiently identically seamlessly seamlessly organically dynamically completely! 
-                dur->health -= (base->id == MaterialID::Ember) ? 1 : 2; 
+            if (dur && base->id != GetMatID("Coal")) {
+                dur->health -= (base->id == GetMatID("Ember")) ? 1 : 2; 
                 
                 if (dur->health <= 0) {
-                    if (base->id == MaterialID::Ember) {
+                    if (base->id == GetMatID("Ember")) {
                         die(curX, curY, world); 
                     } else {
-                        // Debris disintegrates appropriately elegantly!
-                        dieAndReplace(curX, curY, MaterialID::Smoke, world);
+                        dieAndReplace(curX, curY, GetMatID("Smoke"), world);
                     }
-                    return; // Crucial bounds interruption explicitly avoiding dereference mismatches correctly stably securely efficiently effectively gracefully safely smartly flawlessly automatically intuitively safely identically cleanly cleanly efficiently logically intuitively identically safely securely inherently intelligently successfully cleanly effortlessly intuitively accurately naturally reliably explicitly optimally smoothly stably implicitly inherently perfectly organically seamlessly reliably dynamically seamlessly safely perfectly organically natively implicitly effortlessly appropriately successfully functionally properly natively
+                    return; 
                 }
             }
         }
@@ -118,6 +108,7 @@ void MovableSolid::update(const ParticleContext& ctx, float dt, ParticleWorld& w
         }
     }
 }
+
 bool MovableSolid::actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY, int& myX, int& myY, 
                                  ParticleWorld& world, bool isFinal, bool isFirst, int depth) 
 {
@@ -149,7 +140,8 @@ bool MovableSolid::actOnNeighbor(const ParticleContext& ctx, int targetX, int ta
 
     if (targetBase) {
         Particle* logic = MaterialRegistry[static_cast<int>(targetBase->id)];
-        if (logic && logic->getGroup() == MaterialGroup::Liquid) {
+        // FIX: Allow solid to fall through Liquid AND Gas
+        if (logic && (logic->getGroup() == MaterialGroup::Liquid || logic->getGroup() == MaterialGroup::Gas)) {
             myKin->isFreeFalling = true;
             world.swapParticles(myX, myY, targetX, targetY);
             myX = targetX; myY = targetY;
@@ -216,82 +208,115 @@ float MovableSolid::getAverageVelOrGravity(float myVel, float otherVel) {
     return (avg < 0) ? avg : std::min(avg, 124.0f);
 }
 
-// --- SUBCLASS IMPLEMENTATIONS ---
+// --- GENERIC DATA-DRIVEN MOVABLE SOLID ---
 
-void Sand::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+void GenericMovableSolid::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     MovableSolid::onSpawn(index, x, y, world);
-    if (auto* kin = world.get<KinematicsComponent>(x, y)) kin->velocity.x = (Random::randBool()) ? -1.0f : 1.0f;
+
+    if (auto* base = world.get<BaseComponent>(x, y)) {
+        base->color = def.getRandomColor();
+        if (def.ignite_on_spawn) base->flags.isIgnited = true;
+        if (def.heated_on_spawn) base->flags.heated = true;
+    }
+
+    if (def.scatter_on_spawn) {
+        if (auto* kin = world.get<KinematicsComponent>(x, y)) {
+            kin->velocity.x = (Random::randBool()) ? -1.0f : 1.0f;
+        }
+    }
+
+    if (def.has_durability) {
+        int hp = (def.dur_health_max > def.dur_health) ? Random::randInt(def.dur_health, def.dur_health_max) : def.dur_health;
+        if (auto* dur = world.get<DurabilityComponent>(x, y)) {
+            dur->health = hp;
+            dur->explosionResistance = def.dur_expRes;
+        }
+    }
+    if (def.has_thermal) {
+        world.add<ThermalComponent>(x, y, ThermalComponent(def.therm_temp, def.therm_flamRes, def.therm_heat, def.therm_fireDmg));
+    }
 }
 
-void Dirt::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    MovableSolid::onSpawn(index, x, y, world);
-}
-
-void Coal::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    MovableSolid::onSpawn(index, x, y, world);
-    world.add<ThermalComponent>(x, y, ThermalComponent(0, 100, 10, 1));
-}
-
-void Coal::spawnSparkIfIgnited(BaseComponent* base, int x, int y, ParticleWorld& world) {
-    if (Random::randInt(0, 20) <= 2) Particle::spawnSparkIfIgnited(base, x, y, world); 
-}
-
-void Gunpowder::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    MovableSolid::onSpawn(index, x, y, world);
-    world.add<ThermalComponent>(x, y, ThermalComponent(0, 10, 10, 0));
-}
-
-void Gunpowder::update(const ParticleContext& ctx, float dt, ParticleWorld& world) {
+void GenericMovableSolid::update(const ParticleContext& ctx, float dt, ParticleWorld& world) {
     auto* base = world.getFast<BaseComponent>(ctx, ctx.x, ctx.y);
-    auto* dur = world.getFast<DurabilityComponent>(ctx, ctx.x, ctx.y); 
+    if (!base || base->id != this->id) return;
     
-    if (base && base->id == MaterialID::Gunpowder && base->flags.isIgnited && dur) {
-        if (++dur->health >= 7) { 
-             world.triggerExplosion(ctx.x, ctx.y, 15, 10);
-             die(ctx.x, ctx.y, world);
-             return; 
+    if (def.has_trait_explosive_on_ignite && base->flags.isIgnited) {
+        auto* dur = world.getFast<DurabilityComponent>(ctx, ctx.x, ctx.y);
+        if (dur) {
+            dur->health--;
+            if (dur->health <= 0) {
+                world.triggerExplosion(ctx.x, ctx.y, def.explosive_radius, def.explosive_strength);
+                die(ctx.x, ctx.y, world);
+                return;
+            }
+        }
+    }
+
+    if (def.flutter_fall) {
+        auto* kin = world.getFast<KinematicsComponent>(ctx, ctx.x, ctx.y);
+        if (kin && kin->velocity.y > 62.0f) {
+            kin->velocity.y = (Random::randFloat(0,1) > 0.3f) ? 62.0f : 124.0f;
         }
     }
     
     MovableSolid::update(ctx, dt, world);
-}
 
-void Snow::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    MovableSolid::onSpawn(index, x, y, world);
-    if (auto* kin = world.get<KinematicsComponent>(x, y)) kin->velocity.y = 62.0f; 
-    world.add<ThermalComponent>(x, y, ThermalComponent(0, 100, 0, 0));
-}
+    base = world.getFast<BaseComponent>(ctx, ctx.x, ctx.y);
+    if (!base || base->id != this->id) return;
 
-void Snow::update(const ParticleContext& ctx, float dt, ParticleWorld& world) {
-    if (auto* kin = world.getFast<KinematicsComponent>(ctx, ctx.x, ctx.y)) {
-        if (kin->velocity.y > 62.0f) kin->velocity.y = (Random::randFloat(0,1) > 0.3f) ? 62.0f : 124.0f;
+    if (def.transform_on_rest_frames > 0) {
+        auto* kin = world.getFast<KinematicsComponent>(ctx, ctx.x, ctx.y);
+        if (kin && kin->stoppedMovingCount >= def.transform_on_rest_frames) { 
+            dieAndReplace(ctx.x, ctx.y, def.transform_on_rest_result, world);
+        }
     }
-    MovableSolid::update(ctx, dt, world);
 }
 
-bool Snow::receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world) {
-    if (heat > 0) {
-        dieAndReplace(x, y, MaterialID::Water, world);
+void GenericMovableSolid::checkIfDead(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) {
+    if (dur && dur->health <= 0) {
+        if (def.transform_on_health_zero_result != static_cast<MaterialID>(0)) {
+            dieAndReplace(x, y, def.transform_on_health_zero_result, world);
+        } else {
+            die(x, y, world);
+        }
+    }
+}
+
+bool GenericMovableSolid::actOnOther(BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world) {
+    if (executeGenericTraitsAndInteractions(def, myBase, myX, myY, otherBase, otherX, otherY, world)) return true;
+    return MovableSolid::actOnOther(myBase, myX, myY, otherBase, otherX, otherY, world);
+}
+
+bool GenericMovableSolid::receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world) {
+    if (def.transform_on_heat_result != 0 && heat > 0) {
+        dieAndReplace(x, y, def.transform_on_heat_result, world);
         return true;
     }
-    return false;
+    if (!def.has_thermal) return false;
+    return Particle::receiveHeat(base, therm, x, y, heat, world);
 }
 
-void Ember::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    MovableSolid::onSpawn(index, x, y, world);
-    if (auto* base = world.get<BaseComponent>(x, y)) base->flags.isIgnited = true;
-    if (auto* dur = world.get<DurabilityComponent>(x, y)) dur->health = Random::randInt(250, 350); 
-    world.add<ThermalComponent>(x, y, ThermalComponent(5, 0, 10, 1));
+bool GenericMovableSolid::corrode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) {
+    if (def.immune_to_corrosion || def.has_trait_corrosive) return false;
+    return Particle::corrode(base, dur, x, y, damage, world);
+}
+bool GenericMovableSolid::magmatize(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) {
+    if (def.has_trait_magmatize) return false;
+    return Particle::magmatize(base, dur, x, y, damage, world);
 }
 
-void Salt::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    MovableSolid::onSpawn(index, x, y, world);
+void GenericMovableSolid::spawnSparkIfIgnited(BaseComponent* base, int x, int y, ParticleWorld& world) {
+    if (def.spark_chance >= 0.0f) {
+        if (!base || !base->flags.isIgnited) return;
+        int upX = x, upY = y - 1;
+        if (world.inBounds(upX, upY) && world.isEmpty(upX, upY)) {
+            if (Random::randFloat(0,1) < def.spark_chance) {
+                MaterialID spawnId = (Random::randFloat(0.0f, 1.0f) > 0.1f) ? GetMatID("Spark") : GetMatID("Smoke");
+                world.spawnParticle(spawnId, upX, upY);
+            }
+        }
+    } else {
+        Particle::spawnSparkIfIgnited(base, x, y, world);
+    }
 }
-
-static Sand sand_instance;
-static Dirt dirt_instance;
-static Coal coal_instance;
-static Gunpowder gunpowder_instance;
-static Snow snow_instance;
-static Ember ember_instance;
-static Salt salt_instance;

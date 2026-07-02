@@ -7,13 +7,11 @@
 #include <cstdlib>
 
 class ParticleWorld;
-struct ParticleContext; // Forward declaration (Defined in ParticleWorld.hpp)
+struct ParticleContext;
+struct ParticleDef; // Forward Declaration to fix cyclic dependency
 
-// Global Registry for Particle Logic Classes (The "Brains")
 class Particle;
 extern Particle* MaterialRegistry[256];
-
-// --- COMPONENT SYSTEM (Optimized for SoA + Bitmask) ---
 
 struct ParticleFlags {
     bool hasBeenUpdatedThisFrame : 1;
@@ -26,7 +24,6 @@ struct ParticleFlags {
     bool reserved : 1;
     bool isRigidBodyPart : 1;
 
-    // Default Constructor
     ParticleFlags() 
         : hasBeenUpdatedThisFrame(false), isDead(false), didColorChange(false),
           discolored(false), heated(false), isIgnited(false), 
@@ -43,15 +40,13 @@ struct BaseComponent {
     MaterialID id;
     sf::Color color;
     ParticleFlags flags;
-    uint8_t compMask = 0; // BITMASK: 0 = Empty/Air. 1 = Base. >1 = Has Optional Components.
+    uint8_t compMask = 0; 
 
-    // Default Constructor (Required for Chunk Array allocation)
     BaseComponent() 
         : id(static_cast<MaterialID>(0)), color(sf::Color::Transparent), flags(), compMask(0) {}
 
-    // Spawn Constructor
     BaseComponent(MaterialID matId, sf::Color col, ParticleFlags flg) 
-        : id(matId), color(col), flags(flg), compMask(1) {} // 1 = HAS_BASE
+        : id(matId), color(col), flags(flg), compMask(1) {} 
 };
 
 struct KinematicsComponent {
@@ -61,7 +56,6 @@ struct KinematicsComponent {
     bool isFreeFalling;
     int stoppedMovingCount;
 
-    // Default Constructor
     KinematicsComponent() 
         : velocity(0.f, 0.f), xThreshold(0.f), yThreshold(0.f), 
           isFreeFalling(true), stoppedMovingCount(0) {}
@@ -104,7 +98,6 @@ struct FluidComponent {
         : density(den), dispersionRate(disp) {}
 };
 
-
 class Particle {
 public:
     static Particle** GetRegistry() {
@@ -114,7 +107,6 @@ public:
     
     MaterialID id;
 
-    // --- CONSTRUCTOR (AUTO-REGISTRATION) ---
     Particle(MaterialID matId) : id(matId) {
         if (MaterialRegistry[static_cast<int>(matId)] == nullptr) {
             MaterialRegistry[static_cast<int>(matId)] = this;
@@ -123,36 +115,24 @@ public:
 
     virtual ~Particle() = default;
 
-    // --- COMPONENT SETUP ---
     virtual void onSpawn(uint32_t index, int x, int y, ParticleWorld& world);
-
-    // --- LOGIC (OPTIMIZED) ---
     virtual void update(const ParticleContext& ctx, float dt, ParticleWorld& world) = 0;
     
-    // Core Actions
     virtual void die(int x, int y, ParticleWorld& world);
     virtual void dieAndReplace(int x, int y, MaterialID newType, ParticleWorld& world);
 
-    // Interaction Logic
     virtual bool actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY, int& myX, int& myY, ParticleWorld& world, bool isFinal, bool isFirst, int depth) { return false; }
-    
-    // Pass components directly so the caller doesn't force a re-fetch
-    virtual bool actOnOther(BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world) {
-        return false;
-    }
+    virtual bool actOnOther(BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world) { return false; }
 
-    // Specific Behaviors (ECS Driven with Direct Pointers)
-    virtual bool corrode(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world);
+    virtual bool corrode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world);
     virtual void checkIfDead(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world);
     virtual bool applyHeatToNeighborsIfIgnited(BaseComponent* base, ThermalComponent* therm, int x, int y, ParticleWorld& world);
     virtual void spawnSparkIfIgnited(BaseComponent* base, int x, int y, ParticleWorld& world);
 
     virtual void takeEffectsDamage(BaseComponent* base, DurabilityComponent* dur, ThermalComponent* therm, int x, int y, ParticleWorld& world);
 
-    // Helpers
     virtual bool didNotMove(int currentX, int currentY, int originalX, int originalY);
     virtual bool shouldApplyHeat(BaseComponent* base);
-
     virtual void checkLifeSpan(BaseComponent* base, DurabilityComponent* dur,int x, int y, ParticleWorld& world);
 
     virtual bool receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world);
@@ -162,16 +142,12 @@ public:
     virtual bool explode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int strength, ParticleWorld& world);
     virtual bool infect(int x, int y, ParticleWorld& world);
 
-    // Color Logic
     virtual bool stain(BaseComponent* base, int x, int y, sf::Color newColor, ParticleWorld& world);
     virtual bool cleanColor(BaseComponent* base, int x, int y, ParticleWorld& world);
+    
+    bool executeGenericTraitsAndInteractions(const ParticleDef& def, BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world);
 
-    // Static helper for colors
-    static sf::Color getRandomColor(MaterialID id) {
-        const auto& props = GetProps(id); 
-        if (props.palette.empty()) return sf::Color::White;
-        return props.palette[std::rand() % props.palette.size()];
-    }
+    static sf::Color getRandomColor(MaterialID id);
     
     virtual MaterialGroup getGroup() const = 0;
 };

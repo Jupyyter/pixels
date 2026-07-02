@@ -6,6 +6,7 @@
 #include <imgui.h>
 #include <imgui-SFML.h>
 #include <vector>
+#include "CustomLogicRegistry.hpp"
 
 static bool g_isDraggingLine = false;
 static bool g_isDraggingEraseLine = false;
@@ -14,11 +15,14 @@ static sf::Vector2f g_lineCurrentPos;
 
 constexpr float CAMERA_MARGIN = 50.0f; 
 
+
+
 SandSimApp::SandSimApp() : 
     running(true), simulationRunning(true), frameTime(0.0f), 
     currentState(GameState::MENU),
     currentZoom(1.0f), isPanning(false)
 {
+
     window.create(sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}), "Sand Simulation - SFML 3");
     window.setVerticalSyncEnabled(true); 
 
@@ -593,17 +597,31 @@ if (entitySystem) {
 }
 
 void SandSimApp::startGame(const std::string& worldFile) {
+    // 1. Create the base world FIRST so it exists in memory
     world = std::make_unique<ParticleWorld>(VIEW_WIDTH, VIEW_HEIGHT);
+
+    // 2. Load all materials BEFORE the entities or save files try to use them!
+    world->loadAllMaterials({
+        "src/Particles/data/Special.json",
+        "src/Particles/data/ImmovableSolid.json",
+        "src/Particles/data/Liquid.json",
+        "src/Particles/data/Gas.json",
+        "src/Particles/data/MovableSolid.json"
+    });
+
+    // 3. NOW it is safe to set up the Entity System using the World
     entitySystem = std::make_unique<EntitySystem>(world->getRigidBodySystem()->getWorldId());
-    
     world->setEntitySystem(entitySystem.get());
     
+    // 4. Load the save file (if one exists)
     if (!worldFile.empty()) {
         world->loadWorld(worldFile);
     }
     
+    // 5. Setup the UI
     ui = std::make_unique<UI>(window, world.get());
     
+    // 6. Reset camera
     currentZoom = 1.0f;
     gameView.setSize({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
     gameView.setCenter({static_cast<float>(WORLD_WIDTH) / 2.f, static_cast<float>(WORLD_HEIGHT) / 2.f});
@@ -611,7 +629,6 @@ void SandSimApp::startGame(const std::string& worldFile) {
     currentState = GameState::PLAYING;
     handleResize(window.getSize().x, window.getSize().y);
 }
-
 void SandSimApp::returnToMenu() {
     entitySystem.reset(); 
     world.reset();
@@ -670,7 +687,7 @@ void SandSimApp::handleMouseHeld() {
 void SandSimApp::addParticles(const sf::Vector2f& worldPos) {
     if (world && ui) {
         MaterialID currentMat = ui->getCurrentMaterialID();
-        if (currentMat == MaterialID::Explosion) {
+        if (currentMat == GetMatID("Explosion")) {
             int radius = static_cast<int>(ui->getSelectionRadius());
             world->triggerExplosion(static_cast<int>(worldPos.x), static_cast<int>(worldPos.y), radius, 20);
         } else {
@@ -706,7 +723,7 @@ void SandSimApp::eraseParticles(const sf::Vector2f& worldPos) {
 
 void SandSimApp::addParticlesLine(const sf::Vector2f& start, const sf::Vector2f& end) {
     MaterialID currentMat = ui->getCurrentMaterialID();
-    if (currentMat == MaterialID::Explosion) {
+    if (currentMat == GetMatID("Explosion")) {
          float dx = end.x - start.x, dy = end.y - start.y;
          float dist = std::sqrt(dx*dx + dy*dy);
          float stepSize = std::max(1.0f, ui->getSelectionRadius()); 

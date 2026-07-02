@@ -1,0 +1,78 @@
+[
+  { 
+    "name": "Steam", 
+    "group": "Gas", 
+    "colors": ["#dcdce696", "#e6e6ff96"], 
+    "components": { 
+      "fluid": { "density": 5, "dispersion": 1 }, 
+      "durability": { "health": [200, 500], "explosionResistance": 0 } 
+    }, 
+    "gas_buoyancy": 1.0, 
+    "gas_chaos": 1.8, 
+    "decay_rate": 1,
+    "transform_conditions": { 
+      "on_health_zero": { "result": "Water" } 
+    } 
+  },
+  { 
+    "name": "FlammableGas", 
+    "group": "Gas", 
+    "colors": ["#64ff6464", "#14e61464"], 
+    "components": { 
+      "fluid": { "density": 1, "dispersion": 1 }, 
+      "thermal": { "temperature": 0, "flammabilityResistance": 100, "heatFactor": 30, "fireDamage": 2 }, 
+      "durability": { "health": [40, 150], "explosionResistance": 0 } 
+    },
+    "decay_rate_ignited": 2,
+    "traits": {
+      "immune_to_corrosion": true
+    },
+    "transform_conditions": { 
+      "on_health_zero": { "result": "Smoke" } 
+    } 
+  },
+  { 
+    "name": "Smoke", 
+    "group": "Gas", 
+    "colors": ["#32323296", "#3c3c3c96", "#28282896"], 
+    "components": { 
+      "fluid": { "density": 3, "dispersion": 1 }, 
+      "durability": { "health": [100, 250], "explosionResistance": 0 } 
+    }, 
+    "gas_buoyancy": 0.8, 
+    "gas_chaos": 1.2,
+    "decay_rate": 1
+  },
+  { 
+    "name": "Spark", 
+    "group": "Gas", 
+    "colors": ["#59230e", "#783214"], 
+    "components": { 
+      "thermal": { "temperature": 3, "flammabilityResistance": 25, "heatFactor": 10, "fireDamage": 1 }, 
+      "durability": { "health": [5, 30], "explosionResistance": 0 } 
+    },
+    "ignite_on_spawn": true,
+    "gas_buoyancy": 1.0,
+    "gas_chaos": 1.8,
+    "decay_rate": 1,
+    "traits": {
+      "burns_objects": { "heat": 10 }
+    }
+  },
+  { 
+    "name": "ExplosionSpark", 
+    "group": "Gas", 
+    "colors": ["#ffa500", "#ff8c00"], 
+    "components": { 
+      "thermal": { "temperature": 3, "flammabilityResistance": 25, "heatFactor": 10, "fireDamage": 1 }, 
+      "durability": { "health": [5, 30], "explosionResistance": 0 } 
+    }, 
+    "ignite_on_spawn": true,
+    "gas_buoyancy": 1.0,
+    "gas_chaos": 2.0,
+    "decay_rate": 1,
+    "traits": {
+      "burns_objects": { "heat": 10 }
+    }
+  }
+]

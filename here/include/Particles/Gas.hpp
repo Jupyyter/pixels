@@ -1,7 +1,9 @@
 #pragma once
 #include "Particles/Particle.hpp"
 #include "ParticleWorld.hpp"
+#include "ParticleDef.hpp"
 
+// --- Base Physics Gas Class ---
 class Gas : public Particle {
 protected:
     float buoyancy;
@@ -22,38 +24,16 @@ public:
     void swapGasForDensities(const ParticleContext& ctx, ParticleWorld& world, int& myX, int& myY, int targetX, int targetY);
 };
 
-class Steam : public Gas {
+// --- Generic Data-Driven Gas ---
+class GenericGas : public Gas {
+protected:
+    ParticleDef def;
 public:
-    Steam() : Gas(MaterialID::Steam, 1.0f, 1.8f) {} 
+    GenericGas(MaterialID id, const ParticleDef& definition);
+
     void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
     void checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) override;
-};
-
-class FlammableGas : public Gas {
-public:
-    FlammableGas() : Gas(MaterialID::FlammableGas, 1.0f, 1.8f) {}
-    void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
-    void checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) override;
-};
-
-class Spark : public Gas {
-public:
-    Spark() : Gas(MaterialID::Spark, 1.0f, 1.8f) {}
-    void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
-    bool actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY, int& myX, int& myY, ParticleWorld& world, bool isFinal, bool isFirst, int depth) override;
-    void spawnSparkIfIgnited(BaseComponent* base, int x, int y, ParticleWorld& world) override {}
-};
-
-class ExplosionSpark : public Gas {
-public:
-    ExplosionSpark() : Gas(MaterialID::ExplosionSpark, 1.0f, 2.0f) {}
-    void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
-    bool actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY, int& myX, int& myY, ParticleWorld& world, bool isFinal, bool isFirst, int depth) override;
-};
-
-class Smoke : public Gas {
-public:
-    Smoke() : Gas(MaterialID::Smoke, 0.8f, 1.2f) {}
-    void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
-    void checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) override;
+    bool actOnOther(BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world) override;
+    
+    bool corrode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) override;
 };

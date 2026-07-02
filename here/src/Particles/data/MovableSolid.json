@@ -1,0 +1,63 @@
+[
+  { 
+    "name": "Sand", 
+    "group": "MovableSolid", 
+    "colors": ["#966432", "#aa783c"], 
+    "scatter_on_spawn": true 
+  },
+  { 
+    "name": "Dirt", 
+    "group": "MovableSolid", 
+    "colors": ["#b69f66", "#a08c5a"] 
+  },
+  { 
+    "name": "Coal", 
+    "group": "MovableSolid", 
+    "colors": ["#737473", "#5a5a5a"], 
+    "components": { 
+      "thermal": { "temperature": 0, "flammabilityResistance": 100, "heatFactor": 10, "fireDamage": 1 } 
+    },
+    "traits": {
+      "spark_chance": 0.15
+    }
+  },
+  { 
+    "name": "Gunpowder", 
+    "group": "MovableSolid", 
+    "colors": ["#3c3c3c", "#2d2d2d"], 
+    "components": { 
+      "durability": { "health": 7, "explosionResistance": 0 },
+      "thermal": { "temperature": 0, "flammabilityResistance": 10, "heatFactor": 10, "fireDamage": 0 } 
+    },
+    "traits": {
+      "explosive_on_ignite": { "radius": 15, "strength": 10 }
+    }
+  },
+  { 
+    "name": "Snow", 
+    "group": "MovableSolid", 
+    "colors": ["#fffafa", "#ebf0ff"], 
+    "components": { 
+      "thermal": { "temperature": 0, "flammabilityResistance": 100, "heatFactor": 0, "fireDamage": 0 } 
+    },
+    "flutter_fall": true,
+    "transform_conditions": {
+      "on_heat": { "result": "Water" }
+    }
+  },
+  { 
+    "name": "Ember", 
+    "group": "MovableSolid", 
+    "colors": ["#c87814", "#dc8c28"], 
+    "ignite_on_spawn": true, 
+    "components": { 
+      "durability": { "health": [250, 350], "explosionResistance": 0 }, 
+      "thermal": { "temperature": 5, "flammabilityResistance": 0, "heatFactor": 10, "fireDamage": 1 } 
+    } 
+  },
+  { 
+    "name": "Salt", 
+    "group": "MovableSolid", 
+    "colors": ["#c8b4be", "#dcd2d7"] 
+  }
+]

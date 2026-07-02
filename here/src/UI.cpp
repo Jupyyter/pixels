@@ -5,6 +5,9 @@
 #include <imgui-SFML.h>
 #include <filesystem>
 #include <iostream>
+#include <algorithm>
+#include "Particles/ParticleDef.hpp"
+
 
 UI::UI(sf::RenderWindow& window, ParticleWorld* worldPtr) : world(worldPtr) {
     loadImageAssets();
@@ -138,12 +141,13 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
             int wx = static_cast<int>(mouseWorldPos.x);
             int wy = static_cast<int>(mouseWorldPos.y);
             BaseComponent* base = world->get<BaseComponent>(wx, wy);
+            
             if (base && base->compMask != 0) {
-                for (const auto& mat : ALL_MATERIALS) {
-                    if (mat.id == base->id) {
-                        hoveredName = mat.name;
-                        break;
-                    }
+                auto it = GlobalParticleDefs.find(base->id);
+                if (it != GlobalParticleDefs.end()) {
+                    hoveredName = it->second.name;
+                } else {
+                    hoveredName = "Missing ID: " + std::to_string(static_cast<int>(base->id));
                 }
             }
         }
@@ -287,24 +291,41 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
 }
 
 void UI::drawMaterialTabs() {
+    // 1. Copy to a vector and sort them by ID so the UI order is consistent
+    std::vector<std::pair<MaterialID, ParticleDef>> sortedMaterials(
+        GlobalParticleDefs.begin(), GlobalParticleDefs.end()
+    );
+    std::sort(sortedMaterials.begin(), sortedMaterials.end(), 
+        [](const auto& a, const auto& b) {
+            return static_cast<uint8_t>(a.first) < static_cast<uint8_t>(b.first);
+        });
+
     if (ImGui::BeginTabBar("Categories")) {
         auto renderGroup = [&](const char* label, MaterialGroup group) {
             if (ImGui::BeginTabItem(label)) {
-                for (const auto& mat : ALL_MATERIALS) {
-                    if (mat.group == group) {
-                        sf::Color c = sf::Color::Magenta;
-                        if (!mat.palette.empty()) c = mat.palette[0]; 
+                
+                // 2. Iterate over the sorted dynamic definitions
+                for (const auto& [id, def] : sortedMaterials) {
+                    if (def.group == group) {
+                        
+                        // Grab a random color from the JSON schema for the button
+                        sf::Color c = def.colors.empty() ? sf::Color::Magenta : def.colors[0];
 
                         ImVec4 col = ImVec4(c.r/255.f, c.g/255.f, c.b/255.f, 1.0f);
                         ImGui::PushStyleColor(ImGuiCol_Button, col);
-                        if (ImGui::Button(mat.name.c_str(), ImVec2(80, 40))) currentMaterial = mat.id;
-                        if (currentMaterial == mat.id) {
+                        
+                        if (ImGui::Button(def.name.c_str(), ImVec2(80, 40))) {
+                            currentMaterial = id;
+                        }
+                        
+                        if (currentMaterial == id) {
                             ImGui::GetWindowDrawList()->AddRect(
                                 ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), 
                                 IM_COL32(255, 255, 0, 255), 0, 0, 2.0f
                             );
                         }
                         ImGui::PopStyleColor();
+                        
                         if (ImGui::GetItemRectMax().x < ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 90)
                             ImGui::SameLine();
                     }

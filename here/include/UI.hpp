@@ -40,7 +40,7 @@ private:
     bool showChunkBounds = false;
     bool showColliders = false;
     
-    MaterialID currentMaterial = MaterialID::Sand; 
+    MaterialID currentMaterial = 1;
     
     void drawMaterialTabs();
     void loadImageAssets();

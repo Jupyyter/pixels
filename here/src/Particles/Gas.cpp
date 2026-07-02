@@ -3,18 +3,17 @@
 #include <algorithm> 
 #include <cmath> 
 
+// --- BASE GAS IMPLEMENTATION (Physics) ---
 Gas::Gas(MaterialID id, float buoy, float chaos) 
     : Particle(id), buoyancy(buoy), chaosLevel(chaos) {}
 
 void Gas::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     Particle::onSpawn(index, x, y, world);
-    
     world.add<KinematicsComponent>(x, y, KinematicsComponent(sf::Vector2f(0, 0), 0.0f, 0.0f, true, 0));
-    world.add<FluidComponent>(x, y, FluidComponent(1, 1));
+    world.add<FluidComponent>(x, y, FluidComponent(1, 1)); 
 }
 
-void Gas::update(const ParticleContext& ctx, float dt, ParticleWorld& world) 
-{
+void Gas::update(const ParticleContext& ctx, float dt, ParticleWorld& world) {
     auto* kin = ctx.kinematics ? &ctx.kinematics[ctx.index] : world.get<KinematicsComponent>(ctx.x, ctx.y);
     if (!kin) return;
 
@@ -151,132 +150,64 @@ void Gas::swapGasForDensities(const ParticleContext& ctx, ParticleWorld& world, 
     myX = targetX; myY = targetY;
 }
 
-// --- SUBCLASSES ---
 
-void Steam::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
+// --- GENERIC GAS IMPLEMENTATION ---
+
+GenericGas::GenericGas(MaterialID id, const ParticleDef& definition)
+    : Gas(id, definition.gas_buoyancy, definition.gas_chaos), def(definition) {}
+
+void GenericGas::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     Gas::onSpawn(index, x, y, world);
-    if (auto* f = world.get<FluidComponent>(x, y)) f->density = 5;
-    
-    // Decreased significantly allowing immediate transformations naturally quicker 
-    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(200, 500), 0));
-}
 
-void Steam::checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) {
-    if (dur && --dur->health <= 0) {
-        if (Random::randFloat(0, 1) > 0.5f) {
-            die(x, y, world);
-        } else {
-            dieAndReplace(x, y, MaterialID::Water, world);
+    if (auto* base = world.get<BaseComponent>(x, y)) {
+        base->color = def.getRandomColor();
+        if (def.ignite_on_spawn) base->flags.isIgnited = true;
+        if (def.heated_on_spawn) base->flags.heated = true;
+    }
+
+    if (def.has_fluid) {
+        if (auto* fluid = world.get<FluidComponent>(x, y)) {
+            fluid->density = def.fluid_density;
+            fluid->dispersionRate = def.fluid_dispersion;
         }
+    }
+    if (def.has_durability) {
+        int hp = (def.dur_health_max > def.dur_health) ? Random::randInt(def.dur_health, def.dur_health_max) : def.dur_health;
+        world.add<DurabilityComponent>(x, y, DurabilityComponent(hp, def.dur_expRes));
+    }
+    if (def.has_thermal) {
+        world.add<ThermalComponent>(x, y, ThermalComponent(def.therm_temp, def.therm_flamRes, def.therm_heat, def.therm_fireDmg));
     }
 }
 
-void FlammableGas::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    Gas::onSpawn(index, x, y, world);
-    // Explicit extreme thermal propagation causing explosions optimally
-    world.add<ThermalComponent>(x, y, ThermalComponent(0, 100, 30, 2));
-    
-    // Default Lifespan threshold for standard dispersion limitations allowing visual flair structurally  
-    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(40, 150), 0));
-}
-
-void FlammableGas::checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) {
+void GenericGas::checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) {
     if (!dur) return;
 
-    // Fast Flame consumption tracker elegantly evaporating exactly
-    if (base && base->flags.isIgnited) {
-        dur->health -= 2;
+    if (base && base->flags.isIgnited && def.decay_rate_ignited > 0) {
+        dur->health -= def.decay_rate_ignited;
+    } else if (def.decay_rate > 0) {
+        dur->health -= def.decay_rate;
+    }
 
-        if (dur->health <= 0) {
-            // Provides dynamic satisfying popping during detonations occasionally purely cleanly effectively properly accurately gracefully
-            if (Random::randFloat(0, 1) > 0.7f) {
-                dieAndReplace(x, y, MaterialID::Smoke, world);
+    if (dur->health <= 0) {
+        if (def.transform_on_health_zero_result != static_cast<MaterialID>(0)) {
+            if (Random::randFloat(0, 1) > 0.5f) {
+                dieAndReplace(x, y, def.transform_on_health_zero_result, world);
             } else {
-                die(x, y, world); // Pure clean flame vapor disappear completely functionally beautifully intuitively stably effectively naturally
+                die(x, y, world);
             }
+        } else {
+            die(x, y, world);
         }
     }
 }
 
-
-void Spark::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    Gas::onSpawn(index, x, y, world);
-    if (auto* b = world.get<BaseComponent>(x, y)) b->flags.isIgnited = true;
-    world.add<ThermalComponent>(x, y, ThermalComponent(3, 25, 10, 1));
-    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(5, 30), 0));
+bool GenericGas::actOnOther(BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world) {
+    if (executeGenericTraitsAndInteractions(def, myBase, myX, myY, otherBase, otherX, otherY, world)) return true;
+    return Gas::actOnOther(myBase, myX, myY, otherBase, otherX, otherY, world);
 }
 
-bool Spark::actOnNeighbor(const ParticleContext& ctx, int tx, int ty, int& mx, int& my, ParticleWorld& world, bool isFinal, bool isFirst, int depth) {
-    if (!world.inBounds(tx, ty)) return true;
-
-    BaseComponent* targetBase = world.getFast<BaseComponent>(ctx, tx, ty);
-    if (!targetBase || targetBase->compMask == 0) {
-        if (isFinal) { world.moveParticle(mx, my, tx, ty); mx = tx; my = ty; }
-        return false; 
-    }
-
-    if (targetBase->id == MaterialID::Spark || targetBase->id == MaterialID::ExplosionSpark) return true;
-    if (targetBase->id == MaterialID::Smoke) { world.removeParticle(tx, ty); return false; }
-    
-    if (auto* logic = MaterialRegistry[static_cast<int>(targetBase->id)]) {
-        auto* tTherm = world.get<ThermalComponent>(tx, ty);
-        logic->receiveHeat(targetBase, tTherm, tx, ty, 10, world);
-        
-        if (logic->getGroup() != MaterialGroup::Gas) {
-            die(mx, my, world);
-            return true;
-        }
-    }
-    return true;
+bool GenericGas::corrode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) {
+    if (def.immune_to_corrosion || def.has_trait_corrosive) return false;
+    return Particle::corrode(base, dur, x, y, damage, world);
 }
-
-void ExplosionSpark::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    Gas::onSpawn(index, x, y, world);
-    if (auto* b = world.get<BaseComponent>(x, y)) b->flags.isIgnited = true;
-    world.add<ThermalComponent>(x, y, ThermalComponent(3, 25, 10, 1));
-    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(5, 30), 0));
-}
-
-bool ExplosionSpark::actOnNeighbor(const ParticleContext& ctx, int tx, int ty, int& mx, int& my, ParticleWorld& world, bool isFinal, bool isFirst, int depth) {
-    if (!world.inBounds(tx, ty)) return true;
-
-    BaseComponent* targetBase = world.getFast<BaseComponent>(ctx, tx, ty);
-    if (!targetBase || targetBase->compMask == 0) {
-        if (isFinal) { world.moveParticle(mx, my, tx, ty); mx = tx; my = ty; }
-        return false; 
-    }
-
-    if (targetBase->id == MaterialID::Spark || targetBase->id == MaterialID::ExplosionSpark) return true;
-    
-    if (auto* logic = MaterialRegistry[static_cast<int>(targetBase->id)]) {
-        auto* tTherm = world.get<ThermalComponent>(tx, ty);
-        logic->receiveHeat(targetBase, tTherm, tx, ty, 10, world);
-        if (logic->getGroup() != MaterialGroup::Gas) {
-            die(mx, my, world);
-            return true;
-        }
-    }
-    return true;
-}
-
-void Smoke::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
-    Gas::onSpawn(index, x, y, world);
-    if (auto* f = world.get<FluidComponent>(x, y)) f->density = 3;
-    
-    // Rapid expiration allows for clear sight cleanly 
-    world.add<DurabilityComponent>(x, y, DurabilityComponent(Random::randInt(100, 250), 0));
-}
-
-void Smoke::checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) {
-    // Simply fades implicitly organically correctly
-    if (dur && --dur->health <= 0) {
-        die(x, y, world); 
-    }
-}
-
-// --- GLOBAL STATIC INSTANCES ---
-static Steam steam_instance;
-static FlammableGas flammablegas_instance;
-static Spark spark_instance;
-static ExplosionSpark explosionspark_instance;
-static Smoke smoke_instance;

@@ -77,7 +77,8 @@ obj/src/Particles/Gas.o: src/Particles/Gas.cpp include/Particles/Gas.hpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
- include/Random.hpp include/ParticleWorld.hpp
+ include/Random.hpp include/ParticleWorld.hpp \
+ include/Particles/ParticleDef.hpp
 include/Particles/Gas.hpp:
 include/Particles/Particle.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
@@ -161,3 +162,4 @@ include/Particles/Particle.hpp:
 include/Constants.hpp:
 include/Random.hpp:
 include/ParticleWorld.hpp:
+include/Particles/ParticleDef.hpp:

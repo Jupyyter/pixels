@@ -100,6 +100,8 @@ public:
     ParticleWorld(unsigned int w, unsigned int h);
     ~ParticleWorld();
     
+    void loadAllMaterials(const std::vector<std::string>& jsonFiles);
+
     // Extensibility hook providing sequence independent binding!
     void setEntitySystem(EntitySystem* sys) { entitySystem = sys; }
     EntitySystem* getEntitySystem() const { return entitySystem; } 

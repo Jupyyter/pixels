@@ -82,7 +82,11 @@ obj/src/ParticleWorld.o: src/ParticleWorld.cpp include/ParticleWorld.hpp \
  ../2dbox/include/box2d/collision.h \
  ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
  ../2dbox/include/box2d/types.h include/EntitySystem.hpp \
- include/EntityComponents.hpp include/Particles/Explosion.hpp
+ include/EntityComponents.hpp include/Particles/Explosion.hpp \
+ nlohmann/json.hpp include/Particles/ParticleDef.hpp \
+ include/Particles/Gas.hpp include/Particles/ImmovableSolid.hpp \
+ include/Particles/MovableSolid.hpp include/Particles/Liquid.hpp \
+ include/Particles/ExplosiveContainer.hpp
 include/ParticleWorld.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp:
@@ -175,3 +179,10 @@ include/RigidBody.hpp:
 include/EntitySystem.hpp:
 include/EntityComponents.hpp:
 include/Particles/Explosion.hpp:
+nlohmann/json.hpp:
+include/Particles/ParticleDef.hpp:
+include/Particles/Gas.hpp:
+include/Particles/ImmovableSolid.hpp:
+include/Particles/MovableSolid.hpp:
+include/Particles/Liquid.hpp:
+include/Particles/ExplosiveContainer.hpp:
