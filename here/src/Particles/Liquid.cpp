@@ -6,16 +6,10 @@
 #include <cmath> 
 
 static const float MAX_VEL_Y = 124.0f;
-static const float BOUNCE_VEL_Y = 62.0f;
-
-// --- LIQUID BASE IMPLEMENTATION ---
 
 void Liquid::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     Particle::onSpawn(index, x, y, world);
-
-    world.add<KinematicsComponent>(x, y, KinematicsComponent(
-        sf::Vector2f(0.0f, 0.0f), 0.0f, 0.0f, true, 0
-    ));
+    world.add<KinematicsComponent>(x, y, KinematicsComponent(sf::Vector2f(0.0f, 0.0f), 0.0f, 0.0f, true, 0));
     world.add<FluidComponent>(x, y, FluidComponent(1, 1));
 }
 
@@ -31,8 +25,10 @@ void Liquid::update(const ParticleContext& ctx, float dt, ParticleWorld& world)
         myDispersionRate = ctx.fluid[ctx.index].dispersionRate;
     }
     
-    kin->velocity.y += GRAVITY * dt;
+    // NEW: Respect anti_gravity
+    kin->velocity.y += (GRAVITY * getGravityMult()) * dt;
     if (kin->velocity.y > MAX_VEL_Y) kin->velocity.y = MAX_VEL_Y;
+    if (kin->velocity.y < -MAX_VEL_Y) kin->velocity.y = -MAX_VEL_Y;
 
     if (kin->isFreeFalling) kin->velocity.x *= 0.8f; 
 
@@ -52,7 +48,8 @@ void Liquid::update(const ParticleContext& ctx, float dt, ParticleWorld& world)
     int upperBound = std::max(absX, absY);
     
     if (upperBound == 0) {
-        if (world.isEmptyFast(ctx, ctx.x, ctx.y + 1)) {
+        int checkY = getGravityMult() < 0 ? (ctx.y - 1) : (ctx.y + 1);
+        if (world.isEmptyFast(ctx, ctx.x, checkY)) {
             kin->isFreeFalling = true; 
         } else {
             kin->velocity.x *= 0.5f;
@@ -146,7 +143,7 @@ bool Liquid::actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY,
                 auto* targetFluid = world.getFast<FluidComponent>(ctx, targetX, targetY);
                 if (targetFluid && myDensity > targetFluid->density) {
                     if (isFinal) {
-                        myKin->velocity.y = BOUNCE_VEL_Y; 
+                        myKin->velocity.y = 62.0f * getGravityMult(); 
                         if (Random::randFloat(0,1) > 0.8f) myKin->velocity.x *= -1;
                         
                         world.swapParticles(myX, myY, targetX, targetY);
@@ -159,7 +156,7 @@ bool Liquid::actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY,
                 }
             } else if (targetLogic->getGroup() == MaterialGroup::Gas) {
                 if (isFinal) {
-                    myKin->velocity.y = BOUNCE_VEL_Y; 
+                    myKin->velocity.y = 62.0f * getGravityMult(); 
                     if (Random::randFloat(0,1) > 0.8f) myKin->velocity.x *= -1;
                     
                     world.swapParticles(myX, myY, targetX, targetY);
@@ -189,15 +186,21 @@ bool Liquid::actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY,
 
     auto* targetKin = world.getFast<KinematicsComponent>(ctx, targetX, targetY);
     if (targetKin) {
-        if (isFirst) myKin->velocity.y = getAverageVelOrGravity(myKin->velocity.y, targetKin->velocity.y);
-        else myKin->velocity.y = MAX_VEL_Y; 
+        // NEW: Bounciness
+        if (getBounciness() > 0.0f && std::abs(myKin->velocity.y) > 10.0f) {
+            myKin->velocity.y = -myKin->velocity.y * getBounciness();
+        } else {
+            if (isFirst) myKin->velocity.y = getAverageVelOrGravity(myKin->velocity.y, targetKin->velocity.y);
+            else myKin->velocity.y = MAX_VEL_Y * getGravityMult(); 
+        }
         targetKin->velocity.y = myKin->velocity.y;
     }
     
     myKin->velocity.x *= 1.0f; 
 
+    // Gravity direction awareness
     int diagX = myX + additionalX;
-    int diagY = myY + 1; 
+    int diagY = myY + (getGravityMult() > 0 ? 1 : -1); 
     if (world.inBounds(diagX, diagY)) {
         if (!iterateToAdditional(ctx, world, diagX, diagY, dist, myX, myY, myDensity)) {
             myKin = world.getFast<KinematicsComponent>(ctx, myX, myY);
@@ -236,115 +239,57 @@ bool Liquid::iterateToAdditional(const ParticleContext& ctx, ParticleWorld& worl
     auto* myBase = world.getFast<BaseComponent>(ctx, currentX, currentY);
     if (!myKin || !myBase || myBase->compMask == 0) return false;
 
-    bool isEntirelyInChunk = ((((ctx.x ^ startX) | (ctx.x ^ endX) | (ctx.y ^ startY)) & ~63) == 0);
+    for (int i = 0; i <= absDist; i++) {
+        int modifiedX = startX + (i * distanceModifier);
+        if (!world.inBounds(modifiedX, startY)) return true; 
 
-    if (isEntirelyInChunk) {
-        for (int i = 0; i <= absDist; i++) {
-            int modifiedX = startX + (i * distanceModifier);
-            uint32_t targetIdx = ((startY & 63) << 6) | (modifiedX & 63);
-            
-            BaseComponent* targetBase = &ctx.base[targetIdx];
-            bool empty = (targetBase->compMask == 0);
+        BaseComponent* targetBase = world.getFast<BaseComponent>(ctx, modifiedX, startY);
+        bool empty = (!targetBase || targetBase->compMask == 0);
 
-            if (!empty) {
-                if (actOnOther(myBase, currentX, currentY, targetBase, modifiedX, startY, world)) return false; 
-                if (myBase->compMask == 0) return false; 
-                empty = (targetBase->compMask == 0);
+        if (!empty) {
+            if (actOnOther(myBase, currentX, currentY, targetBase, modifiedX, startY, world)) return false; 
+            if (myBase->compMask == 0) return false; 
+            targetBase = world.getFast<BaseComponent>(ctx, modifiedX, startY);
+            empty = (!targetBase || targetBase->compMask == 0);
+        }
+        
+        bool isFinal = (i == absDist);
+
+        if (empty) {
+            if (isFinal) {
+                world.moveParticle(currentX, currentY, modifiedX, startY);
+                currentX = modifiedX;
+                currentY = startY;
+                return false; 
             }
-            
-            bool isFinal = (i == absDist);
-
-            if (empty) {
-                if (isFinal) {
-                    world.moveParticle(currentX, currentY, modifiedX, startY);
+            lastValidX = modifiedX;
+            lastValidY = startY;
+        } 
+        else {
+            Particle* logic = MaterialRegistry[static_cast<int>(targetBase->id)];
+            if (logic && logic->getGroup() == MaterialGroup::Liquid) {
+                auto* nf = world.getFast<FluidComponent>(ctx, modifiedX, startY);
+                if (isFinal && nf && myDensity > nf->density) {
+                    world.swapParticles(currentX, currentY, modifiedX, startY);
                     currentX = modifiedX;
                     currentY = startY;
-                    return false; 
+                    myKin->velocity.y = 62.0f * getGravityMult();
+                    if (Random::randFloat(0,1) > 0.8f) myKin->velocity.x *= -1;
+                    return false;
                 }
-                lastValidX = modifiedX;
-                lastValidY = startY;
-            } 
-            else {
-                Particle* logic = MaterialRegistry[static_cast<int>(targetBase->id)];
-                
-                if (logic && logic->getGroup() == MaterialGroup::Liquid) {
-                    auto* nf = &ctx.fluid[targetIdx];
-                    if (isFinal && nf && myDensity > nf->density) {
-                        world.swapParticles(currentX, currentY, modifiedX, startY);
-                        currentX = modifiedX;
-                        currentY = startY;
-                        myKin->velocity.y = BOUNCE_VEL_Y;
-                        if (Random::randFloat(0,1) > 0.8f) myKin->velocity.x *= -1;
-                        return false;
-                    }
-                } else {
-                    if (i == 0) return true; 
-                    if (lastValidX != currentX || lastValidY != currentY) {
-                        world.moveParticle(currentX, currentY, lastValidX, lastValidY);
-                        currentX = lastValidX;
-                        currentY = lastValidY;
-                        return false;
-                    }
-                    return true;
+            } else {
+                if (i == 0) return true; 
+                if (lastValidX != currentX || lastValidY != currentY) {
+                    world.moveParticle(currentX, currentY, lastValidX, lastValidY);
+                    currentX = lastValidX;
+                    currentY = lastValidY;
+                    return false;
                 }
+                return true;
             }
         }
-        return true; 
-    } 
-    else {
-        for (int i = 0; i <= absDist; i++) {
-            int modifiedX = startX + (i * distanceModifier);
-            if (!world.inBounds(modifiedX, startY)) return true; 
-
-            BaseComponent* targetBase = world.getFast<BaseComponent>(ctx, modifiedX, startY);
-            bool empty = (!targetBase || targetBase->compMask == 0);
-
-            if (!empty) {
-                if (actOnOther(myBase, currentX, currentY, targetBase, modifiedX, startY, world)) return false; 
-                if (myBase->compMask == 0) return false; 
-                targetBase = world.getFast<BaseComponent>(ctx, modifiedX, startY);
-                empty = (!targetBase || targetBase->compMask == 0);
-            }
-            
-            bool isFinal = (i == absDist);
-
-            if (empty) {
-                if (isFinal) {
-                    world.moveParticle(currentX, currentY, modifiedX, startY);
-                    currentX = modifiedX;
-                    currentY = startY;
-                    return false; 
-                }
-                lastValidX = modifiedX;
-                lastValidY = startY;
-            } 
-            else {
-                Particle* logic = MaterialRegistry[static_cast<int>(targetBase->id)];
-                
-                if (logic && logic->getGroup() == MaterialGroup::Liquid) {
-                    auto* nf = world.getFast<FluidComponent>(ctx, modifiedX, startY);
-                    if (isFinal && nf && myDensity > nf->density) {
-                        world.swapParticles(currentX, currentY, modifiedX, startY);
-                        currentX = modifiedX;
-                        currentY = startY;
-                        myKin->velocity.y = BOUNCE_VEL_Y;
-                        if (Random::randFloat(0,1) > 0.8f) myKin->velocity.x *= -1;
-                        return false;
-                    }
-                } else {
-                    if (i == 0) return true; 
-                    if (lastValidX != currentX || lastValidY != currentY) {
-                        world.moveParticle(currentX, currentY, lastValidX, lastValidY);
-                        currentX = lastValidX;
-                        currentY = lastValidY;
-                        return false;
-                    }
-                    return true;
-                }
-            }
-        }
-        return true; 
     }
+    return true; 
 }
 
 int Liquid::getAdditional(float val) {
@@ -354,9 +299,10 @@ int Liquid::getAdditional(float val) {
 }
 
 float Liquid::getAverageVelOrGravity(float myVel, float otherVel) {
-    if (otherVel < (MAX_VEL_Y + 1.0f)) return MAX_VEL_Y;
+    float maxV = MAX_VEL_Y * getGravityMult();
+    if (std::abs(otherVel) < std::abs(maxV) + 1.0f) return maxV;
     float avg = (myVel + otherVel) / 2.0f;
-    return std::min(std::max(avg, 0.0f), MAX_VEL_Y);
+    return getGravityMult() > 0 ? std::min(std::max(avg, 0.0f), maxV) : std::max(std::min(avg, 0.0f), maxV);
 }
 
 void GenericLiquid::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
@@ -384,14 +330,31 @@ void GenericLiquid::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) 
 }
 
 void GenericLiquid::update(const ParticleContext& ctx, float dt, ParticleWorld& world) {
+    if (def.viscosity > 1 && (world.getFrameCounter() % def.viscosity) != 0) return;
+
+    if (def.stickiness > 0.0f && Random::randFloat(0,1) < def.stickiness) {
+        bool touchingWall = false;
+        for (int ox=-1; ox<=1; ox++) {
+            if (ox==0) continue;
+            if (!world.isEmptyFast(ctx, ctx.x+ox, ctx.y)) { touchingWall = true; break; }
+        }
+        if (touchingWall) {
+            if (auto* kin = world.getFast<KinematicsComponent>(ctx, ctx.x, ctx.y)) {
+                kin->velocity.y = 0; kin->velocity.x = 0; kin->isFreeFalling = false;
+            }
+        }
+    }
+
     Liquid::update(ctx, dt, world);
 
     auto* base = world.getFast<BaseComponent>(ctx, ctx.x, ctx.y);
     if (!base || base->id != this->id) return;
 
-    if (def.transform_on_rest_frames > 0) {
+    processAdvancedOrganicAndElectricalTraits(def, ctx, world);
+
+    if (def.transform_on_rest_ticks > 0) {
         auto* kin = world.getFast<KinematicsComponent>(ctx, ctx.x, ctx.y);
-        if (kin && kin->stoppedMovingCount >= def.transform_on_rest_frames) { 
+        if (kin && kin->stoppedMovingCount >= def.transform_on_rest_ticks) { 
             dieAndReplace(ctx.x, ctx.y, def.transform_on_rest_result, world);
         }
     }
@@ -439,6 +402,15 @@ bool GenericLiquid::actOnOther(BaseComponent* myBase, int myX, int myY, BaseComp
 
 bool GenericLiquid::receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world) {
     if (def.immune_to_fire) return false;
+    
+    if (def.transform_on_max_temp_result != 0 && therm) {
+        therm->temperature += heat;
+        if (therm->temperature >= def.max_temp_threshold) {
+            dieAndReplace(x, y, def.transform_on_max_temp_result, world);
+            return true;
+        }
+    }
+
     if (def.transform_on_heat_result != 0 && heat > 0) {
         dieAndReplace(x, y, def.transform_on_heat_result, world);
         return true;
@@ -448,12 +420,41 @@ bool GenericLiquid::receiveHeat(BaseComponent* base, ThermalComponent* therm, in
 }
 
 bool GenericLiquid::corrode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) {
-    if (def.immune_to_corrosion || def.has_trait_corrosive) return false;
+    if (def.immune_to_corrosion || def.has_trait_corrosive) return false; 
     return Particle::corrode(base, dur, x, y, damage, world);
 }
+
 bool GenericLiquid::magmatize(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) {
     if (def.immune_to_magmatize || def.has_trait_magmatize) return false; 
     return Particle::magmatize(base, dur, x, y, damage, world);
+}
+
+bool GenericLiquid::explode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int strength, ParticleWorld& world) {
+    if (!dur) return false;
+    if (dur->explosionResistance < strength) {
+        die(x, y, world);
+        return true;
+    } else if (def.transform_on_crush_result != 0) {
+        dieAndReplace(x, y, def.transform_on_crush_result, world);
+        return true;
+    }
+    return false;
+}
+
+bool GenericLiquid::receiveCharge(BaseComponent* base, int x, int y, ParticleWorld& world) {
+    if (def.is_conductive && base && !base->flags.isCharged) {
+        base->flags.isCharged = true;
+        if (def.transform_on_charged_result != 0) {
+            dieAndReplace(x, y, def.transform_on_charged_result, world);
+        }
+        return true;
+    }
+    return false;
+}
+
+void GenericLiquid::takeEffectsDamage(BaseComponent* base, DurabilityComponent* dur, ThermalComponent* therm, int x, int y, ParticleWorld& world) {
+    if (def.smolders) return;
+    Particle::takeEffectsDamage(base, dur, therm, x, y, world);
 }
 
 void GenericLiquid::spawnSparkIfIgnited(BaseComponent* base, int x, int y, ParticleWorld& world) {

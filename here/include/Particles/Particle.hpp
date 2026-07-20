@@ -5,10 +5,10 @@
 #include "Random.hpp"
 #include <iostream>
 #include <cstdlib>
+#include "ParticleDef.hpp"
 
 class ParticleWorld;
 struct ParticleContext;
-struct ParticleDef; // Forward Declaration to fix cyclic dependency
 
 class Particle;
 extern Particle* MaterialRegistry[256];
@@ -21,19 +21,19 @@ struct ParticleFlags {
     bool heated : 1;
     bool isIgnited : 1;
     bool isFreeFalling : 1;
-    bool reserved : 1;
+    bool isCharged : 1;   // <--- CHANGED: Used to hold electricity
     bool isRigidBodyPart : 1;
 
     ParticleFlags() 
         : hasBeenUpdatedThisFrame(false), isDead(false), didColorChange(false),
           discolored(false), heated(false), isIgnited(false), 
-          isFreeFalling(false), reserved(false), isRigidBodyPart(false) {}
+          isFreeFalling(false), isCharged(false), isRigidBodyPart(false) {}
 
     ParticleFlags(bool updated, bool dead, bool colorChange, bool discolor, 
-                  bool heat, bool ignited, bool freeFall, bool res, bool rigid)
+                  bool heat, bool ignited, bool freeFall, bool charge, bool rigid)
         : hasBeenUpdatedThisFrame(updated), isDead(dead), didColorChange(colorChange),
           discolored(discolor), heated(heat), isIgnited(ignited), 
-          isFreeFalling(freeFall), reserved(res), isRigidBodyPart(rigid) {}
+          isFreeFalling(freeFall), isCharged(charge), isRigidBodyPart(rigid) {}
 };
 
 struct BaseComponent {
@@ -137,6 +137,7 @@ public:
 
     virtual bool receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world);
     virtual bool receiveCooling(BaseComponent* base, ThermalComponent* therm, int x, int y, int cooling, ParticleWorld& world);
+    virtual bool receiveCharge(BaseComponent* base, int x, int y, ParticleWorld& world); // <--- NEW
 
     virtual bool magmatize(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world);
     virtual bool explode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int strength, ParticleWorld& world);
@@ -146,6 +147,11 @@ public:
     virtual bool cleanColor(BaseComponent* base, int x, int y, ParticleWorld& world);
     
     bool executeGenericTraitsAndInteractions(const ParticleDef& def, BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world);
+    
+    void processAdvancedOrganicAndElectricalTraits(const ParticleDef& def, const ParticleContext& ctx, ParticleWorld& world); // <--- NEW
+
+    virtual float getGravityMult() const { return 1.0f; } // <--- NEW
+    virtual float getBounciness() const { return 0.0f; }  // <--- NEW
 
     static sf::Color getRandomColor(MaterialID id);
     

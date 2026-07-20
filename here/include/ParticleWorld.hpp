@@ -102,6 +102,7 @@ public:
     
     void loadAllMaterials(const std::vector<std::string>& jsonFiles);
 
+    uint32_t getFrameCounter() const { return frameCounter; }
     // Extensibility hook providing sequence independent binding!
     void setEntitySystem(EntitySystem* sys) { entitySystem = sys; }
     EntitySystem* getEntitySystem() const { return entitySystem; } 

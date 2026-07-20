@@ -77,16 +77,16 @@ obj/src/ParticleWorld.o: src/ParticleWorld.cpp include/ParticleWorld.hpp \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
- include/Random.hpp include/Particles/Particle.hpp include/RigidBody.hpp \
+ include/Random.hpp include/Particles/Particle.hpp \
+ include/Particles/ParticleDef.hpp include/RigidBody.hpp \
  ../2dbox/include/box2d/box2d.h ../2dbox/include/box2d/base.h \
  ../2dbox/include/box2d/collision.h \
  ../2dbox/include/box2d/math_functions.h ../2dbox/include/box2d/id.h \
  ../2dbox/include/box2d/types.h include/Entities/EntitySystem.hpp \
  include/Entities/EntityComponents.hpp include/Particles/Explosion.hpp \
- nlohmann/json.hpp include/Particles/ParticleDef.hpp \
- include/Particles/Gas.hpp include/Particles/ImmovableSolid.hpp \
- include/Particles/MovableSolid.hpp include/Particles/Liquid.hpp \
- include/Particles/ExplosiveContainer.hpp
+ nlohmann/json.hpp include/Particles/Gas.hpp \
+ include/Particles/ImmovableSolid.hpp include/Particles/MovableSolid.hpp \
+ include/Particles/Liquid.hpp include/Particles/ExplosiveContainer.hpp
 include/ParticleWorld.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
 ../SFML-3.0.0/include/SFML/Graphics/BlendMode.hpp:
@@ -169,6 +169,7 @@ include/ParticleWorld.hpp:
 include/Constants.hpp:
 include/Random.hpp:
 include/Particles/Particle.hpp:
+include/Particles/ParticleDef.hpp:
 include/RigidBody.hpp:
 ../2dbox/include/box2d/box2d.h:
 ../2dbox/include/box2d/base.h:
@@ -180,7 +181,6 @@ include/Entities/EntitySystem.hpp:
 include/Entities/EntityComponents.hpp:
 include/Particles/Explosion.hpp:
 nlohmann/json.hpp:
-include/Particles/ParticleDef.hpp:
 include/Particles/Gas.hpp:
 include/Particles/ImmovableSolid.hpp:
 include/Particles/MovableSolid.hpp:

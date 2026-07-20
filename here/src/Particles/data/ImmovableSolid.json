@@ -8,7 +8,7 @@
     } 
   },
   { 
-    "name": "Brick", 
+    "name": "RedBrick", 
     "group": "ImmovableSolid", 
     "colors": ["#bc0300", "#a00a0a"], 
     "components": { 

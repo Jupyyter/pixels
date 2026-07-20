@@ -32,8 +32,13 @@ public:
     GenericGas(MaterialID id, const ParticleDef& definition);
 
     void onSpawn(uint32_t index, int x, int y, ParticleWorld& world) override;
+    void update(const ParticleContext& ctx, float dt, ParticleWorld& world) override;
     void checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) override;
     bool actOnOther(BaseComponent* myBase, int myX, int myY, BaseComponent* otherBase, int otherX, int otherY, ParticleWorld& world) override;
     
+    bool receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world) override;
     bool corrode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) override;
+    bool explode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int strength, ParticleWorld& world) override;
+    bool receiveCharge(BaseComponent* base, int x, int y, ParticleWorld& world) override;
+    void takeEffectsDamage(BaseComponent* base, DurabilityComponent* dur, ThermalComponent* therm, int x, int y, ParticleWorld& world) override;
 };

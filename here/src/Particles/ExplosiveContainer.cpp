@@ -191,5 +191,3 @@ void ExplosiveContainer::detonate(int x, int y, ParticleWorld& world) {
         }
     }
 }
-
-// NOTE: We successfully removed the static 'container_instance' initialization that caused the crash!

@@ -3,7 +3,6 @@
 #include <algorithm> 
 #include <cmath> 
 
-// --- BASE GAS IMPLEMENTATION (Physics) ---
 Gas::Gas(MaterialID id, float buoy, float chaos) 
     : Particle(id), buoyancy(buoy), chaosLevel(chaos) {}
 
@@ -150,9 +149,6 @@ void Gas::swapGasForDensities(const ParticleContext& ctx, ParticleWorld& world, 
     myX = targetX; myY = targetY;
 }
 
-
-// --- GENERIC GAS IMPLEMENTATION ---
-
 GenericGas::GenericGas(MaterialID id, const ParticleDef& definition)
     : Gas(id, definition.gas_buoyancy, definition.gas_chaos), def(definition) {}
 
@@ -178,6 +174,12 @@ void GenericGas::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     if (def.has_thermal) {
         world.add<ThermalComponent>(x, y, ThermalComponent(def.therm_temp, def.therm_flamRes, def.therm_heat, def.therm_fireDmg));
     }
+}
+
+void GenericGas::update(const ParticleContext& ctx, float dt, ParticleWorld& world) {
+    if (def.viscosity > 1 && (world.getFrameCounter() % def.viscosity) != 0) return;
+    Gas::update(ctx, dt, world);
+    processAdvancedOrganicAndElectricalTraits(def, ctx, world);
 }
 
 void GenericGas::checkLifeSpan(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) {
@@ -207,7 +209,54 @@ bool GenericGas::actOnOther(BaseComponent* myBase, int myX, int myY, BaseCompone
     return Gas::actOnOther(myBase, myX, myY, otherBase, otherX, otherY, world);
 }
 
+bool GenericGas::receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world) {
+    if (def.immune_to_fire) return false;
+    
+    if (def.transform_on_max_temp_result != 0 && therm) {
+        therm->temperature += heat;
+        if (therm->temperature >= def.max_temp_threshold) {
+            dieAndReplace(x, y, def.transform_on_max_temp_result, world);
+            return true;
+        }
+    }
+
+    if (def.transform_on_heat_result != 0 && heat > 0) {
+        dieAndReplace(x, y, def.transform_on_heat_result, world);
+        return true;
+    }
+    if (!def.has_thermal) return false; 
+    return Particle::receiveHeat(base, therm, x, y, heat, world);
+}
+
 bool GenericGas::corrode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) {
     if (def.immune_to_corrosion || def.has_trait_corrosive) return false;
     return Particle::corrode(base, dur, x, y, damage, world);
+}
+
+bool GenericGas::explode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int strength, ParticleWorld& world) {
+    if (!dur) return false;
+    if (dur->explosionResistance < strength) {
+        die(x, y, world);
+        return true;
+    } else if (def.transform_on_crush_result != 0) {
+        dieAndReplace(x, y, def.transform_on_crush_result, world);
+        return true;
+    }
+    return false;
+}
+
+bool GenericGas::receiveCharge(BaseComponent* base, int x, int y, ParticleWorld& world) {
+    if (def.is_conductive && base && !base->flags.isCharged) {
+        base->flags.isCharged = true;
+        if (def.transform_on_charged_result != 0) {
+            dieAndReplace(x, y, def.transform_on_charged_result, world);
+        }
+        return true;
+    }
+    return false;
+}
+
+void GenericGas::takeEffectsDamage(BaseComponent* base, DurabilityComponent* dur, ThermalComponent* therm, int x, int y, ParticleWorld& world) {
+    if (def.smolders) return;
+    Particle::takeEffectsDamage(base, dur, therm, x, y, world);
 }

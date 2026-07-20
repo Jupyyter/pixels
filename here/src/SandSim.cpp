@@ -331,6 +331,7 @@ void SandSimApp::handleResize(unsigned int width, unsigned int height) {
 }
 
 void SandSimApp::update() {
+    // Keep track of real time passed since last loop
     sf::Time dt = clock.restart();
     frameTime = static_cast<float>(frameClock.restart().asMilliseconds());
 
@@ -354,12 +355,28 @@ void SandSimApp::update() {
             sf::Vector2f size = gameView.getSize();
             world->updateCameraBounds(center.x, center.y, size.x, size.y);
 
-            if (entitySystem) {
-                entitySystem->updateInput(dt.asSeconds(), worldPos, *world->getRigidBodySystem(), *world);
-                entitySystem->updateProceduralAnimations(dt.asSeconds(), *world);
-            }
+            // ---------------------------------------------------------
+            // THE FIX: FIXED TIMESTEP ACCUMULATOR
+            // ---------------------------------------------------------
+            static float accumulator = 0.0f;
+            const float TIME_STEP = 1.0f / 60.0f; // Exactly 60 Simulation Ticks Per Second
 
-            world->update(dt.asSeconds());
+            // Add the time that just passed to our accumulator
+            accumulator += dt.asSeconds();
+
+            // Prevent the "Spiral of Death" if the window freezes or lags heavily
+            if (accumulator > 0.25f) accumulator = 0.25f;
+
+            // Run the simulation in fixed 1/60th of a second chunks
+            while (accumulator >= TIME_STEP) {
+                if (entitySystem) {
+                    entitySystem->updateInput(TIME_STEP, worldPos, *world->getRigidBodySystem(), *world);
+                    entitySystem->updateProceduralAnimations(TIME_STEP, *world);
+                }
+
+                world->update(TIME_STEP);
+                accumulator -= TIME_STEP;
+            }
         }
     }
 }

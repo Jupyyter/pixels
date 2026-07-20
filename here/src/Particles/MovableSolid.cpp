@@ -17,8 +17,9 @@ void MovableSolid::update(const ParticleContext& ctx, float dt, ParticleWorld& w
     if (!ctx.kinematics) return;
     auto* kin = &ctx.kinematics[ctx.index];
 
-    kin->velocity.y += (GRAVITY * dt);
+    kin->velocity.y += (GRAVITY * getGravityMult() * dt);
     if (kin->velocity.y > MAX_VEL_Y) kin->velocity.y = MAX_VEL_Y;
+    if (kin->velocity.y < -MAX_VEL_Y) kin->velocity.y = -MAX_VEL_Y;
     
     if (kin->isFreeFalling) {
         kin->velocity.x *= 0.9f; 
@@ -41,7 +42,8 @@ void MovableSolid::update(const ParticleContext& ctx, float dt, ParticleWorld& w
     int steps = std::max(velXInt, velYInt);
     
     if (steps == 0) {
-        if (world.isEmptyFast(ctx, ctx.x, ctx.y + 1)) {
+        int checkY = getGravityMult() < 0 ? (ctx.y - 1) : (ctx.y + 1);
+        if (world.isEmptyFast(ctx, ctx.x, checkY)) {
             kin->isFreeFalling = true;
         } else {
             kin->isFreeFalling = false;
@@ -140,7 +142,6 @@ bool MovableSolid::actOnNeighbor(const ParticleContext& ctx, int targetX, int ta
 
     if (targetBase) {
         Particle* logic = MaterialRegistry[static_cast<int>(targetBase->id)];
-        // FIX: Allow solid to fall through Liquid AND Gas
         if (logic && (logic->getGroup() == MaterialGroup::Liquid || logic->getGroup() == MaterialGroup::Gas)) {
             myKin->isFreeFalling = true;
             world.swapParticles(myX, myY, targetX, targetY);
@@ -162,12 +163,17 @@ bool MovableSolid::actOnNeighbor(const ParticleContext& ctx, int targetX, int ta
 
     int addX = getAdditional(myKin->velocity.x);
     if (auto* tKin = world.getFast<KinematicsComponent>(ctx, targetX, targetY)) {
-        myKin->velocity.y = isFirst ? getAverageVelOrGravity(myKin->velocity.y, tKin->velocity.y) : 124.0f;
+        if (getBounciness() > 0.0f && std::abs(myKin->velocity.y) > 10.0f) {
+            myKin->velocity.y = -myKin->velocity.y * getBounciness();
+            myKin->isFreeFalling = true;
+        } else {
+            myKin->velocity.y = isFirst ? getAverageVelOrGravity(myKin->velocity.y, tKin->velocity.y) : 124.0f * getGravityMult();
+        }
         tKin->velocity.y = myKin->velocity.y;
         myKin->velocity.x *= 0.25f; 
     }
 
-    int diagX = myX + addX, diagY = myY + 1;
+    int diagX = myX + addX, diagY = myY + (getGravityMult() > 0 ? 1 : -1);
     if (world.inBounds(diagX, diagY)) {
         if (!actOnNeighbor(ctx, diagX, diagY, myX, myY, world, true, false, depth + 1)) {
             if (auto* k = world.getFast<KinematicsComponent>(ctx, myX, myY)) k->isFreeFalling = true;
@@ -203,12 +209,11 @@ int MovableSolid::getAdditional(float val) {
 }
 
 float MovableSolid::getAverageVelOrGravity(float myVel, float otherVel) {
-    if (otherVel < 125.0f) return 124.0f;
+    float maxV = 124.0f * getGravityMult();
+    if (std::abs(otherVel) < std::abs(maxV) + 1.0f) return maxV;
     float avg = (myVel + otherVel) * 0.5f;
-    return (avg < 0) ? avg : std::min(avg, 124.0f);
+    return getGravityMult() > 0 ? std::min(std::max(avg, 0.0f), maxV) : std::max(std::min(avg, 0.0f), maxV);
 }
-
-// --- GENERIC DATA-DRIVEN MOVABLE SOLID ---
 
 void GenericMovableSolid::onSpawn(uint32_t index, int x, int y, ParticleWorld& world) {
     MovableSolid::onSpawn(index, x, y, world);
@@ -226,8 +231,8 @@ void GenericMovableSolid::onSpawn(uint32_t index, int x, int y, ParticleWorld& w
     }
 
     if (def.has_durability) {
-        int hp = (def.dur_health_max > def.dur_health) ? Random::randInt(def.dur_health, def.dur_health_max) : def.dur_health;
         if (auto* dur = world.get<DurabilityComponent>(x, y)) {
+            int hp = (def.dur_health_max > def.dur_health) ? Random::randInt(def.dur_health, def.dur_health_max) : def.dur_health;
             dur->health = hp;
             dur->explosionResistance = def.dur_expRes;
         }
@@ -238,6 +243,21 @@ void GenericMovableSolid::onSpawn(uint32_t index, int x, int y, ParticleWorld& w
 }
 
 void GenericMovableSolid::update(const ParticleContext& ctx, float dt, ParticleWorld& world) {
+    if (def.viscosity > 1 && (world.getFrameCounter() % def.viscosity) != 0) return;
+
+    if (def.stickiness > 0.0f && Random::randFloat(0,1) < def.stickiness) {
+        bool touchingWall = false;
+        for (int ox=-1; ox<=1; ox++) {
+            if (ox==0) continue;
+            if (!world.isEmptyFast(ctx, ctx.x+ox, ctx.y)) { touchingWall = true; break; }
+        }
+        if (touchingWall) {
+            if (auto* kin = world.getFast<KinematicsComponent>(ctx, ctx.x, ctx.y)) {
+                kin->velocity.y = 0; kin->velocity.x = 0; kin->isFreeFalling = false;
+            }
+        }
+    }
+
     auto* base = world.getFast<BaseComponent>(ctx, ctx.x, ctx.y);
     if (!base || base->id != this->id) return;
     
@@ -255,8 +275,8 @@ void GenericMovableSolid::update(const ParticleContext& ctx, float dt, ParticleW
 
     if (def.flutter_fall) {
         auto* kin = world.getFast<KinematicsComponent>(ctx, ctx.x, ctx.y);
-        if (kin && kin->velocity.y > 62.0f) {
-            kin->velocity.y = (Random::randFloat(0,1) > 0.3f) ? 62.0f : 124.0f;
+        if (kin && kin->velocity.y > 62.0f * getGravityMult()) {
+            kin->velocity.y = (Random::randFloat(0,1) > 0.3f) ? 62.0f * getGravityMult() : 124.0f * getGravityMult();
         }
     }
     
@@ -265,15 +285,42 @@ void GenericMovableSolid::update(const ParticleContext& ctx, float dt, ParticleW
     base = world.getFast<BaseComponent>(ctx, ctx.x, ctx.y);
     if (!base || base->id != this->id) return;
 
-    if (def.transform_on_rest_frames > 0) {
+    processAdvancedOrganicAndElectricalTraits(def, ctx, world);
+
+    if (def.transform_on_rest_ticks > 0) {
         auto* kin = world.getFast<KinematicsComponent>(ctx, ctx.x, ctx.y);
-        if (kin && kin->stoppedMovingCount >= def.transform_on_rest_frames) { 
+        if (kin && kin->stoppedMovingCount >= def.transform_on_rest_ticks) { 
             dieAndReplace(ctx.x, ctx.y, def.transform_on_rest_result, world);
         }
     }
 }
 
 void GenericMovableSolid::checkIfDead(BaseComponent* base, DurabilityComponent* dur, int x, int y, ParticleWorld& world) {
+    if (def.transform_on_min_temp_result != 0) {
+        auto* therm = world.get<ThermalComponent>(x, y);
+        if (therm && therm->temperature <= def.min_temp_threshold) {
+            dieAndReplace(x, y, def.transform_on_min_temp_result, world);
+            if (def.min_temp_transform_neighbors) {
+                for (int offsetX = -1; offsetX <= 1; ++offsetX) {
+                    for (int offsetY = -1; offsetY <= 1; ++offsetY) {
+                        if (offsetX == 0 && offsetY == 0) continue;
+                        int tx = x + offsetX, ty = y + offsetY;
+                        if (world.inBounds(tx, ty)) {
+                            BaseComponent* nb = world.get<BaseComponent>(tx, ty);
+                            if (nb) {
+                                Particle* nl = MaterialRegistry[static_cast<int>(nb->id)];
+                                if (nl && nl->getGroup() == MaterialGroup::Liquid) {
+                                    nl->dieAndReplace(tx, ty, def.transform_on_min_temp_result, world);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return;
+        }
+    }
+
     if (dur && dur->health <= 0) {
         if (def.transform_on_health_zero_result != static_cast<MaterialID>(0)) {
             dieAndReplace(x, y, def.transform_on_health_zero_result, world);
@@ -289,6 +336,16 @@ bool GenericMovableSolid::actOnOther(BaseComponent* myBase, int myX, int myY, Ba
 }
 
 bool GenericMovableSolid::receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world) {
+    if (def.immune_to_fire) return false;
+    
+    if (def.transform_on_max_temp_result != 0 && therm) {
+        therm->temperature += heat;
+        if (therm->temperature >= def.max_temp_threshold) {
+            dieAndReplace(x, y, def.transform_on_max_temp_result, world);
+            return true;
+        }
+    }
+    
     if (def.transform_on_heat_result != 0 && heat > 0) {
         dieAndReplace(x, y, def.transform_on_heat_result, world);
         return true;
@@ -301,9 +358,38 @@ bool GenericMovableSolid::corrode(BaseComponent* base, DurabilityComponent* dur,
     if (def.immune_to_corrosion || def.has_trait_corrosive) return false;
     return Particle::corrode(base, dur, x, y, damage, world);
 }
+
 bool GenericMovableSolid::magmatize(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) {
-    if (def.has_trait_magmatize) return false;
+    if (def.immune_to_magmatize || def.has_trait_magmatize) return false;
     return Particle::magmatize(base, dur, x, y, damage, world);
+}
+
+bool GenericMovableSolid::explode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int strength, ParticleWorld& world) {
+    if (!dur) return false;
+    if (dur->explosionResistance < strength) {
+        die(x, y, world);
+        return true;
+    } else if (def.transform_on_crush_result != 0) {
+        dieAndReplace(x, y, def.transform_on_crush_result, world);
+        return true;
+    }
+    return false;
+}
+
+bool GenericMovableSolid::receiveCharge(BaseComponent* base, int x, int y, ParticleWorld& world) {
+    if (def.is_conductive && base && !base->flags.isCharged) {
+        base->flags.isCharged = true;
+        if (def.transform_on_charged_result != 0) {
+            dieAndReplace(x, y, def.transform_on_charged_result, world);
+        }
+        return true;
+    }
+    return false;
+}
+
+void GenericMovableSolid::takeEffectsDamage(BaseComponent* base, DurabilityComponent* dur, ThermalComponent* therm, int x, int y, ParticleWorld& world) {
+    if (def.smolders) return;
+    Particle::takeEffectsDamage(base, dur, therm, x, y, world);
 }
 
 void GenericMovableSolid::spawnSparkIfIgnited(BaseComponent* base, int x, int y, ParticleWorld& world) {

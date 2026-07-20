@@ -5,7 +5,7 @@
 #include <SFML/Graphics.hpp>
 #include "Constants.hpp"
 
-enum class InteractionAction { None, Replace, Explode, Die };
+enum class InteractionAction { None, Replace, Explode, Die, Ignite, Infect, Push, Consume };
 
 struct InteractionDef {
     InteractionAction self_action = InteractionAction::None;
@@ -49,26 +49,23 @@ struct ParticleDef {
     bool heated_on_spawn = false;
     bool flutter_fall = false;
     
-    int transform_on_rest_frames = 0;
+    int transform_on_rest_ticks = 0;
     MaterialID transform_on_rest_result = 0;
     
     MaterialID transform_on_health_zero_result = 0;
+    MaterialID transform_on_health_zero_ignited_result = 0;
+    float transform_on_health_zero_ignited_chance = 1.0f;
     
     MaterialID transform_on_heat_result = 0;
     MaterialID transform_on_min_temp_result = 0;
     int min_temp_threshold = 0;
     bool min_temp_transform_neighbors = false;
     
-    MaterialID transform_on_health_zero_ignited_result = 0;
-    float transform_on_health_zero_ignited_chance = 1.0f;
-    
     bool has_trait_stains = false;
     sf::Color stain_color;
-    
     bool has_trait_corrosive = false;
-    int corrosive_damage = 10;   // <--- NEW: Dynamic damage tuning
+    int corrosive_damage = 10;   
     int corrosive_self_cost = 1;
-    
     bool has_trait_magmatize = false;
     int magmatize_damage = 10;
     
@@ -76,19 +73,40 @@ struct ParticleDef {
     bool has_trait_cleans_color = false;
     bool has_trait_boils_on_heat = false;
     bool has_trait_ignites_when_touching_fire = false;
-    
     bool has_trait_burns_objects = false;
     int burns_objects_heat = 10;
-    
     bool has_trait_explosive_on_ignite = false;
     int explosive_radius = 15;
     int explosive_strength = 10;
-    
     float spark_chance = -1.0f; 
     
     bool immune_to_magmatize = false;
     bool immune_to_fire = false;
     bool immune_to_corrosion = false; 
+
+    // --- ELECTRICITY ---
+    bool is_conductive = false;
+    MaterialID transform_on_charged_result = 0;
+    bool generates_charge = false;
+    
+    // --- ORGANIC GROWTH ---
+    float growth_rate = 0.0f; 
+    bool growth_requires_surface = false;
+    std::vector<MaterialID> food_materials;
+    MaterialID transform_on_starve_result = 0;
+    
+    // --- ADVANCED PHYSICS ---
+    float stickiness = 0.0f; 
+    float bounciness = 0.0f; 
+    float friction = 0.5f;   
+    int viscosity = 1;       
+    bool anti_gravity = false; 
+
+    // --- ADVANCED THERMODYNAMICS / PRESSURE ---
+    MaterialID transform_on_max_temp_result = 0;
+    int max_temp_threshold = 1000;
+    MaterialID transform_on_crush_result = 0;
+    bool smolders = false; 
     
     std::unordered_map<MaterialID, InteractionDef> interactions;
     

@@ -19,7 +19,6 @@
 #include "Particles/MovableSolid.hpp"
 #include "Particles/Liquid.hpp"
 #include "Particles/ExplosiveContainer.hpp"
-
 using json = nlohmann::json;
 
 sf::Color HexToColor(const std::string& hex) {
@@ -121,7 +120,14 @@ void ParticleWorld::loadAllMaterials(const std::vector<std::string>& jsonFiles) 
         if (item.contains("transform_conditions")) {
             auto tc = item["transform_conditions"];
             if (tc.contains("on_rest") && GlobalMaterialNameToID.count(tc["on_rest"].value("result", ""))) {
-                def.transform_on_rest_frames = tc["on_rest"].value("frames", 0);
+                
+                // Read the requested time in seconds from JSON
+                float timeInSeconds = tc["on_rest"].value("time", 0.0f);
+                
+                // Convert seconds into internal physics ticks! (Assuming 60 Ticks Per Second)
+                // If you ever change your game to 120 TPS, you just change the 60.0f here to 120.0f!
+                def.transform_on_rest_ticks = static_cast<int>(timeInSeconds * 60.0f);
+                
                 def.transform_on_rest_result = GlobalMaterialNameToID[tc["on_rest"]["result"]];
             }
             if (tc.contains("on_health_zero") && GlobalMaterialNameToID.count(tc["on_health_zero"].value("result", ""))) {
@@ -144,35 +150,45 @@ void ParticleWorld::loadAllMaterials(const std::vector<std::string>& jsonFiles) 
         if (item.contains("traits")) {
             auto tr = item["traits"];
             if (tr.contains("stains")) { def.has_trait_stains = true; def.stain_color = HexToColor(tr["stains"].value("color", "#000000")); }
-            
-            // --- UPDATED CORROSIVE PARSING ---
-            if (tr.contains("corrosive")) { 
-                def.has_trait_corrosive = true; 
-                def.corrosive_damage = tr["corrosive"].value("damage", 10);
-                def.corrosive_self_cost = tr["corrosive"].value("self_cost", 1); 
-            }
-            
+            if (tr.contains("corrosive")) { def.has_trait_corrosive = true; def.corrosive_damage = tr["corrosive"].value("damage", 10); def.corrosive_self_cost = tr["corrosive"].value("self_cost", 1); }
             if (tr.contains("magmatize")) { def.has_trait_magmatize = true; def.magmatize_damage = tr["magmatize"].value("damage", 10); }
             if (tr.contains("coolant")) def.has_trait_coolant = tr.value("coolant", false);
             if (tr.contains("cleans_color")) def.has_trait_cleans_color = tr.value("cleans_color", false);
             if (tr.contains("boils_on_heat")) def.has_trait_boils_on_heat = tr.value("boils_on_heat", false);
             if (tr.contains("ignites_when_touching_fire")) def.has_trait_ignites_when_touching_fire = tr.value("ignites_when_touching_fire", false);
+            if (tr.contains("burns_objects")) { def.has_trait_burns_objects = true; def.burns_objects_heat = tr["burns_objects"].value("heat", 10); }
+            if (tr.contains("explosive_on_ignite")) { def.has_trait_explosive_on_ignite = true; def.explosive_radius = tr["explosive_on_ignite"].value("radius", 15); def.explosive_strength = tr["explosive_on_ignite"].value("strength", 10); }
+            if (tr.contains("spark_chance")) def.spark_chance = tr.value("spark_chance", -1.0f);
             
             if (tr.contains("immune_to_magmatize")) def.immune_to_magmatize = tr.value("immune_to_magmatize", false);
             if (tr.contains("immune_to_fire")) def.immune_to_fire = tr.value("immune_to_fire", false);
             if (tr.contains("immune_to_corrosion")) def.immune_to_corrosion = tr.value("immune_to_corrosion", false); 
             
-            if (tr.contains("burns_objects")) {
-                def.has_trait_burns_objects = true;
-                def.burns_objects_heat = tr["burns_objects"].value("heat", 10);
+            if (tr.contains("is_conductive")) def.is_conductive = tr.value("is_conductive", false);
+            if (tr.contains("generates_charge")) def.generates_charge = tr.value("generates_charge", false);
+            if (tr.contains("transform_on_charged")) def.transform_on_charged_result = GlobalMaterialNameToID[tr.value("transform_on_charged", "")];
+            
+            if (tr.contains("growth_rate")) def.growth_rate = tr.value("growth_rate", 0.0f);
+            if (tr.contains("growth_requires_surface")) def.growth_requires_surface = tr.value("growth_requires_surface", false);
+            if (tr.contains("transform_on_starve")) def.transform_on_starve_result = GlobalMaterialNameToID[tr.value("transform_on_starve", "")];
+            if (tr.contains("food_materials")) {
+                for (const auto& f : tr["food_materials"]) {
+                    if (GlobalMaterialNameToID.count(f.get<std::string>())) def.food_materials.push_back(GlobalMaterialNameToID[f.get<std::string>()]);
+                }
             }
-            if (tr.contains("explosive_on_ignite")) {
-                def.has_trait_explosive_on_ignite = true;
-                def.explosive_radius = tr["explosive_on_ignite"].value("radius", 15);
-                def.explosive_strength = tr["explosive_on_ignite"].value("strength", 10);
-            }
-            if (tr.contains("spark_chance")) def.spark_chance = tr.value("spark_chance", -1.0f);
+            
+            if (tr.contains("stickiness")) def.stickiness = tr.value("stickiness", 0.0f);
+            if (tr.contains("bounciness")) def.bounciness = tr.value("bounciness", 0.0f);
+            if (tr.contains("friction")) def.friction = tr.value("friction", 0.5f);
+            if (tr.contains("viscosity")) def.viscosity = tr.value("viscosity", 1);
+            if (tr.contains("anti_gravity")) def.anti_gravity = tr.value("anti_gravity", false);
+            
+            if (tr.contains("transform_on_max_temp")) def.transform_on_max_temp_result = GlobalMaterialNameToID[tr.value("transform_on_max_temp", "")];
+            if (tr.contains("max_temp_threshold")) def.max_temp_threshold = tr.value("max_temp_threshold", 1000);
+            if (tr.contains("transform_on_crushed")) def.transform_on_crush_result = GlobalMaterialNameToID[tr.value("transform_on_crushed", "")];
+            if (tr.contains("smolders")) def.smolders = tr.value("smolders", false);
         }
+
         if (item.contains("interactions")) {
             for (auto& el : item["interactions"].items()) {
                 std::string targetName = el.key();
@@ -181,7 +197,16 @@ void ParticleWorld::loadAllMaterials(const std::vector<std::string>& jsonFiles) 
                 MaterialID targetId = GlobalMaterialNameToID[targetName];
                 InteractionDef interaction;
                 
-                auto parseAct = [](const std::string& a){ if(a=="replace") return InteractionAction::Replace; if(a=="explode") return InteractionAction::Explode; if(a=="die") return InteractionAction::Die; return InteractionAction::None; };
+                auto parseAct = [](const std::string& a){ 
+                    if(a=="replace") return InteractionAction::Replace; 
+                    if(a=="explode") return InteractionAction::Explode; 
+                    if(a=="die") return InteractionAction::Die; 
+                    if(a=="ignite") return InteractionAction::Ignite;
+                    if(a=="infect") return InteractionAction::Infect;
+                    if(a=="push") return InteractionAction::Push;
+                    if(a=="consume") return InteractionAction::Consume;
+                    return InteractionAction::None; 
+                };
                 
                 interaction.self_action = parseAct(el.value().value("self_action", "none"));
                 if (GlobalMaterialNameToID.count(el.value().value("self_result", ""))) interaction.self_result = GlobalMaterialNameToID[el.value().value("self_result", "")];
@@ -190,7 +215,7 @@ void ParticleWorld::loadAllMaterials(const std::vector<std::string>& jsonFiles) 
                 if (GlobalMaterialNameToID.count(el.value().value("target_result", ""))) interaction.target_result = GlobalMaterialNameToID[el.value().value("target_result", "")];
                 
                 interaction.strength = el.value().value("strength", 0);
-                interaction.transform_neighbors = el.value().value("transform_neighbors", false);
+                interaction.transform_neighbors = el.value().value("transform_neighbors", false); 
                 
                 def.interactions[targetId] = interaction;
             }
@@ -211,6 +236,7 @@ void ParticleWorld::loadAllMaterials(const std::vector<std::string>& jsonFiles) 
         else if (def.group == MaterialGroup::MovableSolid) MaterialRegistry[id] = new GenericMovableSolid(id, def);
     }
 }
+
 
 namespace {
     inline void moveSameChunkFast(Chunk* c, uint32_t oldIdx, uint32_t newIdx, uint8_t mask) {

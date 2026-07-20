@@ -79,8 +79,8 @@ obj/src/Particles/ExplosiveContainer.o: \
  ../SFML-3.0.0/include/SFML/System/InputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/MemoryInputStream.hpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp include/Constants.hpp \
- include/Random.hpp include/ParticleWorld.hpp \
- include/Particles/ParticleDef.hpp
+ include/Random.hpp include/Particles/ParticleDef.hpp \
+ include/ParticleWorld.hpp
 include/Particles/ExplosiveContainer.hpp:
 include/Particles/Particle.hpp:
 ../SFML-3.0.0/include/SFML/Graphics.hpp:
@@ -163,5 +163,5 @@ include/Particles/Particle.hpp:
 ../SFML-3.0.0/include/SFML/System/Sleep.hpp:
 include/Constants.hpp:
 include/Random.hpp:
-include/ParticleWorld.hpp:
 include/Particles/ParticleDef.hpp:
+include/ParticleWorld.hpp:

@@ -82,7 +82,8 @@ obj/src/Entities/Entity.o: src/Entities/Entity.cpp \
  ../SFML-3.0.0/include/SFML/System/Sleep.hpp \
  include/Entities/EntityComponents.hpp include/Entities/EntitySystem.hpp \
  include/Weapon.hpp include/RigidBody.hpp include/ParticleWorld.hpp \
- include/Constants.hpp include/Random.hpp include/Particles/Particle.hpp
+ include/Constants.hpp include/Random.hpp include/Particles/Particle.hpp \
+ include/Particles/ParticleDef.hpp
 include/Entities/Entity.hpp:
 ../2dbox/include/box2d/box2d.h:
 ../2dbox/include/box2d/base.h:
@@ -176,3 +177,4 @@ include/ParticleWorld.hpp:
 include/Constants.hpp:
 include/Random.hpp:
 include/Particles/Particle.hpp:
+include/Particles/ParticleDef.hpp:

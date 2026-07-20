@@ -58,7 +58,7 @@
       "stains": { "color": "#00ff0064" } 
     }
   },
-  { 
+{ 
     "name": "Cement", 
     "group": "Liquid", 
     "colors": ["#a5a391", "#969482"], 
@@ -67,7 +67,7 @@
       "durability": { "health": 200, "explosionResistance": 2 } 
     }, 
     "transform_conditions": { 
-      "on_rest": { "frames": 50, "result": "Stone" } 
+      "on_rest": { "time": 0.83, "result": "Stone" } 
     } 
   },
   { 

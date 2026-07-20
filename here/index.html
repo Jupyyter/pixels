@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Terraria-Style AI Map Generator (Nano Banana 2 Lite)</title>
+    <style>
+        body { background-color: #222; color: white; font-family: sans-serif; text-align: center; }
+        canvas { border: 2px solid #555; background-color: #111; margin-top: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        #status { font-size: 1.2rem; font-weight: bold; color: #4CAF50; margin: 10px 0; height: 25px; }
+        button { padding: 12px 24px; font-size: 1rem; cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 5px; transition: 0.3s; }
+        button:hover { background: #45a049; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        
+        .api-setup { margin-bottom: 20px; padding: 15px; background: #333; border-radius: 8px; display: inline-block; }
+        input[type="password"] { padding: 8px; width: 350px; font-size: 1rem; border-radius: 4px; border: 1px solid #777; background: #111; color: white; }
+    </style>
+</head>
+<body>
+    <h1>Terraria Map Gen (Nano Banana 2 Lite)</h1>
+    
+    <div class="api-setup">
+        <label for="apiKey"><strong>Google AI Studio Key:</strong></label><br><br>
+        <input type="password" id="apiKey" placeholder="Paste your API key here">
+    </div>
+    <br>
+
+    <button id="genButton" onclick="generateWorld()">Generate 1024x1024 Map</button>
+    <div id="status">Ready...</div>
+    
+    <canvas id="gameMap" width="1024" height="1024"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameMap');
+        const ctx = canvas.getContext('2d');
+        const statusText = document.getElementById('status');
+        const button = document.getElementById('genButton');
+
+        const chunkSize = 256; 
+        const modelName = "gemini-3.1-flash-lite-image"; // The official name for Nano Banana 2 Lite
+
+        async function generateWorld() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            if (!apiKey) {
+                alert("Please paste your Google AI Studio API key first!");
+                return;
+            }
+
+            button.disabled = true;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            let currentChunk = 1;
+            const totalChunks = 16; 
+
+            for (let gridY = 0; gridY < 4; gridY++) {
+                for (let gridX = 0; gridX < 4; gridX++) {
+                    
+                    let drawX = gridX * chunkSize;
+                    let drawY = gridY * chunkSize;
+
+                    statusText.innerText = `Generating chunk ${currentChunk}/${totalChunks}...`;
+                    
+                    ctx.fillStyle = "#1a1a1a";
+                    ctx.fillRect(drawX, drawY, chunkSize, chunkSize);
+                    ctx.fillStyle = "#555";
+                    ctx.font = "14px monospace";
+                    ctx.fillText("Loading...", drawX + 85, drawY + 135);
+
+                    let biome = "";
+                    if (gridY === 0) biome = "sky with pixel art floating clouds and sun";
+                    else if (gridY === 1) biome = "surface grass, dirt, and pixel trees";
+                    else if (gridY === 2) biome = "underground dirt with small stone caves";
+                    else biome = "deep cavern stone with glowing purple ores";
+
+                    // Optimized prompt for the lite image model
+                    let prompt = `2D side-scrolling pixel art, Terraria style game asset, tileable square map chunk, high contrast. Biome: ${biome}`;
+
+                    try {
+                        // FIXED: Correct API endpoint for Google AI Studio
+                        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+                        
+                        // FIXED: Correct JSON structure for Gemini 3.1 image generation
+                        const requestBody = {
+                            contents: [{
+                                parts: [{ text: prompt }]
+                            }],
+                            generationConfig: {
+                                responseModalities: ["IMAGE"], // Crucial for image output
+                                imageConfig: {
+                                    aspectRatio: "1:1"
+                                }
+                            }
+                        };
+
+                        const response = await fetch(url, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(requestBody)
+                        });
+
+                        const data = await response.json();
+
+                        if (!response.ok) {
+                            throw new Error(data.error?.message || "API Error");
+                        }
+
+                        // FIXED: Logic to find the image part in the response
+                        const parts = data.candidates[0].content.parts;
+                        const imagePart = parts.find(p => p.inlineData);
+
+                        if (!imagePart) {
+                            throw new Error("No image data returned from model.");
+                        }
+
+                        const base64Data = imagePart.inlineData.data;
+                        const mimeType = imagePart.inlineData.mimeType || "image/png";
+                        
+                        const imgElement = new Image();
+                        imgElement.src = `data:${mimeType};base64,${base64Data}`;
+                        
+                        await new Promise((resolve) => {
+                            imgElement.onload = () => {
+                                ctx.drawImage(imgElement, drawX, drawY, chunkSize, chunkSize);
+                                resolve();
+                            };
+                        });
+                        
+                    } catch (error) {
+                        console.error("Chunk Error:", error);
+                        ctx.fillStyle = "#400";
+                        ctx.fillRect(drawX, drawY, chunkSize, chunkSize);
+                        ctx.fillStyle = "white";
+                        ctx.fillText("Error", drawX + 110, drawY + 135);
+                    }
+
+                    currentChunk++;
+                    // Short delay to avoid hitting rate limits on free keys
+                    await new Promise(r => setTimeout(r, 4500));
+                }
+            }
+            statusText.innerText = "Generation complete!";
+            button.disabled = false;
+        }
+    </script>
+</body>
+</html>

@@ -5,7 +5,6 @@
 #include "Random.hpp"
 #include <cmath>
 
-// --- Base Movable Physics Class ---
 class MovableSolid : public Particle {
 public:
     MovableSolid(MaterialID id) : Particle(id) {}
@@ -24,7 +23,6 @@ protected:
     virtual bool actOnNeighbor(const ParticleContext& ctx, int targetX, int targetY, int& myX, int& myY, ParticleWorld& world, bool isFinal, bool isFirst, int depth) override;
 };
 
-// --- Generic Data-Driven Movable Solid ---
 class GenericMovableSolid : public MovableSolid {
 protected:
     ParticleDef def;
@@ -40,6 +38,12 @@ public:
     bool receiveHeat(BaseComponent* base, ThermalComponent* therm, int x, int y, int heat, ParticleWorld& world) override;
     bool corrode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) override;
     bool magmatize(BaseComponent* base, DurabilityComponent* dur, int x, int y, int damage, ParticleWorld& world) override;
+    bool explode(BaseComponent* base, DurabilityComponent* dur, int x, int y, int strength, ParticleWorld& world) override;
+    bool receiveCharge(BaseComponent* base, int x, int y, ParticleWorld& world) override;
+    void takeEffectsDamage(BaseComponent* base, DurabilityComponent* dur, ThermalComponent* therm, int x, int y, ParticleWorld& world) override;
 
     void spawnSparkIfIgnited(BaseComponent* base, int x, int y, ParticleWorld& world) override;
+
+    float getGravityMult() const override { return def.anti_gravity ? -1.0f : 1.0f; }
+    float getBounciness() const override { return def.bounciness; }
 };
