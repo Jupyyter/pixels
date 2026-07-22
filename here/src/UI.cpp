@@ -140,7 +140,10 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
         if (world) {
             int wx = static_cast<int>(mouseWorldPos.x);
             int wy = static_cast<int>(mouseWorldPos.y);
+            
+            world->setLayer(targetLayer);
             BaseComponent* base = world->get<BaseComponent>(wx, wy);
+            world->setLayer(0);
             
             if (base && base->compMask != 0) {
                 auto it = GlobalParticleDefs.find(base->id);
@@ -171,6 +174,10 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
     ImGui::RadioButton("Weapon", &mode, static_cast<int>(SpawnMode::Weapon)); 
     spawnMode = static_cast<SpawnMode>(mode);
     
+    ImGui::Separator();
+    ImGui::Text("Target Layer");
+    ImGui::RadioButton("Foreground (0)", &targetLayer, 0); ImGui::SameLine();
+    ImGui::RadioButton("Background (1)", &targetLayer, 1);
     ImGui::Separator();
 
     if (spawnMode == SpawnMode::Image) {
@@ -291,7 +298,6 @@ void UI::update(sf::RenderWindow& window, sf::Time deltaTime, bool& simRunning, 
 }
 
 void UI::drawMaterialTabs() {
-    // 1. Copy to a vector and sort them by ID so the UI order is consistent
     std::vector<std::pair<MaterialID, ParticleDef>> sortedMaterials(
         GlobalParticleDefs.begin(), GlobalParticleDefs.end()
     );
@@ -304,11 +310,9 @@ void UI::drawMaterialTabs() {
         auto renderGroup = [&](const char* label, MaterialGroup group) {
             if (ImGui::BeginTabItem(label)) {
                 
-                // 2. Iterate over the sorted dynamic definitions
                 for (const auto& [id, def] : sortedMaterials) {
                     if (def.group == group) {
                         
-                        // Grab a random color from the JSON schema for the button
                         sf::Color c = def.colors.empty() ? sf::Color::Magenta : def.colors[0];
 
                         ImVec4 col = ImVec4(c.r/255.f, c.g/255.f, c.b/255.f, 1.0f);

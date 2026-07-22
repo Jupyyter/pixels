@@ -60,12 +60,10 @@ private:
     bool isPanning;
     float currentZoom;
     
-    // Properties for continuous "freehand" brushing
     std::vector<sf::Vector2f> currentStroke;
     bool isBrushing = false;
     bool isErasing = false;
 
-    // Properties for click-and-drag "line mode" drawing
     bool isDraggingLine = false;
     bool isDraggingEraseLine = false;
     sf::Vector2f lineStartPos;

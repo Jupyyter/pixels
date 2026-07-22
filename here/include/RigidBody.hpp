@@ -4,6 +4,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <iostream>
 #include <SFML/Graphics.hpp>
 #include "ParticleWorld.hpp"
 #include "Particles/Particle.hpp"
@@ -34,7 +35,7 @@ struct DrawnPixel {
 };
 
 class RigidBody {
-public:
+public: 
     b2BodyId bodyId;
     b2WorldId worldId;
     std::vector<DrawnPixel> drawnPixels;
@@ -42,13 +43,14 @@ public:
     int width, height;
     bool needsFixtureRebuild;
 
+    int layer = 0; 
+    
     bool hasCustomRendering = false;
     bool isWeapon = false;
     bool isGun = false;
     bool isEquipped = false;
     bool isIndestructible = false;
     
-    // Gives custom entities (like Wheels) a safe way to completely delete themselves
     bool isDestroyed = false; 
     
     sf::Vector2f pivot;
@@ -85,24 +87,24 @@ private:
     std::vector<DrawnPixel> orphanedPixels; 
     b2WorldId worldId;
     std::vector<std::unique_ptr<RigidBody>> bodies;
-    std::unordered_map<ChunkCoord, ChunkTerrain, ChunkCoordHash> chunkBodies;
+    std::unordered_map<ChunkCoord, ChunkTerrain, ChunkCoordHash> chunkBodies[2];
 
 public:
     void save(std::ostream& out) const;
-    void load(std::istream& in);
+    void load(std::istream& in, bool isV3 = true);
     void clearAll();
     
-    void eraseInRadius(sf::Vector2f center, float radius);
-    void eraseInSquare(sf::Vector2f center, float radius);
+    void eraseInRadius(sf::Vector2f center, float radius, int layer = 0);
+    void eraseInSquare(sf::Vector2f center, float radius, int layer = 0);
     
     RigidBodySystem();
     ~RigidBodySystem();
 
     void renderDebug(sf::RenderTarget& target) const;
-    void addRigidBodyFromSprite(const sf::Image& img, int x, int y, MaterialID mat, bool glue, ParticleWorld& world);
+    void addRigidBodyFromSprite(const sf::Image& img, int x, int y, MaterialID mat, bool glue, ParticleWorld& world, int layer = 0);
     void addBody(std::unique_ptr<RigidBody> rb);
     
-    void addWeapon(const sf::Image& img, int x, int y, const std::string& name);
+    void addWeapon(const sf::Image& img, int x, int y, const std::string& name, int layer = 0);
     RigidBody* getNearestWeapon(sf::Vector2f pos, float radius);
     void renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2f playerPos);
     void renderGluedOutlines(sf::RenderTarget& target, ParticleWorld& world) const;
@@ -110,12 +112,12 @@ public:
     void renderEffects(sf::RenderTarget& target) const;
 
     void applyMeleeHit(sf::Vector2f pos, sf::Vector2f dir, float range, float force, bool shatter, ParticleWorld& world);
-    void applyBlastImpulse(float x, float y, float radius, float strength);
+    void applyBlastImpulse(float x, float y, float radius, float strength, int layer = 0);
 
     void clearFromWorld(ParticleWorld& world);
     void stepPhysics(float dt, ParticleWorld& world);
     void rasterizeToWorld(ParticleWorld& world);
     void syncFromWorld(ParticleWorld& world);
     b2WorldId getWorldId() const { return worldId; }
-    void rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, ParticleWorld& world);
+    void rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, ParticleWorld& world, int layer);
 };

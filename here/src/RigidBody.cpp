@@ -10,9 +10,9 @@
 
 constexpr float PI = 3.14159265358979323846f;
 
-void RigidBodySystem::eraseInRadius(sf::Vector2f center, float radius) {
+void RigidBodySystem::eraseInRadius(sf::Vector2f center, float radius, int layer) {
     for (auto& rb : bodies) {
-        if (rb->isGlued) continue; 
+        if (rb->isGlued || rb->layer != layer) continue; 
         b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
         float wp_x = bp.x * M2P;
         float wp_y = bp.y * M2P;
@@ -25,9 +25,9 @@ void RigidBodySystem::eraseInRadius(sf::Vector2f center, float radius) {
     }
 }
 
-void RigidBodySystem::eraseInSquare(sf::Vector2f center, float radius) {
+void RigidBodySystem::eraseInSquare(sf::Vector2f center, float radius, int layer) {
     for (auto& rb : bodies) {
-        if (rb->isGlued) continue;
+        if (rb->isGlued || rb->layer != layer) continue;
         b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
         float wp_x = bp.x * M2P;
         float wp_y = bp.y * M2P;
@@ -122,8 +122,8 @@ std::vector<std::vector<LocalParticle>> RigidBody::findIslands() {
                     }
                 }
                 islands.push_back(island);
-            }
-        }
+            } 
+        } 
     }
     return islands;
 }
@@ -169,7 +169,7 @@ RigidBody::RigidBody(b2WorldId worldId, const sf::Image& img, int startX, int st
                 
                 particles[y * width + x] = p;
             }
-        }
+        } 
     }
 
     if (isGlued) {
@@ -204,7 +204,7 @@ void RigidBody::clearFromWorld(ParticleWorld& world) {
                 world.updateChunkPixel(c, idx, sf::Color::Transparent);
                 world.wakeParticle(dp.wx, dp.wy);
             }
-        }
+        } 
     }
     drawnPixels.clear();
 }
@@ -250,7 +250,7 @@ void RigidBody::renderPixelated(sf::RenderTarget& target, sf::Vector2f pos, floa
                     va.append(sf::Vertex{tl, col}); va.append(sf::Vertex{tr, col}); va.append(sf::Vertex{br, col});
                     va.append(sf::Vertex{tl, col}); va.append(sf::Vertex{br, col}); va.append(sf::Vertex{bl, col});
                 }
-            }
+            } 
         }
     }
     
@@ -265,7 +265,7 @@ void RigidBody::rebuildFixtures() {
         std::vector<b2ShapeId> shapes(shapeCount);
         b2Body_GetShapes(bodyId, shapes.data(), shapeCount);
         for(int i = 0; i < shapeCount; ++i) {
-            b2DestroyShape(shapes[i], true); 
+            b2DestroyShape(shapes[i], true);
         }
     }
 
@@ -312,8 +312,11 @@ void RigidBody::rebuildFixtures() {
                 shapeDef.material.friction = 0.1f;    
                 shapeDef.material.restitution = 0.0f;
                 
+                shapeDef.filter.categoryBits = (layer == 0) ? 0x0002 : 0x0020;
+                shapeDef.filter.maskBits = (layer == 0) ? (0x0001 | 0x0002 | 0x0004 | 0x0008) : (0x0010 | 0x0020 | 0x0040);
+                
                 b2CreatePolygonShape(bodyId, &shapeDef, &box); 
-            }
+            } 
         }
     }
     needsFixtureRebuild = false;
@@ -353,7 +356,9 @@ void RigidBodySystem::renderDebug(sf::RenderTarget& target) const {
         }
     };
 
-    for (const auto& pair : chunkBodies) drawBody(pair.second.bodyId, sf::Color::Cyan);
+    for (int l = 0; l < 2; ++l) { 
+        for (const auto& pair : chunkBodies[l]) drawBody(pair.second.bodyId, sf::Color::Cyan);
+    }
     for (const auto& rb : bodies) drawBody(rb->bodyId, sf::Color::Green);
 }
 
@@ -363,7 +368,7 @@ void RigidBodySystem::addBody(std::unique_ptr<RigidBody> rb) {
 
 void RigidBodySystem::applyMeleeHit(sf::Vector2f pos, sf::Vector2f dir, float range, float force, bool shatter, ParticleWorld& world) {
     for (auto& rb : bodies) {
-        if (rb->isEquipped || rb->isGlued || rb->isIndestructible) continue;
+        if (rb->isEquipped || rb->isGlued || rb->isIndestructible || rb->layer != 0) continue;
         
         b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
         sf::Vector2f wp(bp.x * M2P, bp.y * M2P);
@@ -380,6 +385,7 @@ void RigidBodySystem::applyMeleeHit(sf::Vector2f pos, sf::Vector2f dir, float ra
     }
 
     if (shatter) {
+        world.setLayer(0);
         for (float d = 0; d < range; d += 2.0f) {
             world.eraseCircle(pos.x + dir.x * d, pos.y + dir.y * d, 4.0f);
         }
@@ -390,15 +396,15 @@ RigidBodySystem::RigidBodySystem() {
     b2WorldDef worldDef = b2DefaultWorldDef();
     worldDef.gravity = {0.0f, 98.0f};
     worldId = b2CreateWorld(&worldDef);
-    chunkBodies.clear();
 }
 
 RigidBodySystem::~RigidBodySystem() {
     b2DestroyWorld(worldId);
 }
 
-void RigidBodySystem::addRigidBodyFromSprite(const sf::Image& img, int x, int y, MaterialID mat, bool glue, ParticleWorld& world) {
+void RigidBodySystem::addRigidBodyFromSprite(const sf::Image& img, int x, int y, MaterialID mat, bool glue, ParticleWorld& world, int layer) {
     bool touchesTerrain = false;
+    world.setLayer(layer);
     if (glue) {
         for (unsigned int ly = 0; ly < img.getSize().y; ++ly) {
             for (unsigned int lx = 0; lx < img.getSize().x; ++lx) {
@@ -427,6 +433,8 @@ void RigidBodySystem::addRigidBodyFromSprite(const sf::Image& img, int x, int y,
     }
 
     auto rb = std::make_unique<RigidBody>(worldId, img, x, y, mat, false, touchesTerrain);
+    rb->layer = layer;
+    rb->rebuildFixtures();
     
     if (touchesTerrain) {
         for (int ly = 0; ly < rb->height; ++ly) {
@@ -451,10 +459,14 @@ void RigidBodySystem::addRigidBodyFromSprite(const sf::Image& img, int x, int y,
     }
     
     bodies.push_back(std::move(rb));
+    world.setLayer(0);
 }
 
-void RigidBodySystem::addWeapon(const sf::Image& img, int x, int y, const std::string& name) {
-    bodies.push_back(std::make_unique<Weapon>(worldId, img, x, y, name));
+void RigidBodySystem::addWeapon(const sf::Image& img, int x, int y, const std::string& name, int layer) {
+    auto w = std::make_unique<Weapon>(worldId, img, x, y, name);
+    w->layer = layer;
+    w->rebuildFixtures();
+    bodies.push_back(std::move(w));
 }
 
 RigidBody* RigidBodySystem::getNearestWeapon(sf::Vector2f pos, float radius) {
@@ -462,7 +474,7 @@ RigidBody* RigidBodySystem::getNearestWeapon(sf::Vector2f pos, float radius) {
     float minDist = radius;
 
     for (auto& rb : bodies) {
-        if (!rb->isWeapon || rb->isEquipped || rb->isGlued) continue;
+        if (!rb->isWeapon || rb->isEquipped || rb->isGlued || rb->layer != 0) continue;
         
         b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
         float dist = std::hypot(bp.x * M2P - pos.x, bp.y * M2P - pos.y);
@@ -499,6 +511,7 @@ void RigidBodySystem::renderGluedOutlines(sf::RenderTarget& target, ParticleWorl
     
     for (auto& rb : bodies) {
         if (!rb->isGlued) continue;
+        world.setLayer(rb->layer);
 
         int dirs[4][2] = {{1,0}, {-1,0}, {0,1}, {0,-1}};
         for (const auto& dp : rb->drawnPixels) {
@@ -542,16 +555,19 @@ void RigidBodySystem::renderGluedOutlines(sf::RenderTarget& target, ParticleWorl
             }
         }
     }
+    world.setLayer(0);
     
     if (va.getVertexCount() > 0) target.draw(va);
 }
 
 void RigidBodySystem::clearFromWorld(ParticleWorld& world) {
     for (auto& rb : bodies) {
+        world.setLayer(rb->layer);
         rb->clearFromWorld(world);
     }
     
     for (auto& dp : orphanedPixels) {
+        world.setLayer(0); 
         Chunk* c = world.getChunk(dp.wx, dp.wy);
         if (c) {
             uint32_t idx = world.computeLocalIndex(dp.wx, dp.wy);
@@ -561,14 +577,28 @@ void RigidBodySystem::clearFromWorld(ParticleWorld& world) {
                 world.wakeParticle(dp.wx, dp.wy);
             }
         }
+        
+        world.setLayer(1);
+        c = world.getChunk(dp.wx, dp.wy);
+        if (c) {
+            uint32_t idx = world.computeLocalIndex(dp.wx, dp.wy);
+            if (c->base[idx].compMask != 0 && c->base[idx].flags.isRigidBodyPart) {
+                c->base[idx].compMask = 0; 
+                world.updateChunkPixel(c, idx, sf::Color::Transparent);
+                world.wakeParticle(dp.wx, dp.wy);
+            }
+        }
     }
+    world.setLayer(0);
     orphanedPixels.clear(); 
 }
 
 void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
     for (auto& rb : bodies) {
+        world.setLayer(rb->layer);
         rb->update(dt, world);
     }
+    world.setLayer(0);
     
     for (auto it = bodies.begin(); it != bodies.end(); ) {
         if ((*it)->isDestroyed) {
@@ -581,7 +611,7 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
         }
     }
 
-    std::unordered_set<ChunkCoord, ChunkCoordHash> overlappingChunks;
+    std::unordered_set<ChunkCoord, ChunkCoordHash> overlappingChunks[2];
     
     for (auto& rb : bodies) {
         if (rb->isEquipped || rb->isGlued) continue;
@@ -596,11 +626,12 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
         
         bool needsWake = false;
 
-        for (int cy = minCy; cy <= maxCy; ++cy) {
+        for (int cy = minCy; cy <= maxCy; ++cy) { 
             for (int cx = minCx; cx <= maxCx; ++cx) {
                 ChunkCoord coord{cx, cy};
-                overlappingChunks.insert(coord);
+                overlappingChunks[rb->layer].insert(coord);
                 
+                world.setLayer(rb->layer);
                 Chunk* c = world.getChunk(cx << 6, cy << 6);
                 if (c && (!c->isSleeping || c->visualDirty)) {
                     needsWake = true;
@@ -613,7 +644,6 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
         }
     }
 
-    // --- NEW: Add overlapping chunks for Entities so terrain doesn't magically vanish beneath them! ---
     if (world.getEntitySystem()) {
         for (const auto& e : world.getEntitySystem()->entities) {
             if (!b2Body_IsValid(e->bodyId)) continue;
@@ -629,8 +659,9 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
             for (int cy = minCy; cy <= maxCy; ++cy) {
                 for (int cx = minCx; cx <= maxCx; ++cx) {
                     ChunkCoord coord{cx, cy};
-                    overlappingChunks.insert(coord);
+                    overlappingChunks[0].insert(coord);
                     
+                    world.setLayer(0);
                     Chunk* c = world.getChunk(cx << 6, cy << 6);
                     if (c && (!c->isSleeping || c->visualDirty)) {
                         needsWake = true;
@@ -643,24 +674,27 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
             }
         }
     }
-    // ------------------------------------------------------------------------------------------------
     
-    for (auto it = chunkBodies.begin(); it != chunkBodies.end(); ) {
-        if (overlappingChunks.find(it->first) == overlappingChunks.end()) {
-            b2DestroyBody(it->second.bodyId);
-            it = chunkBodies.erase(it);
-        } else {
-            ++it;
+    for (int l = 0; l < 2; ++l) {
+        for (auto it = chunkBodies[l].begin(); it != chunkBodies[l].end(); ) {
+            if (overlappingChunks[l].find(it->first) == overlappingChunks[l].end()) {
+                b2DestroyBody(it->second.bodyId);
+                it = chunkBodies[l].erase(it);
+            } else {
+                ++it;
+            }
         }
-    }
 
-    for (auto coord : overlappingChunks) {
-        Chunk* c = world.getChunk(coord.x << 6, coord.y << 6);
-        bool hasTerrain = chunkBodies.count(coord) > 0;
-        if (!hasTerrain || (c && (!c->isSleeping || c->visualDirty))) {
-            rebuildChunkTerrain(coord, c, world);
+        for (auto coord : overlappingChunks[l]) {
+            world.setLayer(l);
+            Chunk* c = world.getChunk(coord.x << 6, coord.y << 6);
+            bool hasTerrain = chunkBodies[l].count(coord) > 0;
+            if (!hasTerrain || (c && (!c->isSleeping || c->visualDirty))) {
+                rebuildChunkTerrain(coord, c, world, l);
+            }
         }
     }
+    world.setLayer(0);
     
     static float physicsAccumulator = 0.0f;
     
@@ -678,6 +712,7 @@ void RigidBodySystem::stepPhysics(float dt, ParticleWorld& world) {
 void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
     for (auto& rb : bodies) {
         if (rb->isEquipped || rb->isGlued || rb->hasCustomRendering) continue;
+        world.setLayer(rb->layer);
 
         rb->drawnPixels.clear();
         
@@ -769,7 +804,7 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
                                                     }
                                                     sideX += dir;
                                                 }
-                                                if (found) break;
+                                                if (found) break; 
                                             }
                                         }
 
@@ -797,7 +832,7 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
                                 
                                 rb->drawnPixels.push_back({wx, wy, localIdx});
                             }
-                        }
+                        } 
                     }
                 }
             }
@@ -826,6 +861,7 @@ void RigidBodySystem::rasterizeToWorld(ParticleWorld& world) {
         b2Body_SetLinearDamping(rb->bodyId, linearDrag);
         b2Body_SetAngularDamping(rb->bodyId, angularDrag);
     }
+    world.setLayer(0);
 }
 
 void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
@@ -837,6 +873,7 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
             ++it;
             continue;
         }
+        world.setLayer(rb->layer);
 
         bool needsRebuild = false;
         
@@ -889,7 +926,7 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
                                 stillAttached = true;
                                 break;
                             }
-                        }
+                        } 
                     }
                 }
                 if (stillAttached) break;
@@ -963,15 +1000,17 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
                     
                     if (islandGlued) {
                         auto newBody = std::make_unique<RigidBody>(worldId, newW, newH, newParts, b2Vec2({0,0}), 0.0f, b2Vec2({0,0}), 0.0f, false, true, rb->startX + minX, rb->startY + minY);
+                        newBody->layer = rb->layer;
+                        newBody->rebuildFixtures();
                         for (auto& p : newBody->particles) {
                             if (p.active) {
                                 newBody->drawnPixels.push_back({newBody->startX + p.localX, newBody->startY + p.localY, p.localY * newW + p.localX});
-                            }
+                            } 
                         }
                         newBodies.push_back(std::move(newBody));
                     } else {
                         if (rb->isGlued) {
-                            for (const auto& p : island) {
+                            for (const auto& p : island) { 
                                 int wx = rb->startX + p.localX;
                                 int wy = rb->startY + p.localY;
                                 Chunk* c = world.getChunk(wx, wy);
@@ -1018,17 +1057,20 @@ void RigidBodySystem::syncFromWorld(ParticleWorld& world) {
                         }
                         
                         auto newBody = std::make_unique<RigidBody>(worldId, newW, newH, newParts, newPos, currentAngle, newLinVel, angVel, false, false, 0, 0);
+                        newBody->layer = rb->layer;
+                        newBody->rebuildFixtures();
                         newBodies.push_back(std::move(newBody));
                     }
                 }
                 
                 if (b2Body_IsValid(rb->bodyId)) b2DestroyBody(rb->bodyId);
                 it = bodies.erase(it);
-                continue; 
+                continue;
             }
         }
         ++it;
     }
+    world.setLayer(0);
     
     for (auto& nb : newBodies) {
         bodies.push_back(std::move(nb));
@@ -1091,15 +1133,15 @@ namespace {
     }
 }
 
-void RigidBodySystem::applyBlastImpulse(float x, float y, float radius, float strength) {
+void RigidBodySystem::applyBlastImpulse(float x, float y, float radius, float strength, int layer) {
     for (auto& rb : bodies) {
-        if (rb->isEquipped || rb->isGlued) continue; 
+        if (rb->isEquipped || rb->isGlued || rb->layer != layer) continue;
         
         b2Vec2 bp = b2Body_GetPosition(rb->bodyId);
         sf::Vector2f wp(bp.x * M2P, bp.y * M2P);
         float dist = std::hypot(wp.x - x, wp.y - y);
         
-        float blastRadius = radius * 2.0f; 
+        float_t blastRadius = radius * 2.0f; 
         
         if (dist <= blastRadius && dist > 0.1f) {
             sf::Vector2f toBody = {wp.x - x, wp.y - y};
@@ -1114,7 +1156,7 @@ void RigidBodySystem::applyBlastImpulse(float x, float y, float radius, float st
     }
 }
 
-void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, ParticleWorld& world) {
+void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, ParticleWorld& world, int layer) {
     uint64_t currentHash = 0;
     if (chunk) {
         for (int i = 0; i < CHUNK_AREA; ++i) {
@@ -1127,11 +1169,11 @@ void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, Partic
         }
     }
 
-    if (chunkBodies.count(coord) && chunkBodies[coord].hash == currentHash) return; 
+    if (chunkBodies[layer].count(coord) && chunkBodies[layer][coord].hash == currentHash) return;
 
-    if (chunkBodies.count(coord)) {
-        b2DestroyBody(chunkBodies[coord].bodyId);
-        chunkBodies.erase(coord);
+    if (chunkBodies[layer].count(coord)) {
+        b2DestroyBody(chunkBodies[layer][coord].bodyId);
+        chunkBodies[layer].erase(coord);
     }
 
     if (!chunk || currentHash == 0) return;
@@ -1236,12 +1278,12 @@ void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, Partic
             b2ShapeDef shapeDef = b2DefaultShapeDef();
             shapeDef.material.friction = 0.5f; 
             
-            // Assign Platforms their own unique Collision Layer (0x0004)
             if (platformPass) {
-                shapeDef.filter.categoryBits = 0x0004;
+                shapeDef.filter.categoryBits = (layer == 0) ? 0x0004 : 0x0040;
             } else {
-                shapeDef.filter.categoryBits = 0x0001;
+                shapeDef.filter.categoryBits = (layer == 0) ? 0x0001 : 0x0010;
             }
+            shapeDef.filter.maskBits = (layer == 0) ? 0x000F : 0x00F0;
 
             for (size_t i = 0; i < simplified.size() - 1; ++i) {
                 b2Segment segment = { 
@@ -1264,11 +1306,11 @@ void RigidBodySystem::rebuildChunkTerrain(ChunkCoord coord, Chunk* chunk, Partic
         }
     };
 
-    buildShapes(false); // Normal Terrain Pass
-    buildShapes(true);  // Platform Pass
+    buildShapes(false); 
+    buildShapes(true);  
 
     if (hasFixtures) {
-        chunkBodies[coord] = {bodyId, currentHash};
+        chunkBodies[layer][coord] = {bodyId, currentHash};
     } else {
         b2DestroyBody(bodyId);
     }
@@ -1279,6 +1321,8 @@ void RigidBodySystem::save(std::ostream& out) const {
     out.write(reinterpret_cast<const char*>(&count), sizeof(count));
     
     for (const auto& rb : bodies) {
+        out.write(reinterpret_cast<const char*>(&rb->layer), sizeof(int));
+        
         b2Vec2 p = {0,0};
         b2Vec2 linVel = {0,0};
         float angVel = 0;
@@ -1321,12 +1365,17 @@ void RigidBodySystem::save(std::ostream& out) const {
     }
 }
 
-void RigidBodySystem::load(std::istream& in) {
+void RigidBodySystem::load(std::istream& in, bool isV3) {
     clearAll();
     size_t count = 0;
     in.read(reinterpret_cast<char*>(&count), sizeof(count));
     
     for (size_t i = 0; i < count; ++i) {
+        int layer = 0;
+        if (isV3) {
+            in.read(reinterpret_cast<char*>(&layer), sizeof(int));
+        }
+
         b2Vec2 pos, linVel;
         float angle, angVel;
         int w, h;
@@ -1368,6 +1417,8 @@ void RigidBodySystem::load(std::istream& in) {
         
         if (isWeapon) {
             auto newBody = std::make_unique<Weapon>(worldId, w, h, parts, pos, angle, linVel, angVel, wName, isGlued, sX, sY);
+            newBody->layer = layer;
+            newBody->rebuildFixtures();
             if (isGlued) {
                 for (auto& p : newBody->particles) {
                     if (p.active) newBody->drawnPixels.push_back({sX + p.localX, sY + p.localY, p.localY * w + p.localX});
@@ -1376,6 +1427,8 @@ void RigidBodySystem::load(std::istream& in) {
             bodies.push_back(std::move(newBody));
         } else {
             auto newBody = std::make_unique<RigidBody>(worldId, w, h, parts, pos, angle, linVel, angVel, false, isGlued, sX, sY);
+            newBody->layer = layer;
+            newBody->rebuildFixtures();
             if (isGlued) {
                 for (auto& p : newBody->particles) {
                     if (p.active) newBody->drawnPixels.push_back({sX + p.localX, sY + p.localY, p.localY * w + p.localX});
@@ -1392,10 +1445,12 @@ void RigidBodySystem::clearAll() {
     }
     bodies.clear();
     
-    for (auto& pair : chunkBodies) {
-        if (b2Body_IsValid(pair.second.bodyId)) b2DestroyBody(pair.second.bodyId);
+    for (int l = 0; l < 2; ++l) {
+        for (auto& pair : chunkBodies[l]) {
+            if (b2Body_IsValid(pair.second.bodyId)) b2DestroyBody(pair.second.bodyId);
+        }
+        chunkBodies[l].clear();
     }
-    chunkBodies.clear();
     orphanedPixels.clear();
 }
 

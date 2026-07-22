@@ -35,9 +35,10 @@ sf::Color HexToColor(const std::string& hex) {
 std::unordered_map<std::string, MaterialID> GlobalMaterialNameToID;
 std::unordered_map<MaterialID, ParticleDef> GlobalParticleDefs;
 const char MAGIC_HEADER_V2[4] = {'S', 'N', 'D', '2'};
+const char MAGIC_HEADER_V3[4] = {'S', 'N', 'D', '3'};
 
 void ParticleWorld::loadAllMaterials(const std::vector<std::string>& jsonFiles) {
-    uint8_t nextAvailableId = 1; 
+    uint8_t nextAvailableId = 1;
     std::vector<json> allRawItems; 
 
     for (const auto& fileStr : jsonFiles) {
@@ -110,7 +111,7 @@ void ParticleWorld::loadAllMaterials(const std::vector<std::string>& jsonFiles) 
             GlobalParticleDefs[newId] = def;
             
             allRawItems.push_back(item);
-        }
+        } 
     }
 
     for (const auto& item : allRawItems) {
@@ -120,14 +121,8 @@ void ParticleWorld::loadAllMaterials(const std::vector<std::string>& jsonFiles) 
         if (item.contains("transform_conditions")) {
             auto tc = item["transform_conditions"];
             if (tc.contains("on_rest") && GlobalMaterialNameToID.count(tc["on_rest"].value("result", ""))) {
-                
-                // Read the requested time in seconds from JSON
                 float timeInSeconds = tc["on_rest"].value("time", 0.0f);
-                
-                // Convert seconds into internal physics ticks! (Assuming 60 Ticks Per Second)
-                // If you ever change your game to 120 TPS, you just change the 60.0f here to 120.0f!
                 def.transform_on_rest_ticks = static_cast<int>(timeInSeconds * 60.0f);
-                
                 def.transform_on_rest_result = GlobalMaterialNameToID[tc["on_rest"]["result"]];
             }
             if (tc.contains("on_health_zero") && GlobalMaterialNameToID.count(tc["on_health_zero"].value("result", ""))) {
@@ -237,7 +232,6 @@ void ParticleWorld::loadAllMaterials(const std::vector<std::string>& jsonFiles) 
     }
 }
 
-
 namespace {
     inline void moveSameChunkFast(Chunk* c, uint32_t oldIdx, uint32_t newIdx, uint8_t mask) {
         if (mask & COMP_KINEMATICS) c->kinematics[newIdx] = c->kinematics[oldIdx];
@@ -300,36 +294,43 @@ namespace {
 ParticleWorld::~ParticleWorld() = default;
 
 ParticleWorld::ParticleWorld(unsigned int w, unsigned int h)
-    : viewWidth(w), viewHeight(h), frameCounter(0), cameraPos({0, 0})
+    : viewWidth(w), viewHeight(h), frameCounter(0), cameraPos({0, 0}), currentLayer(0)
 {
-    std::fill(std::begin(cacheCx), std::end(cacheCx), -999999);
-    std::fill(std::begin(cacheCy), std::end(cacheCy), -999999);
+    std::fill(std::begin(cacheCx[0]), std::end(cacheCx[0]), -999999);
+    std::fill(std::begin(cacheCy[0]), std::end(cacheCy[0]), -999999);
+    std::fill(std::begin(cacheCx[1]), std::end(cacheCx[1]), -999999);
+    std::fill(std::begin(cacheCy[1]), std::end(cacheCy[1]), -999999);
 
     rigidBodySystem = std::make_unique<RigidBodySystem>();
     pixelBuffer.resize(viewWidth * viewHeight * 4);
 }
 
-void ParticleWorld::clear() { 
-    chunks.clear(); 
-    std::fill(std::begin(cacheChunk), std::end(cacheChunk), nullptr);
-    std::fill(std::begin(cacheCx), std::end(cacheCx), -999999);
-    std::fill(std::begin(cacheCy), std::end(cacheCy), -999999);
+void ParticleWorld::clear() {
+    chunks[0].clear();
+    chunks[1].clear();
+    std::fill(std::begin(cacheChunk[0]), std::end(cacheChunk[0]), nullptr);
+    std::fill(std::begin(cacheCx[0]), std::end(cacheCx[0]), -999999);
+    std::fill(std::begin(cacheCy[0]), std::end(cacheCy[0]), -999999);
+    std::fill(std::begin(cacheChunk[1]), std::end(cacheChunk[1]), nullptr);
+    std::fill(std::begin(cacheCx[1]), std::end(cacheCx[1]), -999999);
+    std::fill(std::begin(cacheCy[1]), std::end(cacheCy[1]), -999999);
 }
 
 Chunk* ParticleWorld::getChunk(int x, int y) const {
     int cx = x >> 6;
     int cy = y >> 6;
+    int l = currentLayer;
 
-    int cacheIdx = (cx ^ (cy * 73856093)) & 63; 
-    if (cacheCx[cacheIdx] == cx && cacheCy[cacheIdx] == cy) {
-        return cacheChunk[cacheIdx];
+    int cacheIdx = (cx ^ (cy * 73856093)) & 63;
+    if (cacheCx[l][cacheIdx] == cx && cacheCy[l][cacheIdx] == cy) {
+        return cacheChunk[l][cacheIdx];
     }
 
-    auto it = chunks.find({cx, cy});
-    if (it != chunks.end()) {
-        cacheCx[cacheIdx] = cx;
-        cacheCy[cacheIdx] = cy;
-        cacheChunk[cacheIdx] = it->second.get();
+    auto it = chunks[l].find({cx, cy});
+    if (it != chunks[l].end()) {
+        cacheCx[l][cacheIdx] = cx;
+        cacheCy[l][cacheIdx] = cy;
+        cacheChunk[l][cacheIdx] = it->second.get();
         return it->second.get();
     }
     return nullptr;
@@ -338,26 +339,28 @@ Chunk* ParticleWorld::getChunk(int x, int y) const {
 Chunk* ParticleWorld::getOrCreateChunk(int x, int y) {
     int cx = x >> 6;
     int cy = y >> 6;
+    int l = currentLayer;
 
-    int cacheIdx = (cx ^ (cy * 73856093)) & 63; 
-    if (cacheCx[cacheIdx] == cx && cacheCy[cacheIdx] == cy && cacheChunk[cacheIdx]) {
-        return cacheChunk[cacheIdx];
+    int cacheIdx = (cx ^ (cy * 73856093)) & 63;
+    if (cacheCx[l][cacheIdx] == cx && cacheCy[l][cacheIdx] == cy && cacheChunk[l][cacheIdx]) {
+        return cacheChunk[l][cacheIdx];
     }
 
     ChunkCoord coord{cx, cy};
-    auto it = chunks.find(coord);
-    if (it == chunks.end()) {
-        chunks[coord] = std::make_unique<Chunk>();
+    auto it = chunks[l].find(coord);
+    if (it == chunks[l].end()) {
+        chunks[l][coord] = std::make_unique<Chunk>();
+        chunks[l][coord]->layer = l;
         
-        cacheCx[cacheIdx] = cx;
-        cacheCy[cacheIdx] = cy;
-        cacheChunk[cacheIdx] = chunks[coord].get();
-        return chunks[coord].get();
+        cacheCx[l][cacheIdx] = cx;
+        cacheCy[l][cacheIdx] = cy;
+        cacheChunk[l][cacheIdx] = chunks[l][coord].get();
+        return chunks[l][coord].get();
     }
     
-    cacheCx[cacheIdx] = cx;
-    cacheCy[cacheIdx] = cy;
-    cacheChunk[cacheIdx] = it->second.get();
+    cacheCx[l][cacheIdx] = cx;
+    cacheCy[l][cacheIdx] = cy;
+    cacheChunk[l][cacheIdx] = it->second.get();
     return it->second.get();
 }
 
@@ -395,7 +398,7 @@ void ParticleWorld::removeParticle(int x, int y) {
     if (c) {
         removeParticleInternal(c, computeLocalIndex(x, y));
         wakeParticle(x, y);
-    }
+    } 
 }
 
 void ParticleWorld::removeParticleInternal(Chunk *chunk, uint32_t localIndex) {
@@ -518,104 +521,108 @@ void ParticleWorld::update(float deltaTime)
 
     for (const auto& exp : pendingExplosions) {
         if (rigidBodySystem) {
-            rigidBodySystem->applyBlastImpulse(static_cast<float>(exp.x), static_cast<float>(exp.y), static_cast<float>(exp.radius), static_cast<float>(exp.strength));
+            rigidBodySystem->applyBlastImpulse(static_cast<float>(exp.x), static_cast<float>(exp.y), static_cast<float>(exp.radius), static_cast<float>(exp.strength), exp.layer);
         }
+        currentLayer = exp.layer;
         Explosion boom(*this, exp.x, exp.y, exp.radius, exp.strength);
         boom.enact();
     }
+    currentLayer = 0;
     pendingExplosions.clear();
 
     frameCounter++;
     bool dir = (frameCounter % 2) == 0;
 
-    static std::vector<std::pair<ChunkCoord, Chunk *>> safeUpdateList;
-    safeUpdateList.clear();
-    safeUpdateList.reserve(chunks.size());
+    for (int l = 0; l < 2; ++l) {
+        currentLayer = l;
+        static std::vector<std::pair<ChunkCoord, Chunk *>> safeUpdateList;
+        safeUpdateList.clear();
+        safeUpdateList.reserve(chunks[l].size());
 
-    for (auto &[coord, chunk] : chunks) {
-        if (chunk->isActive) safeUpdateList.push_back({coord, chunk.get()});
-    }
-
-    for (auto &[coord, chunk] : safeUpdateList) {
-        if (chunk->nextMinX > chunk->nextMaxX) {
-            chunk->isSleeping = true;
-            continue;
+        for (auto &[coord, chunk] : chunks[l]) {
+            if (chunk->isActive) safeUpdateList.push_back({coord, chunk.get()});
         }
-        chunk->isSleeping = false;
-        chunk->activeMinX = std::max(0, chunk->nextMinX - 1);
-        chunk->activeMinY = std::max(0, chunk->nextMinY - 1);
-        chunk->activeMaxX = std::min(CHUNK_SIZE - 1, chunk->nextMaxX + 1);
-        chunk->activeMaxY = std::min(CHUNK_SIZE - 1, chunk->nextMaxY + 1);
-        chunk->nextMinX = CHUNK_SIZE; chunk->nextMinY = CHUNK_SIZE;
-        chunk->nextMaxX = -1; chunk->nextMaxY = -1;
-    }
 
-    for (auto &[coord, chunk] : safeUpdateList)
-    {
-        if (!chunk->isActive || chunk->isSleeping) continue;
+        for (auto &[coord, chunk] : safeUpdateList) {
+            if (chunk->nextMinX > chunk->nextMaxX) {
+                chunk->isSleeping = true;
+                continue;
+            }
+            chunk->isSleeping = false;
+            chunk->activeMinX = std::max(0, chunk->nextMinX - 1);
+            chunk->activeMinY = std::max(0, chunk->nextMinY - 1);
+            chunk->activeMaxX = std::min(CHUNK_SIZE - 1, chunk->nextMaxX + 1);
+            chunk->activeMaxY = std::min(CHUNK_SIZE - 1, chunk->nextMaxY + 1);
+            chunk->nextMinX = CHUNK_SIZE; chunk->nextMinY = CHUNK_SIZE;
+            chunk->nextMaxX = -1; chunk->nextMaxY = -1;
+        }
 
-        int chunkOriginX = coord.x * CHUNK_SIZE;
-        int chunkOriginY = coord.y * CHUNK_SIZE;
-        sf::FloatRect chunkRect(
-            {static_cast<float>(chunkOriginX), static_cast<float>(chunkOriginY)},
-            {static_cast<float>(CHUNK_SIZE), static_cast<float>(CHUNK_SIZE)}
-        );
+        for (auto &[coord, chunk] : safeUpdateList)
+        { 
+            if (!chunk->isActive || chunk->isSleeping) continue;
 
-        if (!simulationBounds.findIntersection(chunkRect)) continue;
-        
-        BaseComponent* baseArr = chunk->base;
+            int chunkOriginX = coord.x * CHUNK_SIZE;
+            int chunkOriginY = coord.y * CHUNK_SIZE;
+            sf::FloatRect chunkRect(
+                {static_cast<float>(chunkOriginX), static_cast<float>(chunkOriginY)},
+                {static_cast<float>(CHUNK_SIZE), static_cast<float>(CHUNK_SIZE)}
+            );
 
-        auto processParticle = [&](int lx, int ly) {
-            uint32_t i = (ly << 6) | lx;
+            if (!simulationBounds.findIntersection(chunkRect)) continue;
+            
+            BaseComponent* baseArr = chunk->base;
 
-            if (baseArr[i].compMask == 0 || baseArr[i].flags.hasBeenUpdatedThisFrame) return;
+            auto processParticle = [&](int lx, int ly) {
+                uint32_t i = (ly << 6) | lx;
 
-            baseArr[i].flags.hasBeenUpdatedThisFrame = true;
+                if (baseArr[i].compMask == 0 || baseArr[i].flags.hasBeenUpdatedThisFrame) return;
 
-            ParticleContext ctx { 
-                chunk, 
-                i, 
-                chunkOriginX + lx, 
-                chunkOriginY + ly, 
-                baseArr, 
-                chunk->kinematics.get(), 
-                chunk->fluid.get(), 
-                chunk->thermal.get(), 
-                chunk->durability.get() 
+                baseArr[i].flags.hasBeenUpdatedThisFrame = true;
+
+                ParticleContext ctx { 
+                    chunk, 
+                    i, 
+                    chunkOriginX + lx, 
+                    chunkOriginY + ly, 
+                    chunk->layer,
+                    baseArr, 
+                    chunk->kinematics.get(), 
+                    chunk->fluid.get(), 
+                    chunk->thermal.get(), 
+                    chunk->durability.get() 
+                };
+
+                if (MaterialRegistry[static_cast<int>(baseArr[i].id)]) {
+                    MaterialRegistry[static_cast<int>(baseArr[i].id)]->update(ctx, deltaTime, *this);
+                }
             };
 
-            if (MaterialRegistry[static_cast<int>(baseArr[i].id)]) {
-                MaterialRegistry[static_cast<int>(baseArr[i].id)]->update(ctx, deltaTime, *this);
-            }
-        };
-
-        if (dir) {
-            for (int ly = chunk->activeMaxY; ly >= chunk->activeMinY; --ly) {
-                for (int lx = chunk->activeMinX; lx <= chunk->activeMaxX; ++lx) {
-                    processParticle(lx, ly);
+            if (dir) {
+                for (int ly = chunk->activeMaxY; ly >= chunk->activeMinY; --ly) {
+                    for (int lx = chunk->activeMinX; lx <= chunk->activeMaxX; ++lx) {
+                        processParticle(lx, ly);
+                    } 
                 }
-            }
-        } else {
-            for (int ly = chunk->activeMaxY; ly >= chunk->activeMinY; --ly) {
-                for (int lx = chunk->activeMaxX; lx >= chunk->activeMinX; --lx) {
-                    processParticle(lx, ly);
+            } else {
+                for (int ly = chunk->activeMaxY; ly >= chunk->activeMinY; --ly) {
+                    for (int lx = chunk->activeMaxX; lx >= chunk->activeMinX; --lx) {
+                        processParticle(lx, ly);
+                    }
                 }
             }
         }
-    }
 
-    for (auto &[coord, chunk] : safeUpdateList) {
-        if (chunk->isSleeping) continue; 
-        for (int i=0; i<CHUNK_AREA; ++i) {
-            if (chunk->base[i].compMask)
-                chunk->base[i].flags.hasBeenUpdatedThisFrame = false;
+        for (auto &[coord, chunk] : safeUpdateList) {
+            if (chunk->isSleeping) continue; 
+            for (int i=0; i<CHUNK_AREA; ++i) {
+                if (chunk->base[i].compMask)
+                    chunk->base[i].flags.hasBeenUpdatedThisFrame = false;
+            } 
         }
     }
-
-    if (rigidBodySystem) {
-        rigidBodySystem->syncFromWorld(*this);
-    }
+    currentLayer = 0;
 }
+
 void ParticleWorld::wakeParticle(int x, int y) {
     Chunk* c = getChunk(x, y);
     if (!c) return;
@@ -703,30 +710,40 @@ void ParticleWorld::renderToBuffer() {
     int viewW = viewWidth;
     int viewH = viewHeight;
 
-    for (int cy = startCY; cy <= endCY; ++cy) {
-        for (int cx = startCX; cx <= endCX; ++cx) {
-            auto it = chunks.find({cx, cy});
-            if (it == chunks.end()) continue;
+    for (int l = 1; l >= 0; --l) {
+        for (int cy = startCY; cy <= endCY; ++cy) {
+            for (int cx = startCX; cx <= endCX; ++cx) {
+                auto it = chunks[l].find({cx, cy});
+                if (it == chunks[l].end()) continue;
 
-            Chunk* chunk = it->second.get();
-            int chunkWorldX = cx * CHUNK_SIZE;
-            int chunkWorldY = cy * CHUNK_SIZE;
-            const uint32_t* src32 = reinterpret_cast<const uint32_t*>(chunk->pixelData.data());
+                Chunk* chunk = it->second.get();
+                int chunkWorldX = cx * CHUNK_SIZE;
+                int chunkWorldY = cy * CHUNK_SIZE;
+                const uint32_t* src32 = reinterpret_cast<const uint32_t*>(chunk->pixelData.data());
 
-            for (int ly = 0; ly < CHUNK_SIZE; ++ly) {
-                int screenY = chunkWorldY + ly - cameraPos.y;
-                if (screenY < 0 || screenY >= viewH) continue;
+                for (int ly = 0; ly < CHUNK_SIZE; ++ly) {
+                    int screenY = chunkWorldY + ly - cameraPos.y;
+                    if (screenY < 0 || screenY >= viewH) continue;
 
-                for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
-                    int screenX = chunkWorldX + lx - cameraPos.x;
-                    if (screenX < 0 || screenX >= viewW) continue;
+                    for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
+                        int screenX = chunkWorldX + lx - cameraPos.x;
+                        if (screenX < 0 || screenX >= viewW) continue;
 
-                    uint32_t pixel = src32[ly * CHUNK_SIZE + lx];
-                    if (pixel != 0) { 
-                        dest32[screenY * viewW + screenX] = pixel;
-                    }
+                        uint32_t pixel = src32[ly * CHUNK_SIZE + lx];
+                        if (pixel != 0) { 
+                            if (l == 1) {
+                                sf::Color col;
+                                std::memcpy(&col, &pixel, sizeof(sf::Color));
+                                col.r /= 2; col.g /= 2; col.b /= 2;
+                                std::memcpy(&pixel, &col, sizeof(sf::Color));
+                            }
+                            if (l == 0 || dest32[screenY * viewW + screenX] == 0) {
+                                dest32[screenY * viewW + screenX] = pixel;
+                            }
+                        }
+                    } 
                 }
-            }
+            } 
         }
     }
 }
@@ -746,7 +763,7 @@ void ParticleWorld::updateCameraBounds(float centerX, float centerY, float viewW
 }
 
 void ParticleWorld::triggerExplosion(int x, int y, int radius, int strength) {
-    pendingExplosions.push_back({x, y, radius, strength});
+    pendingExplosions.push_back({x, y, radius, strength, currentLayer});
 }
 
 void ParticleWorld::addParticleCircle(int centerX, int centerY, float radius, MaterialID materialType) {
@@ -762,7 +779,7 @@ void ParticleWorld::addParticleCircle(int centerX, int centerY, float radius, Ma
 
 void ParticleWorld::addParticleSquare(int centerX, int centerY, float radius, MaterialID materialType) {
     int r = (int)std::ceil(radius);
-    for (int dy = -r; dy <= r; ++dy) {
+    for (int dy = -r; dy <= r; ++dy) { 
         for (int dx = -r; dx <= r; ++dx) {
             spawnParticle(materialType, centerX + dx, centerY + dy);
         }
@@ -800,26 +817,28 @@ bool ParticleWorld::saveWorld(const std::string &baseFilename) {
     std::ofstream file(filename, std::ios::binary);
     if (!file.is_open()) return false;
 
-    file.write(MAGIC_HEADER_V2, 4);
+    file.write(MAGIC_HEADER_V3, 4);
     
-    size_t chunkCount = chunks.size();
-    file.write(reinterpret_cast<const char*>(&chunkCount), sizeof(chunkCount));
+    for (int l = 0; l < 2; ++l) {
+        size_t chunkCount = chunks[l].size();
+        file.write(reinterpret_cast<const char*>(&chunkCount), sizeof(chunkCount));
 
-    for (const auto &[coord, chunk] : chunks) {
-        file.write(reinterpret_cast<const char*>(&coord.x), sizeof(coord.x));
-        file.write(reinterpret_cast<const char*>(&coord.y), sizeof(coord.y));
+        for (const auto &[coord, chunk] : chunks[l]) {
+            file.write(reinterpret_cast<const char*>(&coord.x), sizeof(coord.x));
+            file.write(reinterpret_cast<const char*>(&coord.y), sizeof(coord.y));
 
-        for (int i = 0; i < CHUNK_AREA; ++i) {
-            uint8_t mask = chunk->base[i].compMask;
-            file.write(reinterpret_cast<const char*>(&mask), sizeof(mask));
+            for (int i = 0; i < CHUNK_AREA; ++i) {
+                uint8_t mask = chunk->base[i].compMask;
+                file.write(reinterpret_cast<const char*>(&mask), sizeof(mask));
 
-            if (mask != 0) {
-                if (mask & COMP_BASE)       file.write(reinterpret_cast<const char*>(&chunk->base[i]),       sizeof(BaseComponent));
-                if (mask & COMP_KINEMATICS) file.write(reinterpret_cast<const char*>(&chunk->kinematics[i]), sizeof(KinematicsComponent));
-                if (mask & COMP_DURABILITY) file.write(reinterpret_cast<const char*>(&chunk->durability[i]), sizeof(DurabilityComponent));
-                if (mask & COMP_THERMAL)    file.write(reinterpret_cast<const char*>(&chunk->thermal[i]),    sizeof(ThermalComponent));
-                if (mask & COMP_FLUID)      file.write(reinterpret_cast<const char*>(&chunk->fluid[i]),      sizeof(FluidComponent));
-            }
+                if (mask != 0) {
+                    if (mask & COMP_BASE)       file.write(reinterpret_cast<const char*>(&chunk->base[i]),       sizeof(BaseComponent));
+                    if (mask & COMP_KINEMATICS) file.write(reinterpret_cast<const char*>(&chunk->kinematics[i]), sizeof(KinematicsComponent));
+                    if (mask & COMP_DURABILITY) file.write(reinterpret_cast<const char*>(&chunk->durability[i]), sizeof(DurabilityComponent));
+                    if (mask & COMP_THERMAL)    file.write(reinterpret_cast<const char*>(&chunk->thermal[i]),    sizeof(ThermalComponent));
+                    if (mask & COMP_FLUID)      file.write(reinterpret_cast<const char*>(&chunk->fluid[i]),      sizeof(FluidComponent));
+                }
+            } 
         }
     }
 
@@ -844,7 +863,9 @@ bool ParticleWorld::loadWorld(const std::string &filename) {
 
     char h[4];
     file.read(h, 4);
-    if (std::memcmp(h, MAGIC_HEADER_V2, 4) != 0) {
+    bool isV3 = (std::memcmp(h, MAGIC_HEADER_V3, 4) == 0);
+    bool isV2 = (std::memcmp(h, MAGIC_HEADER_V2, 4) == 0);
+    if (!isV3 && !isV2) {
         std::cerr << "Cannot load world: Outdated or corrupted file format!\n";
         return false;
     }
@@ -857,56 +878,61 @@ bool ParticleWorld::loadWorld(const std::string &filename) {
         entitySystem->clearAll();
     }
 
-    size_t chunkCount;
-    file.read(reinterpret_cast<char*>(&chunkCount), sizeof(chunkCount));
+    int numLayers = isV3 ? 2 : 1;
+    for (int l = 0; l < numLayers; ++l) {
+        currentLayer = l;
+        size_t chunkCount = 0;
+        if (!file.read(reinterpret_cast<char*>(&chunkCount), sizeof(chunkCount))) break;
 
-    for (size_t i = 0; i < chunkCount; ++i) {
-        int cx, cy;
-        file.read(reinterpret_cast<char*>(&cx), sizeof(cx));
-        file.read(reinterpret_cast<char*>(&cy), sizeof(cy));
+        for (size_t i = 0; i < chunkCount; ++i) {
+            int cx, cy;
+            file.read(reinterpret_cast<char*>(&cx), sizeof(cx));
+            file.read(reinterpret_cast<char*>(&cy), sizeof(cy));
 
-        Chunk *c = getOrCreateChunk(cx * CHUNK_SIZE, cy * CHUNK_SIZE);
+            Chunk *c = getOrCreateChunk(cx * CHUNK_SIZE, cy * CHUNK_SIZE);
 
-        for (int idx = 0; idx < CHUNK_AREA; ++idx) {
-            uint8_t mask;
-            file.read(reinterpret_cast<char*>(&mask), sizeof(mask));
+            for (int idx = 0; idx < CHUNK_AREA; ++idx) {
+                uint8_t mask;
+                file.read(reinterpret_cast<char*>(&mask), sizeof(mask));
 
-            if (mask != 0) {
-                if (mask & COMP_BASE) {
-                    file.read(reinterpret_cast<char*>(&c->base[idx]), sizeof(BaseComponent));
-                }
-                if (mask & COMP_KINEMATICS) {
-                    if (!c->kinematics) c->kinematics = std::make_unique<KinematicsComponent[]>(CHUNK_AREA);
-                    file.read(reinterpret_cast<char*>(&c->kinematics[idx]), sizeof(KinematicsComponent));
-                }
-                if (mask & COMP_DURABILITY) {
-                    if (!c->durability) c->durability = std::make_unique<DurabilityComponent[]>(CHUNK_AREA);
-                    file.read(reinterpret_cast<char*>(&c->durability[idx]), sizeof(DurabilityComponent));
-                }
-                if (mask & COMP_THERMAL) {
-                    if (!c->thermal) c->thermal = std::make_unique<ThermalComponent[]>(CHUNK_AREA);
-                    file.read(reinterpret_cast<char*>(&c->thermal[idx]), sizeof(ThermalComponent));
-                }
-                if (mask & COMP_FLUID) {
-                    if (!c->fluid) c->fluid = std::make_unique<FluidComponent[]>(CHUNK_AREA);
-                    file.read(reinterpret_cast<char*>(&c->fluid[idx]), sizeof(FluidComponent));
-                }
+                if (mask != 0) {
+                    if (mask & COMP_BASE) {
+                        file.read(reinterpret_cast<char*>(&c->base[idx]), sizeof(BaseComponent));
+                    }
+                    if (mask & COMP_KINEMATICS) {
+                        if (!c->kinematics) c->kinematics = std::make_unique<KinematicsComponent[]>(CHUNK_AREA);
+                        file.read(reinterpret_cast<char*>(&c->kinematics[idx]), sizeof(KinematicsComponent));
+                    }
+                    if (mask & COMP_DURABILITY) {
+                        if (!c->durability) c->durability = std::make_unique<DurabilityComponent[]>(CHUNK_AREA);
+                        file.read(reinterpret_cast<char*>(&c->durability[idx]), sizeof(DurabilityComponent));
+                    }
+                    if (mask & COMP_THERMAL) {
+                        if (!c->thermal) c->thermal = std::make_unique<ThermalComponent[]>(CHUNK_AREA);
+                        file.read(reinterpret_cast<char*>(&c->thermal[idx]), sizeof(ThermalComponent));
+                    }
+                    if (mask & COMP_FLUID) {
+                        if (!c->fluid) c->fluid = std::make_unique<FluidComponent[]>(CHUNK_AREA);
+                        file.read(reinterpret_cast<char*>(&c->fluid[idx]), sizeof(FluidComponent));
+                    }
 
-                if ((mask & COMP_BASE) && c->base[idx].flags.isRigidBodyPart) {
-                    c->base[idx].compMask = 0; 
-                } else if (mask & COMP_BASE) {
-                    updateChunkPixel(c, idx, c->base[idx].color);
-                }
+                    if ((mask & COMP_BASE) && c->base[idx].flags.isRigidBodyPart) {
+                        c->base[idx].compMask = 0; 
+                    } else if (mask & COMP_BASE) {
+                        updateChunkPixel(c, idx, c->base[idx].color);
+                    }
+                } 
             }
+            c->isSleeping = false;
+            c->visualDirty = true;
         }
-        c->isSleeping = false;
-        c->visualDirty = true;
     }
+    currentLayer = 0;
 
     bool hasRBS;
     if (file.read(reinterpret_cast<char*>(&hasRBS), sizeof(hasRBS))) {
         if (hasRBS && rigidBodySystem) {
-            rigidBodySystem->load(file);
+            rigidBodySystem->load(file, isV3);
         }
     }
     
@@ -932,9 +958,9 @@ std::string ParticleWorld::getNextAvailableFilename(const std::string &baseName)
     } while (std::filesystem::exists(f));
     return f;
 }
-void ParticleWorld::addRigidBodyFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat, bool glue) {
+void ParticleWorld::addRigidBodyFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat, bool glue, int layer) {
     if (rigidBodySystem) {
-        rigidBodySystem->addRigidBodyFromSprite(img, startX, startY, mat, glue, *this);
+        rigidBodySystem->addRigidBodyFromSprite(img, startX, startY, mat, glue, *this, layer);
     }
 }
 
@@ -948,12 +974,12 @@ void ParticleWorld::addStructureFromSprite(const sf::Image& img, int startX, int
                 
                 spawnParticle(mat, wx, wy);
                 setParticleColor(wx, wy, col); 
-            }
+            } 
         }
     }
 }
 
-void ParticleWorld::addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, MaterialID mat, bool glue) {
+void ParticleWorld::addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, MaterialID mat, bool glue, int layer) {
     if (!rigidBodySystem) return;
 
     int s = static_cast<int>(sz);
@@ -983,12 +1009,12 @@ void ParticleWorld::addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, Ma
         }
     }
     
-    addRigidBodyFromSprite(img, cx, cy, mat, glue);
+    addRigidBodyFromSprite(img, cx, cy, mat, glue, layer);
 }
 
-void ParticleWorld::addWeapon(const sf::Image& img, int startX, int startY, const std::string& name) {
+void ParticleWorld::addWeapon(const sf::Image& img, int startX, int startY, const std::string& name, int layer) {
     if (rigidBodySystem) {
-        rigidBodySystem->addWeapon(img, startX, startY, name);
+        rigidBodySystem->addWeapon(img, startX, startY, name, layer);
     }
 }
 

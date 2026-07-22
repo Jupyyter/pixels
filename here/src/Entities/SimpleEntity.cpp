@@ -48,6 +48,25 @@ void SimpleEntity::updateAnimations(float dt, ParticleWorld& pw) {
         float centerGroundY = system->groundCastY(bodyPos.x, groundCheckY, 24.0f, pw, false);
         float centerDistToGround = (centerGroundY >= 1e9f) ? 1000.0f : (centerGroundY - (bodyPos.y + colHalfH));
 
+        // --- ADD THIS NEW BOX2D CHECK ---
+        // Let Box2D natively detect dynamic Rigid Bodies so we can walk/jump on them!
+        b2QueryFilter b2filter = b2DefaultQueryFilter();
+        b2filter.categoryBits = 0x0002;
+        b2filter.maskBits = 0x0001 | 0x0002 | 0x0004 | 0x0008; 
+        
+        b2Vec2 rayStart = b2Body_GetPosition(bodyId);
+        b2Vec2 rayDir = {0.0f, (colHalfH + 12.0f) * P2M}; 
+        b2RayResult floorHit = b2World_CastRayClosest(physicsWorldId, rayStart, rayDir, b2filter);
+        
+        if (floorHit.hit) {
+            float hitDistPx = floorHit.fraction * (colHalfH + 12.0f);
+            float distToFeet = hitDistPx - colHalfH;
+            if (distToFeet < centerDistToGround) {
+                centerDistToGround = distToFeet;
+            }
+        }
+        // --------------------------------
+
         // 2. NEW wide sweep cast (Used for Jumping and Animations!)
         float highestGroundY = centerGroundY;
         int startX = static_cast<int>(std::ceil(bodyPos.x - colHalfW));

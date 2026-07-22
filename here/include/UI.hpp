@@ -40,6 +40,7 @@ private:
     bool showChunkBounds = false;
     bool showColliders = false;
     
+    int targetLayer = 0;
     MaterialID currentMaterial = 1;
     
     void drawMaterialTabs();
@@ -66,6 +67,7 @@ public:
     bool getShowChunkBounds() const { return showChunkBounds; }
     bool getShowColliders() const { return showColliders; }
     MaterialID getCurrentMaterialID() const { return currentMaterial; }
+    int getTargetLayer() const { return targetLayer; }
     
     const sf::Image* getSelectedAssetImage() const;
     const sf::Texture* getSelectedAssetTexture() const;

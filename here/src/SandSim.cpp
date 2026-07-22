@@ -15,14 +15,11 @@ static sf::Vector2f g_lineCurrentPos;
 
 constexpr float CAMERA_MARGIN = 50.0f; 
 
-
-
 SandSimApp::SandSimApp() : 
     running(true), simulationRunning(true), frameTime(0.0f), 
     currentState(GameState::MENU),
     currentZoom(1.0f), isPanning(false)
 {
-
     window.create(sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}), "Sand Simulation - SFML 3");
     window.setVerticalSyncEnabled(true); 
 
@@ -174,8 +171,13 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
                             int startX = static_cast<int>(worldPos.x) - (scaled.getSize().x / 2);
                             int startY = static_cast<int>(worldPos.y) - (scaled.getSize().y / 2);
                             
-                            if (ui->getSpawnAsRigidBody()) world->addRigidBodyFromSprite(scaled, startX, startY, ui->getCurrentMaterialID(), ui->getGlueToTerrain());
-                            else world->addStructureFromSprite(scaled, startX, startY, ui->getCurrentMaterialID());
+                            if (ui->getSpawnAsRigidBody()) 
+                                world->addRigidBodyFromSprite(scaled, startX, startY, ui->getCurrentMaterialID(), ui->getGlueToTerrain(), ui->getTargetLayer());
+                            else {
+                                world->setLayer(ui->getTargetLayer());
+                                world->addStructureFromSprite(scaled, startX, startY, ui->getCurrentMaterialID());
+                                world->setLayer(0);
+                            }
                         }
                     }
                     else if (ui->getSpawnMode() == SpawnMode::Weapon) {
@@ -189,7 +191,7 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
                             sf::Image scaled = scaleImageNearestNeighbor(*srcImg, wScale);
                             int startX = static_cast<int>(worldPos.x) - (scaled.getSize().x / 2);
                             int startY = static_cast<int>(worldPos.y) - (scaled.getSize().y / 2);
-                            world->addWeapon(scaled, startX, startY, wName);
+                            world->addWeapon(scaled, startX, startY, wName, ui->getTargetLayer());
                         }
                     }
                     else if (ui->getSpawnMode() == SpawnMode::Entity) {
@@ -197,17 +199,13 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
                             std::string defName = ui->getSelectedEntityName();
                             if (!defName.empty()) {
                                 sf::Vector2f spawnPos = worldPos;
-                                
-                                // Offset the spawn position by the collider's center
-                                // so it perfectly matches the ghost preview origin
-                                for (const auto& def : entitySystem->getDefinitions()) {
+                                for (const auto& def : entitySystem->getDefinitions()) { 
                                     if (def.name == defName) {
                                         spawnPos.x -= (def.colliderRect.position.x + def.colliderRect.size.x / 2.0f);
                                         spawnPos.y -= (def.colliderRect.position.y + def.colliderRect.size.y / 2.0f);
                                         break;
                                     }
                                 }
-                                
                                 entitySystem->spawnEntity(spawnPos.x, spawnPos.y, defName, ui->getSpawnAsPlayer());
                             }
                         }
@@ -331,7 +329,6 @@ void SandSimApp::handleResize(unsigned int width, unsigned int height) {
 }
 
 void SandSimApp::update() {
-    // Keep track of real time passed since last loop
     sf::Time dt = clock.restart();
     frameTime = static_cast<float>(frameClock.restart().asMilliseconds());
 
@@ -355,19 +352,12 @@ void SandSimApp::update() {
             sf::Vector2f size = gameView.getSize();
             world->updateCameraBounds(center.x, center.y, size.x, size.y);
 
-            // ---------------------------------------------------------
-            // THE FIX: FIXED TIMESTEP ACCUMULATOR
-            // ---------------------------------------------------------
             static float accumulator = 0.0f;
-            const float TIME_STEP = 1.0f / 60.0f; // Exactly 60 Simulation Ticks Per Second
+            const float TIME_STEP = 1.0f / 60.0f; 
 
-            // Add the time that just passed to our accumulator
             accumulator += dt.asSeconds();
-
-            // Prevent the "Spiral of Death" if the window freezes or lags heavily
             if (accumulator > 0.25f) accumulator = 0.25f;
 
-            // Run the simulation in fixed 1/60th of a second chunks
             while (accumulator >= TIME_STEP) {
                 if (entitySystem) {
                     entitySystem->updateInput(TIME_STEP, worldPos, *world->getRigidBodySystem(), *world);
@@ -413,7 +403,7 @@ void SandSimApp::render() {
             world->getRigidBodySystem()->renderEffects(window);
         }
         
-        if (isUIVisible && !isMouseOverUI() && !isPanning && window.hasFocus()) {
+        if (isUIVisible && !isMouseOverUI() && !isPanning && window.hasFocus()) { 
             sf::Vector2f worldPos = window.mapPixelToCoords(sf::Mouse::getPosition(window), gameView);
             
             if (ui->getSpawnMode() == SpawnMode::Image) {
@@ -454,20 +444,18 @@ void SandSimApp::render() {
                     int h = std::min(32u, ghostTex->getSize().y);
                     ghostSprite.setTextureRect(sf::IntRect({0, 0}, {w, h}));
                     
-                    // For the ghost preview, we query the entity system to align perfectly to its defined origin
-sf::Vector2f previewOrigin = {16.0f, 16.0f}; // Fallback
-if (entitySystem) {
-    for (const auto& def : entitySystem->getDefinitions()) {
-        if (def.name == ui->getSelectedEntityName()) {
-            // Calculate the origin from the center of the new SFML 3 colliderRect
-            previewOrigin = {
-                def.colliderRect.position.x + def.colliderRect.size.x / 2.0f, 
-                def.colliderRect.position.y + def.colliderRect.size.y / 2.0f
-            };
-            break;
-        }
-    }
-}
+                    sf::Vector2f previewOrigin = {16.0f, 16.0f}; 
+                    if (entitySystem) {
+                        for (const auto& def : entitySystem->getDefinitions()) { 
+                            if (def.name == ui->getSelectedEntityName()) {
+                                previewOrigin = {
+                                    def.colliderRect.position.x + def.colliderRect.size.x / 2.0f, 
+                                    def.colliderRect.position.y + def.colliderRect.size.y / 2.0f
+                                };
+                                break;
+                            }
+                        }
+                    }
                     ghostSprite.setOrigin(previewOrigin); 
                     ghostSprite.setPosition(worldPos);
                     ghostSprite.setColor(sf::Color(255, 255, 255, 128)); 
@@ -614,10 +602,8 @@ if (entitySystem) {
 }
 
 void SandSimApp::startGame(const std::string& worldFile) {
-    // 1. Create the base world FIRST so it exists in memory
     world = std::make_unique<ParticleWorld>(VIEW_WIDTH, VIEW_HEIGHT);
 
-    // 2. Load all materials BEFORE the entities or save files try to use them!
     world->loadAllMaterials({
         "src/Particles/data/Special.json",
         "src/Particles/data/ImmovableSolid.json",
@@ -626,19 +612,15 @@ void SandSimApp::startGame(const std::string& worldFile) {
         "src/Particles/data/MovableSolid.json"
     });
 
-    // 3. NOW it is safe to set up the Entity System using the World
     entitySystem = std::make_unique<EntitySystem>(world->getRigidBodySystem()->getWorldId());
     world->setEntitySystem(entitySystem.get());
     
-    // 4. Load the save file (if one exists)
     if (!worldFile.empty()) {
         world->loadWorld(worldFile);
     }
     
-    // 5. Setup the UI
     ui = std::make_unique<UI>(window, world.get());
     
-    // 6. Reset camera
     currentZoom = 1.0f;
     gameView.setSize({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
     gameView.setCenter({static_cast<float>(WORLD_WIDTH) / 2.f, static_cast<float>(WORLD_HEIGHT) / 2.f});
@@ -655,7 +637,7 @@ void SandSimApp::returnToMenu() {
     isBrushing = false;
     isErasing = false;
     currentStroke.clear();
-    currentState = GameState::MENU;
+    currentState = GameState::MENU; 
 }
 
 void SandSimApp::handleMouseHeld() {
@@ -704,6 +686,10 @@ void SandSimApp::handleMouseHeld() {
 void SandSimApp::addParticles(const sf::Vector2f& worldPos) {
     if (world && ui) {
         MaterialID currentMat = ui->getCurrentMaterialID();
+        int selectedLayer = ui->getTargetLayer();
+        
+        world->setLayer(selectedLayer);
+        
         if (currentMat == GetMatID("Explosion")) {
             int radius = static_cast<int>(ui->getSelectionRadius());
             world->triggerExplosion(static_cast<int>(worldPos.x), static_cast<int>(worldPos.y), radius, 20);
@@ -714,32 +700,60 @@ void SandSimApp::addParticles(const sf::Vector2f& worldPos) {
                 world->spawnParticle(currentMat, px, py);
                 BaseComponent* base = world->get<BaseComponent>(px, py);
                 if (base) base->compMask |= COMP_PLATFORM;
-            } else if (ui->getBrushShape() == BrushShape::Square) {
+            } else if (ui->getBrushShape() == BrushShape::Square) { 
                 world->addParticleSquare(worldPos.x, worldPos.y, ui->getSelectionRadius(), currentMat);
             } else {
                 world->addParticleCircle(worldPos.x, worldPos.y, ui->getSelectionRadius(), currentMat);
             }
         }
+        
+        if (selectedLayer == 0) {
+            Particle* pLogic = MaterialRegistry[static_cast<int>(currentMat)];
+            if (pLogic && pLogic->getGroup() == MaterialGroup::ImmovableSolid) {
+                world->setLayer(1);
+                if (ui->getBrushShape() == BrushShape::Platform) {
+                    int px = static_cast<int>(std::round(worldPos.x));
+                    int py = static_cast<int>(std::round(worldPos.y));
+                    world->spawnParticle(currentMat, px, py);
+                    BaseComponent* base = world->get<BaseComponent>(px, py);
+                    if (base) base->compMask |= COMP_PLATFORM;
+                } else if (ui->getBrushShape() == BrushShape::Square) { 
+                    world->addParticleSquare(worldPos.x, worldPos.y, ui->getSelectionRadius(), currentMat);
+                } else {
+                    world->addParticleCircle(worldPos.x, worldPos.y, ui->getSelectionRadius(), currentMat);
+                }
+            }
+        }
+        
+        world->setLayer(0);
     }
 }
 
 void SandSimApp::eraseParticles(const sf::Vector2f& worldPos) {
     if (world && ui) {
+        world->setLayer(ui->getTargetLayer());
         float r = ui->getSelectionRadius();
         if (ui->getBrushShape() == BrushShape::Square) {
             world->eraseSquare(worldPos.x, worldPos.y, r);
-            if (entitySystem) entitySystem->eraseEntitiesInSquare(worldPos, r);
-            if (world->getRigidBodySystem()) world->getRigidBodySystem()->eraseInSquare(worldPos, r);
+            if (ui->getTargetLayer() == 0) {
+                if (entitySystem) entitySystem->eraseEntitiesInSquare(worldPos, r);
+            }
+            if (world->getRigidBodySystem()) world->getRigidBodySystem()->eraseInSquare(worldPos, r, ui->getTargetLayer());
         } else {
             world->eraseCircle(worldPos.x, worldPos.y, r);
-            if (entitySystem) entitySystem->eraseEntitiesInRadius(worldPos, r);
-            if (world->getRigidBodySystem()) world->getRigidBodySystem()->eraseInRadius(worldPos, r);
+            if (ui->getTargetLayer() == 0) {
+                if (entitySystem) entitySystem->eraseEntitiesInRadius(worldPos, r);
+            }
+            if (world->getRigidBodySystem()) world->getRigidBodySystem()->eraseInRadius(worldPos, r, ui->getTargetLayer());
         }
+        world->setLayer(0);
     }
 }
 
 void SandSimApp::addParticlesLine(const sf::Vector2f& start, const sf::Vector2f& end) {
     MaterialID currentMat = ui->getCurrentMaterialID();
+    int selectedLayer = ui->getTargetLayer();
+    
     if (currentMat == GetMatID("Explosion")) {
          float dx = end.x - start.x, dy = end.y - start.y;
          float dist = std::sqrt(dx*dx + dy*dy);
@@ -748,8 +762,10 @@ void SandSimApp::addParticlesLine(const sf::Vector2f& start, const sf::Vector2f&
          for(int i=0; i<=steps; ++i) {
              float t = (steps > 0) ? (float)i/steps : 0.f;
              sf::Vector2f pos = {start.x + t*dx, start.y + t*dy};
+             world->setLayer(selectedLayer);
              world->triggerExplosion((int)pos.x, (int)pos.y, (int)ui->getSelectionRadius(), 20);
          }
+         world->setLayer(0);
          return;
     }
     
@@ -763,10 +779,23 @@ void SandSimApp::addParticlesLine(const sf::Vector2f& start, const sf::Vector2f&
             float t = (steps > 0) ? (float)i/steps : 0.f;
             int px = static_cast<int>(std::round(start.x + t*dx));
             int py = static_cast<int>(std::round(start.y + t*dy));
+            
+            world->setLayer(selectedLayer);
             world->spawnParticle(currentMat, px, py);
             BaseComponent* base = world->get<BaseComponent>(px, py);
             if (base) base->compMask |= COMP_PLATFORM;
+            
+            if (selectedLayer == 0) {
+                Particle* pLogic = MaterialRegistry[static_cast<int>(currentMat)];
+                if (pLogic && pLogic->getGroup() == MaterialGroup::ImmovableSolid) {
+                    world->setLayer(1);
+                    world->spawnParticle(currentMat, px, py);
+                    BaseComponent* b2 = world->get<BaseComponent>(px, py);
+                    if (b2) b2->compMask |= COMP_PLATFORM;
+                }
+            }
         }
+        world->setLayer(0);
         return;
     }
 

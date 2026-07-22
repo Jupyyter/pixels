@@ -14,11 +14,10 @@
 class Particle; 
 class RigidBodySystem;
 enum class RigidBodyShape;
-class EntitySystem; // Forward declare for binding hook correctly!
+class EntitySystem; 
 
 const uint32_t INVALID_INDEX = 0xFFFFFFFF;
 
-// --- COMPONENT MASKS ---
 constexpr uint8_t COMP_BASE       = 1 << 0; 
 constexpr uint8_t COMP_KINEMATICS = 1 << 1; 
 constexpr uint8_t COMP_DURABILITY = 1 << 2; 
@@ -34,6 +33,7 @@ struct Chunk {
     std::unique_ptr<ThermalComponent[]> thermal;
     std::unique_ptr<FluidComponent[]> fluid;
 
+    int layer = 0; 
     bool isSleeping = false;
     bool isActive = true; 
     mutable bool visualDirty = true;
@@ -65,6 +65,7 @@ struct ParticleContext {
     Chunk* chunk;
     uint32_t index;
     int x, y; 
+    int layer; 
     
     BaseComponent* base;
     KinematicsComponent* kinematics;
@@ -74,7 +75,7 @@ struct ParticleContext {
 };
 
 struct ExplosionEvent {
-    int x, y, radius, strength;
+    int x, y, radius, strength, layer;
 };
 
 class ParticleWorld {
@@ -83,18 +84,20 @@ private:
     sf::FloatRect renderBounds;
     std::vector<std::uint8_t> pixelBuffer; 
     std::vector<ExplosionEvent> pendingExplosions;
-    std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> chunks;
+    std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> chunks[2]; 
 
-    mutable Chunk* cacheChunk[64] = {nullptr};
-    mutable int cacheCx[64];
-    mutable int cacheCy[64];
+    mutable Chunk* cacheChunk[2][64] = {{nullptr}};
+    mutable int cacheCx[2][64];
+    mutable int cacheCy[2][64];
+    
+    int currentLayer = 0;
 
     sf::Vector2i cameraPos;
     int viewWidth, viewHeight;
     uint32_t frameCounter;
 
     std::unique_ptr<RigidBodySystem> rigidBodySystem;
-    EntitySystem* entitySystem = nullptr; 
+    EntitySystem* entitySystem = nullptr;
 
 public:
     ParticleWorld(unsigned int w, unsigned int h);
@@ -103,18 +106,17 @@ public:
     void loadAllMaterials(const std::vector<std::string>& jsonFiles);
 
     uint32_t getFrameCounter() const { return frameCounter; }
-    // Extensibility hook providing sequence independent binding!
     void setEntitySystem(EntitySystem* sys) { entitySystem = sys; }
     EntitySystem* getEntitySystem() const { return entitySystem; } 
 
     RigidBodySystem* getRigidBodySystem() const { return rigidBodySystem.get(); }
     void renderDebugColliders(sf::RenderTarget& target) const;
-    void addRigidBodyFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat, bool glue = false);
-    void addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, MaterialID mat, bool glue = false);
+    void addRigidBodyFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat, bool glue = false, int layer = 0);
+    void addRigidBody(int cx, int cy, float sz, RigidBodyShape sh, MaterialID mat, bool glue = false, int layer = 0);
     
     void addStructureFromSprite(const sf::Image& img, int startX, int startY, MaterialID mat);
 
-    void addWeapon(const sf::Image& img, int startX, int startY, const std::string& name);
+    void addWeapon(const sf::Image& img, int startX, int startY, const std::string& name, int layer = 0);
     void renderWeaponsOutline(sf::RenderTarget& target, sf::Vector2f playerPos) const;
 
     void updateChunkPixel(Chunk* c, uint32_t localIdx, sf::Color color);
@@ -124,6 +126,9 @@ public:
     std::unordered_map<uint32_t, MaterialID> containerPayloads;
     void notifyTerrainChanged(float x, float y, float radius);
     void generateWorldFromImage(const std::string& imagePath, const std::string& mapPath);
+
+    void setLayer(int layer) { currentLayer = layer; }
+    int getLayer() const { return currentLayer; }
 
     inline uint32_t computeLocalIndex(int x, int y) const {
         return ((y & 63) << 6) | (x & 63); 
@@ -135,37 +140,37 @@ public:
     }
 
     inline bool isEmptyFast(const ParticleContext& ctx, int targetX, int targetY) {
-        if ((((ctx.x ^ targetX) | (ctx.y ^ targetY)) & ~63) == 0) {
+        if ((((ctx.x ^ targetX) | (ctx.y ^ targetY)) & ~63) == 0 && ctx.layer == currentLayer) {
             uint32_t idx = ((targetY & 63) << 6) | (targetX & 63);
-            return ctx.base[idx].compMask == 0;
+            return ctx.chunk->base[idx].compMask == 0;
         }
         return isEmpty(targetX, targetY);
     }
 
     template <typename T>
     T* getFast(const ParticleContext& ctx, int targetX, int targetY) {
-        if ((((ctx.x ^ targetX) | (ctx.y ^ targetY)) & ~63) == 0) {
+        if ((((ctx.x ^ targetX) | (ctx.y ^ targetY)) & ~63) == 0 && ctx.layer == currentLayer) {
             uint32_t idx = ((targetY & 63) << 6) | (targetX & 63);
             
             if constexpr (std::is_same_v<T, BaseComponent>) {
-                if (ctx.base[idx].compMask == 0) return nullptr;
-                return &ctx.base[idx];
+                if (ctx.chunk->base[idx].compMask == 0) return nullptr;
+                return &ctx.chunk->base[idx];
             } 
             else if constexpr (std::is_same_v<T, KinematicsComponent>) {
-                if (!(ctx.base[idx].compMask & COMP_KINEMATICS)) return nullptr;
-                return &ctx.kinematics[idx];
+                if (!(ctx.chunk->base[idx].compMask & COMP_KINEMATICS)) return nullptr;
+                return &ctx.chunk->kinematics[idx];
             }
             else if constexpr (std::is_same_v<T, DurabilityComponent>) {
-                if (!(ctx.base[idx].compMask & COMP_DURABILITY)) return nullptr;
-                return &ctx.durability[idx];
+                if (!(ctx.chunk->base[idx].compMask & COMP_DURABILITY)) return nullptr;
+                return &ctx.chunk->durability[idx];
             }
-            else if constexpr (std::is_same_v<T, ThermalComponent>) {
-                if (!(ctx.base[idx].compMask & COMP_THERMAL)) return nullptr;
-                return &ctx.thermal[idx];
+            else if constexpr (std::is_same_v<T, ThermalComponent>) { 
+                if (!(ctx.chunk->base[idx].compMask & COMP_THERMAL)) return nullptr;
+                return &ctx.chunk->thermal[idx];
             }
             else if constexpr (std::is_same_v<T, FluidComponent>) {
-                if (!(ctx.base[idx].compMask & COMP_FLUID)) return nullptr;
-                return &ctx.fluid[idx];
+                if (!(ctx.chunk->base[idx].compMask & COMP_FLUID)) return nullptr;
+                return &ctx.chunk->fluid[idx];
             }
         }
         return get<T>(targetX, targetY);
@@ -274,7 +279,7 @@ public:
     int getWidth() const { return viewWidth; }
     int getHeight() const { return viewHeight; }
     inline uint32_t computeIndex(int x, int y) const { return computeLocalIndex(x, y); }
-    const std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash>& getActiveChunks() const { return chunks; }
+    const std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash>& getActiveChunks(int layer = 0) const { return chunks[layer]; }
     sf::Vector2i getCameraPos() const { return cameraPos; }
     const sf::FloatRect& getRenderBounds() const { return renderBounds; }
 };

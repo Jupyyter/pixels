@@ -71,7 +71,7 @@ void Entity::createMainCollider(float density, float friction) {
     shapeDef.density           = density; 
     shapeDef.material.friction = friction; 
     shapeDef.filter.categoryBits = 0x0002;
-    shapeDef.filter.maskBits = ~0x0002u;
+    shapeDef.filter.maskBits = 0x0001 | 0x0002 | 0x0004 | 0x0008; 
     
     // Decrease the box polygon size by the radius amount to keep the overall size exactly the same!
     float effHalfW = std::max(0.0f, colHalfW - colliderRadius);
@@ -504,7 +504,7 @@ void Entity::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& 
 
         b2QueryFilter filter = b2DefaultQueryFilter();
         filter.categoryBits = 0x0002;
-        filter.maskBits = (~0x0002u) & (~0x0004u); 
+        filter.maskBits = 0x0001 | 0x0002 | 0x0008; 
 
         b2Transform xf = b2Body_GetTransform(bodyId);
         float localX = dir * (colHalfW + 1.0f) * P2M;
@@ -774,9 +774,9 @@ void Entity::updateAnimations(float dt, ParticleWorld& pw) {
         bool ignorePlatformsPhysics = movingUp || dropping || (overlappingPlatform && !overlappingSolid);
         
         if (ignorePlatformsPhysics) {
-            filter.maskBits = (~0x0002u) & (~0x0004u); 
+            filter.maskBits = 0x0001 | 0x0002 | 0x0008; 
         } else {
-            filter.maskBits = ~0x0002u; 
+            filter.maskBits = 0x0001 | 0x0002 | 0x0004 | 0x0008; 
         }
         b2Shape_SetFilter(playerShapeId, filter);
     }
@@ -1031,7 +1031,7 @@ b2BodyId Entity::createRagdollPart(float w, float h, sf::Vector2f worldPosPx, fl
     b2ShapeDef shapeDef = b2DefaultShapeDef();
     shapeDef.density = density;
     shapeDef.filter.categoryBits = 0x0002;
-    shapeDef.filter.maskBits = ~0x0002u;
+    shapeDef.filter.maskBits = 0x0001 | 0x0002 | 0x0004 | 0x0008;
     shapeDef.material.friction = 0.5f;
     
     if (isCircle) { b2Circle circle = {{0, 0}, w * P2M}; b2CreateCircleShape(partId, &shapeDef, &circle); } 

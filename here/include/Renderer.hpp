@@ -7,11 +7,10 @@ class Renderer {
 private:
     sf::Texture particleTexture;
     sf::Sprite particleSprite;
-    std::unordered_map<ChunkCoord, sf::Texture, ChunkCoordHash> chunkTextures;
+    std::unordered_map<ChunkCoord, sf::Texture, ChunkCoordHash> chunkTextures[2]; // Layered chunk textures
     // Post-processing components
     sf::RenderTexture renderTexture;
     
-    // FIX: These are now class members so they aren't recreated every frame!
     sf::RenderTexture bloomTexture;
     sf::RenderTexture blurTexture1;
     sf::RenderTexture blurTexture2;
@@ -33,7 +32,7 @@ public:
     void setShowChunkBounds(bool show);
     void setShowColliders(bool show);
 private:
-bool showChunkBounds = false;
+    bool showChunkBounds = false;
     bool showColliders = false;
     void renderDirect(sf::RenderWindow& window, const ParticleWorld& world);
     void renderWithPostProcessing(sf::RenderWindow& window, const ParticleWorld& world);
