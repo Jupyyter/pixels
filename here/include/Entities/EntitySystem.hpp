@@ -66,6 +66,7 @@ public:
 
     void buildGlobalNavGraph(ParticleWorld& pw); 
     void triggerSwing(sf::Vector2f targetWorldPos);
+    void issueMovementOrder(sf::Vector2f targetPos, ParticleWorld& pw);
     void updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& rbs, ParticleWorld& pw);
     void updateProceduralAnimations(float dt, ParticleWorld& particleWorld);
     void renderEntities(sf::RenderTarget& target);

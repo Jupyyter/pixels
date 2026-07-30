@@ -46,7 +46,7 @@ public:
     Entity(b2WorldId physWorld, EntitySystem* sys, float x, float y, const EntityDefinition& def, bool isPlayer);
     virtual ~Entity();
 
-    virtual void updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& rbs, ParticleWorld& pw, bool orderGiven);
+    virtual void updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& rbs, ParticleWorld& pw);
     virtual void updateAnimations(float dt, ParticleWorld& pw);
     virtual void render(sf::RenderTarget& target) = 0;
     

@@ -218,6 +218,17 @@ void Renderer::renderDirect(sf::RenderWindow &window, const ParticleWorld &world
                 float thickness = window.getView().getSize().x / window.getSize().x;
                 outline.setOutlineThickness(thickness);
                 window.draw(outline);
+                
+                if (chunk->activeMaxX >= chunk->activeMinX && chunk->activeMaxY >= chunk->activeMinY && !chunk->isSleeping) {
+                    float w = chunk->activeMaxX - chunk->activeMinX + 1;
+                    float h = chunk->activeMaxY - chunk->activeMinY + 1;
+                    sf::RectangleShape activeOutline(sf::Vector2f(w, h));
+                    activeOutline.setPosition(sf::Vector2f(coord.x * CHUNK_SIZE + chunk->activeMinX, coord.y * CHUNK_SIZE + chunk->activeMinY));
+                    activeOutline.setFillColor(sf::Color::Transparent);
+                    activeOutline.setOutlineColor(sf::Color(255, 255, 0, 150));
+                    activeOutline.setOutlineThickness(thickness);
+                    window.draw(activeOutline);
+                }
             }
         }
     }

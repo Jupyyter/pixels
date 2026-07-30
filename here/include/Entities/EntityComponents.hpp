@@ -26,6 +26,7 @@ struct PathNodeData {
 
 struct PlayerController {
     bool isPlayer = true;
+    bool isSelected = false;
     
     bool hasTarget = false;
     sf::Vector2f targetPos;
@@ -57,6 +58,7 @@ struct PlayerController {
     bool isRagdoll = false;
     float uprightStunTimer = 0.0f;
     RigidBody* equippedWeapon = nullptr; 
+    float eHoldTimer = 0.0f;
 
     bool isSwinging = false;
     float swingTimer = 0.0f;

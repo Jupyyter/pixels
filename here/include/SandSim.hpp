@@ -68,4 +68,7 @@ private:
     bool isDraggingEraseLine = false;
     sf::Vector2f lineStartPos;
     sf::Vector2f lineCurrentPos;
+    
+    bool isRightClickPressed = false;
+    sf::Vector2f rightClickStartPos;
 };

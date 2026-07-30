@@ -51,8 +51,8 @@ void SimpleEntity::updateAnimations(float dt, ParticleWorld& pw) {
         // --- ADD THIS NEW BOX2D CHECK ---
         // Let Box2D natively detect dynamic Rigid Bodies so we can walk/jump on them!
         b2QueryFilter b2filter = b2DefaultQueryFilter();
-        b2filter.categoryBits = 0x0002;
-        b2filter.maskBits = 0x0001 | 0x0002 | 0x0004 | 0x0008; 
+        b2filter.categoryBits = 0x0008;
+        b2filter.maskBits = 0x0001 | 0x0002 | 0x0004; 
         
         b2Vec2 rayStart = b2Body_GetPosition(bodyId);
         b2Vec2 rayDir = {0.0f, (colHalfH + 12.0f) * P2M}; 

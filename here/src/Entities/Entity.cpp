@@ -99,7 +99,7 @@ void Entity::triggerSwing(sf::Vector2f targetWorldPos) {
     }
 }
 
-void Entity::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& rbs, ParticleWorld& pw, bool orderGiven) {
+void Entity::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& rbs, ParticleWorld& pw) {
     dt = std::min(dt, 0.05f);
     
     if (pCtrl.equippedWeapon && pCtrl.equippedWeapon->isDestroyed) pCtrl.equippedWeapon = nullptr; 
@@ -140,26 +140,6 @@ void Entity::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& 
             pCtrl.homePosSet = true;
             pCtrl.idleWaitTimer = ((std::rand() % 100) / 100.0f) * 4.0f + 2.0f;
             pCtrl.isWandering = false;
-        }
-
-        if (orderGiven) {
-            pCtrl.hasTarget = true;
-            pCtrl.isWandering = false;
-            pCtrl.targetPos = system->resolveTargetPos(mouseWorldPos, pw);
-            pCtrl.path = system->findPath(footPos, pCtrl.targetPos);
-            
-            bool destinationSevered = false;
-            if (!pCtrl.path.empty()) {
-                float distToEnd = std::hypot(pCtrl.path.back().pos.x - pCtrl.targetPos.x, pCtrl.path.back().pos.y - pCtrl.targetPos.y);
-                if (distToEnd > 24.0f) destinationSevered = true; 
-            }
-
-            if (!pCtrl.path.empty() && !destinationSevered) pCtrl.path.push_back({pCtrl.targetPos, false, false, false, 0.0f});
-
-            pCtrl.pathIndex = 0;
-            pCtrl.pathRecalcTimer = 0.5f;
-            pCtrl.stuckTimer = 0.0f; 
-            pCtrl.lastPos = bodyPos;
         }
 
         if (!pCtrl.hasTarget) {
@@ -543,7 +523,12 @@ void Entity::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& 
     if (wPressed && !pCtrl.wPressedLastFrame && pCtrl.isGrounded && pCtrl.landingTimer <= 0.0f) {
         vel.y = pCtrl.jumpForce;
         
-        if (!pCtrl.isPlayer && !pCtrl.path.empty() && pCtrl.pathIndex < pCtrl.path.size()) {
+        if (pCtrl.isPlayer) {
+            // Give the player a horizontal boost to jump further forward
+            if (dir != 0.0f) {
+                vel.x = dir * pCtrl.moveSpeed * 1.3f;
+            }
+        } else if (!pCtrl.path.empty() && pCtrl.pathIndex < pCtrl.path.size()) {
             PathNodeData nextNode = pCtrl.path[pCtrl.pathIndex];
             if (nextNode.isJump && std::abs(nextNode.requiredVx) > 0.1f) {
                 vel.x = nextNode.requiredVx * P2M; 
@@ -554,29 +539,72 @@ void Entity::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& 
 
     b2Body_SetLinearVelocity(bodyId, vel);
 
-    if (ePressed && pCtrl.isPlayer) {
-        if (!pCtrl.ePressedLastFrame) {
-            pCtrl.ePressedLastFrame = true;
-            if (pCtrl.equippedWeapon) {
+    if (pCtrl.isPlayer) {
+        if (ePressed) {
+            if (!pCtrl.ePressedLastFrame) {
+                if (pCtrl.equippedWeapon) {
+                    pCtrl.eHoldTimer = 0.0f; // Start charging the throw
+                } else {
+                    RigidBody* nearest = rbs.getNearestWeapon(bodyPos, 40.0f);
+                    if (nearest) {
+                        nearest->clearFromWorld(pw);
+                        nearest->isEquipped = true;
+                        b2Body_Disable(nearest->bodyId); 
+                        pCtrl.equippedWeapon = nearest;
+                        pCtrl.eHoldTimer = -1.0f; // Invalid state to prevent immediate charging if held
+                    }
+                }
+            } else {
+                if (pCtrl.equippedWeapon && pCtrl.eHoldTimer >= 0.0f) {
+                    pCtrl.eHoldTimer += dt;
+                }
+            }
+        } else if (pCtrl.ePressedLastFrame) {
+            if (pCtrl.equippedWeapon && pCtrl.eHoldTimer >= 0.0f) {
                 pCtrl.equippedWeapon->isEquipped = false;
                 b2Body_Enable(pCtrl.equippedWeapon->bodyId);
                 
-                b2Vec2 dropPos = { (bodyPos.x + (sprite.flipX ? -15.f : 15.f)) * P2M, (bodyPos.y - 10.f) * P2M };
-                b2Body_SetTransform(pCtrl.equippedWeapon->bodyId, dropPos, b2MakeRot(0.0f));
-                b2Body_SetLinearVelocity(pCtrl.equippedWeapon->bodyId, { sprite.flipX ? -8.f : 8.f, -5.0f });
-                b2Body_SetAngularVelocity(pCtrl.equippedWeapon->bodyId, sprite.flipX ? -5.0f : 5.0f);
+                // Calculate linear charge from 0 to 1 second
+                float charge = std::min(pCtrl.eHoldTimer, 1.0f);
+                float throwSpeed = 10.0f + (charge * 45.0f);
+                float spinSpeed = 5.0f + (charge * 25.0f);
+                
+                // Calculate aim-like position exactly as updateArms does
+                sf::Vector2f vbp(bodyPos.x, bodyPos.y + bob.offsetY + armBaseY);
+                sf::Vector2f shoulderPos = vbp + sf::Vector2f(0.0f, -4.0f);
+                sf::Vector2f aimDir = mouseWorldPos - shoulderPos;
+                float dist = std::max(std::hypot(aimDir.x, aimDir.y), 1.0f);
+                sf::Vector2f aimNorm = {aimDir.x / dist, aimDir.y / dist};
+                
+                bool throwFlipX = (aimDir.x < 0.0f);
+                
+                sf::Vector2f desiredHandBOffset = (shoulderPos - vbp) + aimNorm * 9.0f;
+                if (desiredHandBOffset.y > 0.0f) desiredHandBOffset.y = 0.0f;
+                
+                sf::Vector2f spawnPos = vbp + desiredHandBOffset;
+                b2Vec2 dropPos = { spawnPos.x * P2M, spawnPos.y * P2M };
+                
+                float desiredWeaponAngle = 0.0f;
+                if (!throwFlipX) {
+                    desiredWeaponAngle = std::atan2(aimDir.y, aimDir.x) * 180.0f / PI;
+                } else {
+                    desiredWeaponAngle = -std::atan2(aimDir.y, -aimDir.x) * 180.0f / PI;
+                }
+                
+                float finalAngleDeg = desiredWeaponAngle + (throwFlipX ? -pCtrl.equippedWeapon->visualAngleOffset : pCtrl.equippedWeapon->visualAngleOffset);
+                float throwAngle = finalAngleDeg * PI / 180.0f;
+                
+                b2Body_SetTransform(pCtrl.equippedWeapon->bodyId, dropPos, b2MakeRot(throwAngle));
+                
+                // Throw towards cursor, linearly scaled power and rotation
+                b2Body_SetLinearVelocity(pCtrl.equippedWeapon->bodyId, { aimNorm.x * throwSpeed, aimNorm.y * throwSpeed });
+                b2Body_SetAngularVelocity(pCtrl.equippedWeapon->bodyId, throwFlipX ? -spinSpeed : spinSpeed);
                 
                 pCtrl.equippedWeapon = nullptr;
-            } else {
-                RigidBody* nearest = rbs.getNearestWeapon(bodyPos, 40.0f);
-                if (nearest) {
-                    nearest->clearFromWorld(pw);
-                    nearest->isEquipped = true;
-                    b2Body_Disable(nearest->bodyId); 
-                    pCtrl.equippedWeapon = nearest;
-                }
             }
+            pCtrl.eHoldTimer = 0.0f;
         }
+        pCtrl.ePressedLastFrame = ePressed;
     } else {
         pCtrl.ePressedLastFrame = false;
     }
@@ -778,6 +806,7 @@ void Entity::updateAnimations(float dt, ParticleWorld& pw) {
         } else {
             filter.maskBits = 0x0001 | 0x0002 | 0x0004 | 0x0008; 
         }
+        filter.groupIndex = -1;
         b2Shape_SetFilter(playerShapeId, filter);
     }
 }
@@ -930,6 +959,16 @@ void Entity::updateArms(float dt, sf::Vector2f bodyPos, float bodyAng, bool isAi
 }
 
 void Entity::renderSprite(sf::RenderTarget& target, sf::Vector2f bodyPos, float bodyAng) {
+    if (pCtrl.isSelected) {
+        sf::RectangleShape outline(sf::Vector2f(colHalfW * 2.0f + 4.0f, colHalfH * 2.0f + 4.0f));
+        outline.setOrigin(sf::Vector2f(colHalfW + 2.0f, colHalfH + 2.0f));
+        outline.setPosition(bodyPos);
+        outline.setFillColor(sf::Color::Transparent);
+        outline.setOutlineColor(sf::Color::Green);
+        outline.setOutlineThickness(1.0f);
+        target.draw(outline);
+    }
+
     if (!sprite.sprite.has_value()) return;
 
     float renderAngle = bodyAng * 180.0f / PI;
@@ -1030,8 +1069,8 @@ b2BodyId Entity::createRagdollPart(float w, float h, sf::Vector2f worldPosPx, fl
     
     b2ShapeDef shapeDef = b2DefaultShapeDef();
     shapeDef.density = density;
-    shapeDef.filter.categoryBits = 0x0002;
-    shapeDef.filter.maskBits = 0x0001 | 0x0002 | 0x0004 | 0x0008;
+    shapeDef.filter.categoryBits = 0x0008;
+    shapeDef.filter.maskBits = 0x0001 | 0x0002 | 0x0004;
     shapeDef.material.friction = 0.5f;
     
     if (isCircle) { b2Circle circle = {{0, 0}, w * P2M}; b2CreateCircleShape(partId, &shapeDef, &circle); } 

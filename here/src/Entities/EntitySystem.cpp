@@ -178,12 +178,35 @@ void EntitySystem::triggerSwing(sf::Vector2f targetWorldPos) {
     }
 }
 
-void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& rbs, ParticleWorld& pw) {
-    static bool rightClickLastGlobal = false;
-    bool currentRightClickGlobal = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
-    bool orderGiven = currentRightClickGlobal && !rightClickLastGlobal;
-    rightClickLastGlobal = currentRightClickGlobal;
+void EntitySystem::issueMovementOrder(sf::Vector2f targetPos, ParticleWorld& pw) {
+    if (!globalGraphBuilt) buildGlobalNavGraph(pw);
+    for (auto& e : entities) {
+        if (!e->pCtrl.isPlayer && e->pCtrl.isSelected) {
+            b2Vec2 pos = b2Body_GetPosition(e->bodyId);
+            sf::Vector2f footPos(pos.x * M2P, pos.y * M2P + e->colHalfH + 1.0f);
+            
+            e->pCtrl.hasTarget = true;
+            e->pCtrl.isWandering = false;
+            e->pCtrl.targetPos = resolveTargetPos(targetPos, pw);
+            e->pCtrl.path = findPath(footPos, e->pCtrl.targetPos);
+            
+            bool destinationSevered = false;
+            if (!e->pCtrl.path.empty()) {
+                float distToEnd = std::hypot(e->pCtrl.path.back().pos.x - e->pCtrl.targetPos.x, e->pCtrl.path.back().pos.y - e->pCtrl.targetPos.y);
+                if (distToEnd > 24.0f) destinationSevered = true; 
+            }
 
+            if (!e->pCtrl.path.empty() && !destinationSevered) e->pCtrl.path.push_back({e->pCtrl.targetPos, false, false, false, 0.0f});
+
+            e->pCtrl.pathIndex = 0;
+            e->pCtrl.pathRecalcTimer = 0.5f;
+            e->pCtrl.stuckTimer = 0.0f; 
+            e->pCtrl.lastPos = {pos.x * M2P, pos.y * M2P};
+        }
+    }
+}
+
+void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySystem& rbs, ParticleWorld& pw) {
     if (hasDirtyNavRegion) {
         for (auto& e : entities) {
             if (e->pCtrl.hasTarget || e->pCtrl.isWandering) {
@@ -199,13 +222,13 @@ void EntitySystem::updateInput(float dt, sf::Vector2f mouseWorldPos, RigidBodySy
         hasDirtyNavRegion = false;
     }
 
-    if (!globalGraphBuilt || orderGiven) {
+    if (!globalGraphBuilt) {
         buildGlobalNavGraph(pw);
     }
 
     debugLines.clear();
     for (auto& e : entities) {
-        e->updateInput(dt, mouseWorldPos, rbs, pw, orderGiven);
+        e->updateInput(dt, mouseWorldPos, rbs, pw);
     }
 }
 

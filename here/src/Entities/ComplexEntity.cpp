@@ -541,8 +541,8 @@ bool ComplexEntity::checkSideSnag(float dir, b2BodyId sideBody) {
         b2Vec2 origin = {ox * P2M, (leg.footWorld.y - 2.0f) * P2M}; 
         b2Vec2 trans = {dir * 2.0f * P2M, 0.0f}; 
         b2QueryFilter filter = b2DefaultQueryFilter();
-        filter.categoryBits = 0x0002;
-        filter.maskBits = (~0x0002u) & (~0x0004u);
+        filter.categoryBits = 0x0008;
+        filter.maskBits = 0x0001 | 0x0002;
         b2RayResult hit = b2World_CastRayClosest(physicsWorldId, origin, trans, filter);
         if (hit.hit) {
             b2BodyId hitBody = b2Shape_GetBody(hit.shapeId);

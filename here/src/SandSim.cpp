@@ -1,4 +1,5 @@
 #include "SandSim.hpp"
+#include "Entities/Entity.hpp"
 #include "RigidBody.hpp"
 #include <cmath>
 #include <algorithm>
@@ -156,8 +157,51 @@ void SandSimApp::handleGameEvents(const sf::Event& event) {
     else if (const auto* resize = event.getIf<sf::Event::Resized>()) {
         handleResize(resize->size.x, resize->size.y);
     }
+    else if (const auto* mouseBtnRel = event.getIf<sf::Event::MouseButtonReleased>()) {
+        if (mouseBtnRel->button == sf::Mouse::Button::Right) {
+            if (isRightClickPressed) {
+                isRightClickPressed = false;
+                sf::Vector2i mousePos = sf::Mouse::getPosition(window);
+                sf::Vector2f worldPos = window.mapPixelToCoords(mousePos, gameView);
+                
+                float dx = worldPos.x - rightClickStartPos.x;
+                float dy = worldPos.y - rightClickStartPos.y;
+                float dist = std::hypot(dx, dy);
+                
+                if (dist > 5.0f) {
+                    float minX = std::min(rightClickStartPos.x, worldPos.x);
+                    float maxX = std::max(rightClickStartPos.x, worldPos.x);
+                    float minY = std::min(rightClickStartPos.y, worldPos.y);
+                    float maxY = std::max(rightClickStartPos.y, worldPos.y);
+                    sf::FloatRect selectRect({minX, minY}, {maxX - minX, maxY - minY});
+                    
+                    if (entitySystem) {
+                        for (auto& e : entitySystem->entities) {
+                            if (!e->pCtrl.isPlayer) {
+                                b2Vec2 b2Pos = b2Body_GetPosition(e->bodyId);
+                                sf::Vector2f pos(b2Pos.x * M2P, b2Pos.y * M2P);
+                                e->pCtrl.isSelected = selectRect.contains(pos);
+                            }
+                        }
+                    }
+                } else {
+                    if (entitySystem) {
+                        entitySystem->issueMovementOrder(worldPos, *world);
+                    }
+                }
+            }
+        }
+    }
     else if (const auto* mouseBtn = event.getIf<sf::Event::MouseButtonPressed>()) {
-        if (mouseBtn->button == sf::Mouse::Button::Left) {
+        if (mouseBtn->button == sf::Mouse::Button::Right) {
+            sf::Vector2i mousePos = sf::Mouse::getPosition(window);
+            sf::Vector2f worldPos = window.mapPixelToCoords(mousePos, gameView);
+            if (isUIVisible && !isMouseOverUI() && ui && ui->getSpawnMode() == SpawnMode::Entity) {
+                isRightClickPressed = true;
+                rightClickStartPos = worldPos;
+            }
+        }
+        else if (mouseBtn->button == sf::Mouse::Button::Left) {
             sf::Vector2i mousePos = sf::Mouse::getPosition(window);
             sf::Vector2f worldPos = window.mapPixelToCoords(mousePos, gameView);
 
@@ -403,6 +447,23 @@ void SandSimApp::render() {
             world->getRigidBodySystem()->renderEffects(window);
         }
         
+        if (isRightClickPressed && ui && ui->getSpawnMode() == SpawnMode::Entity) {
+            sf::Vector2i mousePos = sf::Mouse::getPosition(window);
+            sf::Vector2f worldPos = window.mapPixelToCoords(mousePos, gameView);
+            
+            float minX = std::min(rightClickStartPos.x, worldPos.x);
+            float maxX = std::max(rightClickStartPos.x, worldPos.x);
+            float minY = std::min(rightClickStartPos.y, worldPos.y);
+            float maxY = std::max(rightClickStartPos.y, worldPos.y);
+            
+            sf::RectangleShape rect(sf::Vector2f(maxX - minX, maxY - minY));
+            rect.setPosition(sf::Vector2f(minX, minY));
+            rect.setFillColor(sf::Color(0, 255, 0, 50));
+            rect.setOutlineColor(sf::Color(0, 255, 0, 255));
+            rect.setOutlineThickness(1.0f / currentZoom);
+            window.draw(rect);
+        }
+
         if (isUIVisible && !isMouseOverUI() && !isPanning && window.hasFocus()) { 
             sf::Vector2f worldPos = window.mapPixelToCoords(sf::Mouse::getPosition(window), gameView);
             
